@@ -1,0 +1,80 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "socks-in",
+      "port": 1080,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true
+      }
+    },
+    {
+      "tag": "http-in",
+      "port": 1081,
+      "listen": "127.0.0.1",
+      "protocol": "http",
+      "settings": {}
+    },
+    {
+      "tag": "tun-in",
+      "protocol": "dokodemo-door",
+      "settings": {
+        "network": "tcp,udp",
+        "followRedirect": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "DIRECT",
+      "protocol": "freedom",
+      "settings": {}
+    },
+    {
+      "tag": "REJECT",
+      "protocol": "blackhole",
+      "settings": {}
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": []
+  },
+  "observatory": {
+    "subjectSelector": [
+      "SUBCLI_"
+    ],
+    "probeUrl": "https://www.google.com/generate_204",
+    "probeInterval": "30s",
+    "enableConcurrency": true
+  },
+  "burstObservatory": {
+    "subjectSelector": [
+      "SUBCLI_"
+    ],
+    "pingConfig": {
+      "destination": "https://www.google.com/generate_204",
+      "interval": "30s",
+      "sampling": 10,
+      "timeout": "5s",
+      "httpMethod": "HEAD"
+    }
+  },
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      "8.8.8.8"
+    ]
+  }
+}

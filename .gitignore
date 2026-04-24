@@ -1,0 +1,16 @@
+# Build and test output
+build/
+build-*/
+Testing/
+
+# Runtime state created by subcli when run from the source tree
+config.yaml
+sub.yaml
+cache/
+outputs/
+
+# Local validation tools and logs
+tools/
+
+# Local session notes
+session-*.md

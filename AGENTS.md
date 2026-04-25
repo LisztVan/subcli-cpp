@@ -2,7 +2,8 @@
 
 ## Build And Verify
 - Build with `cmake -S . -B build && cmake --build build -j`.
-- This repo has no test, lint, formatter, or CI config checked in. The practical verification step is to rebuild and run the specific CLI command you changed.
+- Run tests with `ctest --test-dir build --output-on-failure` after building.
+- This repo has no lint, formatter, or CI config checked in. The practical verification step is to rebuild, run tests, and run the specific CLI command you changed.
 - First configure is networked: `CMakeLists.txt` pulls `yaml-cpp`, `nlohmann_json`, `openssl-cmake`, and `curl` via `FetchContent`.
 
 ## Repo Shape

@@ -2,6 +2,7 @@
 build/
 build-*/
 Testing/
+.worktrees/
 
 # Runtime state created by subcli when run from the source tree
 config.yaml

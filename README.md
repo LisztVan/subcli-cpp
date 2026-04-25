@@ -33,10 +33,13 @@ cmake --build build --target package
 
 ```bash
 subcli init
-subcli doctor
+subcli doctor --json
+subcli completion bash > ~/.local/share/bash-completion/completions/subcli
 subcli config set core_paths.mihomo /path/to/mihomo
 subcli config set core_paths.sing_box /path/to/sing-box
 subcli config set core_paths.xray /path/to/xray
+subcli config set fetch_max_bytes 10485760
+subcli template list
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --check

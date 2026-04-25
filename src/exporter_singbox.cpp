@@ -25,6 +25,10 @@ ExportResult exportSingBoxImpl(
             result.warnings.push_back({"unsupported_node", node.name + ": " + reason});
         }
     }
+    if (supported.empty()) {
+        error = "sing-box has no supported nodes after filtering";
+        return result;
+    }
     const auto groups = buildGroups(supported, config);
     const std::string tpl = resolveTemplatePath(
         config,

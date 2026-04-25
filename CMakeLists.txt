@@ -94,6 +94,8 @@ set(SUBCLI_SOURCES
     src/capabilities.cpp
     src/core_discovery.cpp
     src/core_check.cpp
+    src/cli_completion.cpp
+    src/cli_output.cpp
     src/util.cpp
 )
 
@@ -115,6 +117,7 @@ target_link_libraries(subcli_tests PRIVATE yaml-cpp nlohmann_json::nlohmann_json
 target_compile_definitions(subcli_tests PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 add_test(NAME subcli_tests COMMAND subcli_tests)
+add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
 
 set(CPACK_PACKAGE_NAME "subcli")
 set(CPACK_PACKAGE_VENDOR "subcli")

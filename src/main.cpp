@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <ctime>
 #include <curl/curl.h>
@@ -16,6 +17,8 @@
 
 #include "subcli/core_check.hpp"
 #include "subcli/core_discovery.hpp"
+#include "subcli/cli_completion.hpp"
+#include "subcli/cli_output.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
 #include "subcli/parser.hpp"
@@ -25,6 +28,10 @@
 using namespace subcli;
 
 namespace {
+
+constexpr int ExitOk = 0;
+constexpr int ExitError = 1;
+constexpr int ExitUsage = 2;
 
 struct RuntimePaths {
     std::filesystem::path root;
@@ -308,11 +315,11 @@ bool hasFlag(const std::vector<std::string>& args, const std::string& key) {
 }
 
 bool hasHelp(const std::vector<std::string>& args) {
-    return hasFlag(args, "--help") || hasFlag(args, "-h") || hasFlag(args, "help");
+    return hasFlag(args, "--help") || hasFlag(args, "-h") || (args.size() > 1 && args[1] == "help");
 }
 
 void printRootUsage() {
-    std::cout << "subcli <init|doctor|sub|config|export|check> ...\n"
+    std::cout << "subcli <init|doctor|sub|config|template|export|check|completion> ...\n"
               << "\n"
               << "Common flow:\n"
               << "  subcli init\n"
@@ -336,14 +343,28 @@ void printDoctorUsage() {
 
 void printSubUsage() {
     std::cout << "usage: subcli sub <add|remove|list|update|enable|disable|edit|validate> ...\n"
-              << "  subcli sub add --name NAME --url URL [--force] [--tag TAG] [--tags a,b]\n"
+              << "  subcli sub add --name NAME --url URL [--force] [--tag TAG] [--header 'Key: Value']\n"
+              << "  subcli sub remove <id|name>\n"
+              << "  subcli sub list\n"
               << "  subcli sub update [id-or-name ...] [--tag TAG] [--strict-network]\n"
-              << "  subcli sub validate [id-or-name]\n";
+              << "  subcli sub validate [id-or-name]\n"
+              << "  subcli sub enable <id|name> | disable <id|name>\n"
+              << "  subcli sub edit <id|name> [--name NAME] [--url URL] [--header 'Key: Value'] [--remove-header Key]\n";
 }
 
 void printConfigUsage() {
     std::cout << "usage: subcli config <list|get|set|remove> ...\n"
-              << "Core path keys: core_paths.mihomo, core_paths.sing_box, core_paths.xray\n";
+              << "Core path keys: core_paths.mihomo, core_paths.sing_box, core_paths.xray\n"
+              << "Template paths are easier to manage with 'subcli template --help'.\n";
+}
+
+void printTemplateUsage() {
+    std::cout << "usage: subcli template <list|get|set|reset|validate> ...\n"
+              << "  subcli template list\n"
+              << "  subcli template get <mihomo|sing-box|xray> <normal|tun>\n"
+              << "  subcli template set <mihomo|sing-box|xray> <normal|tun> <path>\n"
+              << "  subcli template reset [mihomo|sing-box|xray] [normal|tun]\n"
+              << "  subcli template validate\n";
 }
 
 void printExportUsage() {
@@ -353,6 +374,10 @@ void printExportUsage() {
 
 void printCheckUsage() {
     std::cout << "usage: subcli check <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR] [--timeout SEC]\n";
+}
+
+void printCompletionUsage() {
+    std::cout << "usage: subcli completion bash\n";
 }
 
 bool hasOption(const std::vector<std::string>& args, const std::string& key) {
@@ -386,6 +411,35 @@ std::vector<std::string> splitComma(const std::string& s) {
     return out;
 }
 
+std::string trimString(std::string v) {
+    while (!v.empty() && std::isspace(static_cast<unsigned char>(v.back()))) {
+        v.pop_back();
+    }
+    size_t i = 0;
+    while (i < v.size() && std::isspace(static_cast<unsigned char>(v[i]))) {
+        ++i;
+    }
+    return v.substr(i);
+}
+
+bool parseHeaderOption(const std::string& raw, std::string& key, std::string& value) {
+    size_t sep = raw.find(':');
+    if (sep == std::string::npos) {
+        sep = raw.find('=');
+    }
+    if (sep == std::string::npos) {
+        std::cerr << "invalid header, expected 'Key: Value' or 'Key=Value': " << raw << "\n";
+        return false;
+    }
+    key = trimString(raw.substr(0, sep));
+    value = trimString(raw.substr(sep + 1));
+    if (key.empty()) {
+        std::cerr << "invalid header: empty key\n";
+        return false;
+    }
+    return true;
+}
+
 bool parseIntValue(const std::string& raw, const std::string& key, int& out) {
     try {
         size_t consumed = 0;
@@ -402,6 +456,93 @@ bool parseIntValue(const std::string& raw, const std::string& key, int& out) {
     }
 }
 
+bool parseBoundedIntValue(const std::string& raw, const std::string& key, int minValue, int& out) {
+    int parsed = 0;
+    if (!parseIntValue(raw, key, parsed)) {
+        return false;
+    }
+    if (parsed < minValue) {
+        std::cerr << key << " must be >= " << minValue << "\n";
+        return false;
+    }
+    out = parsed;
+    return true;
+}
+
+bool parseBoolValue(const std::string& raw, const std::string& key, bool& out) {
+    std::string value = raw;
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (value == "true" || value == "1" || value == "yes" || value == "on") {
+        out = true;
+        return true;
+    }
+    if (value == "false" || value == "0" || value == "no" || value == "off") {
+        out = false;
+        return true;
+    }
+    std::cerr << "invalid boolean for " << key << ": " << raw << "\n";
+    return false;
+}
+
+bool validateOptions(
+    const std::vector<std::string>& args,
+    size_t start,
+    const std::set<std::string>& known,
+    const std::set<std::string>& valueOptions
+) {
+    for (size_t i = start; i < args.size(); ++i) {
+        const auto& arg = args[i];
+        if (arg.rfind("--", 0) != 0) {
+            continue;
+        }
+        if (!known.count(arg)) {
+            std::cerr << "unknown option: " << arg << "\n";
+            return false;
+        }
+        if (valueOptions.count(arg)) {
+            if (i + 1 >= args.size() || known.count(args[i + 1])) {
+                std::cerr << "missing value for option: " << arg << "\n";
+                return false;
+            }
+            ++i;
+        }
+    }
+    return true;
+}
+
+std::vector<std::string> positionalArgs(
+    const std::vector<std::string>& args,
+    size_t start,
+    const std::set<std::string>& valueOptions
+) {
+    std::vector<std::string> out;
+    for (size_t i = start; i < args.size(); ++i) {
+        const auto& arg = args[i];
+        if (arg.rfind("--", 0) == 0) {
+            if (valueOptions.count(arg) && i + 1 < args.size()) {
+                ++i;
+            }
+            continue;
+        }
+        out.push_back(arg);
+    }
+    return out;
+}
+
+bool ensureNoExtraPositionals(
+    const std::vector<std::string>& args,
+    size_t start,
+    const std::set<std::string>& valueOptions,
+    const std::string& message
+) {
+    const auto extra = positionalArgs(args, start, valueOptions);
+    if (!extra.empty()) {
+        std::cerr << message << "\n";
+        return false;
+    }
+    return true;
+}
+
 Subscription* findSub(std::vector<Subscription>& subs, const std::string& idOrName) {
     auto it = std::find_if(subs.begin(), subs.end(), [&](const Subscription& s) {
         return s.id == idOrName || s.name == idOrName;
@@ -409,10 +550,122 @@ Subscription* findSub(std::vector<Subscription>& subs, const std::string& idOrNa
     return it == subs.end() ? nullptr : &(*it);
 }
 
+bool subscriptionIdOrNameExists(
+    const std::vector<Subscription>& subs,
+    const std::string& id,
+    const std::string& name,
+    const std::string& ignoreId = ""
+) {
+    return std::any_of(subs.begin(), subs.end(), [&](const Subscription& s) {
+        if (!ignoreId.empty() && s.id == ignoreId) {
+            return false;
+        }
+        return (!id.empty() && s.id == id) || (!name.empty() && s.name == name);
+    });
+}
+
+bool isTemplateTarget(const std::string& target) {
+    return target == "mihomo" || target == "sing-box" || target == "xray";
+}
+
+bool parseTemplateTargetKind(const std::string& target, const std::string& kind, std::string& error) {
+    if (!isTemplateTarget(target)) {
+        error = "invalid template target: " + target;
+        return false;
+    }
+    if (kind != "normal" && kind != "tun") {
+        error = "invalid template kind: " + kind;
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+std::string defaultTemplateFilenameFor(const std::string& target, const std::string& kind) {
+    if (target == "mihomo") {
+        return kind == "tun" ? "mihomo_tun.yaml" : "mihomo_base.yaml";
+    }
+    if (target == "sing-box") {
+        return kind == "tun" ? "singbox_tun.json" : "singbox_base.json";
+    }
+    return kind == "tun" ? "xray_tun.json" : "xray_base.json";
+}
+
+std::string getTemplateValue(const AppConfig& cfg, const std::string& target, const std::string& kind) {
+    const auto& values = kind == "tun" ? cfg.templateTun : cfg.templateNormal;
+    auto it = values.find(target);
+    return it == values.end() ? "" : it->second;
+}
+
+void setTemplateValue(AppConfig& cfg, const std::string& target, const std::string& kind, const std::string& value) {
+    if (kind == "tun") {
+        cfg.templateTun[target] = value;
+    } else {
+        cfg.templateNormal[target] = value;
+    }
+}
+
+void resetTemplateValue(AppConfig& cfg, const std::string& target, const std::string& kind) {
+    setTemplateValue(cfg, target, kind, defaultTemplatePath(cfg.templateDir, defaultTemplateFilenameFor(target, kind)));
+}
+
+std::vector<std::pair<std::string, std::string>> templateTargetKinds() {
+    return {{"mihomo", "normal"}, {"mihomo", "tun"}, {"sing-box", "normal"}, {"sing-box", "tun"}, {"xray", "normal"}, {"xray", "tun"}};
+}
+
+nlohmann::json configToJson(const AppConfig& cfg) {
+    nlohmann::json templates = nlohmann::json::object();
+    for (const auto& item : templateTargetKinds()) {
+        templates[item.first][item.second] = getTemplateValue(cfg, item.first, item.second);
+    }
+
+    nlohmann::json regions = nlohmann::json::object();
+    for (const auto& kv : cfg.regionRules) {
+        regions[kv.first] = kv.second;
+    }
+
+    return {
+        {"tun", cfg.tun},
+        {"output_dir", cfg.outputDir},
+        {"template_dir", cfg.templateDir},
+        {"parallelism", cfg.parallelism},
+        {"timeout", cfg.timeout},
+        {"retry", cfg.retry},
+        {"fetch_max_bytes", cfg.fetchMaxBytes},
+        {"log_level", cfg.logLevel},
+        {"core_paths", {{"mihomo", cfg.mihomoPath}, {"sing_box", cfg.singBoxPath}, {"xray", cfg.xrayPath}}},
+        {"node_management", {{"dedupe", cfg.dedupeNodes}, {"rename_template", cfg.renameTemplate}, {"include_regex", cfg.includeRegex}, {"exclude_regex", cfg.excludeRegex}, {"sort_by", cfg.sortBy}}},
+        {"templates", templates},
+        {"grouping", {{"region_rules", regions}}},
+    };
+}
+
+nlohmann::json subscriptionsToJson(const std::vector<Subscription>& subs) {
+    nlohmann::json items = nlohmann::json::array();
+    for (const auto& s : subs) {
+        items.push_back({
+            {"id", s.id},
+            {"name", s.name},
+            {"url", s.url},
+            {"enabled", s.enabled},
+            {"group", s.group},
+            {"priority", s.priority},
+            {"update_interval", s.updateInterval},
+            {"timeout", s.timeout},
+            {"retry", s.retry},
+            {"tags", s.tags},
+            {"last_success", s.lastSuccess},
+            {"last_error", s.lastError},
+        });
+    }
+    return {{"subscriptions", items}};
+}
+
 Subscription withEffectiveNetworkPolicy(const Subscription& base, const AppConfig& cfg) {
     Subscription out = base;
     out.timeout = std::max(1, base.timeoutOverride ? base.timeout : cfg.timeout);
     out.retry = std::max(0, base.retryOverride ? base.retry : cfg.retry);
+    out.fetchMaxBytes = std::max<long>(1024, cfg.fetchMaxBytes);
     out.cachePath = resolveCachePath(out.cachePath);
     return out;
 }
@@ -558,18 +811,36 @@ int doDoctorCommand(const std::vector<std::string>& args) {
         printDoctorUsage();
         return 0;
     }
+    if (!validateOptions(args, 1, {"--json"}, {})) {
+        return 1;
+    }
+    const bool jsonOutput = hasFlag(args, "--json");
     ensureDefaults();
     int failed = 0;
+    nlohmann::json checks = nlohmann::json::array();
+
+    auto addCheck = [&](const std::string& name, const std::string& status, const std::filesystem::path& path, const std::string& message = "") {
+        checks.push_back({{"name", name}, {"status", status}, {"path", path.string()}, {"message", message}});
+        if (!jsonOutput) {
+            if (status == "ok") {
+                std::cout << "[ OK ] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " " + message) << "\n";
+            } else if (status == "warn") {
+                std::cout << "[WARN] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " " + message) << "\n";
+            } else {
+                std::cout << "[FAIL] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " (" + message + ")") << "\n";
+            }
+        }
+    };
 
     auto checkPath = [&](const std::string& name, const std::filesystem::path& path, bool mustExist) {
         std::error_code ec;
         const bool exists = std::filesystem::exists(path, ec);
         if (ec || (mustExist && !exists)) {
             ++failed;
-            std::cout << "[FAIL] " << name << "=" << path.string() << "\n";
+            addCheck(name, "fail", path, ec ? ec.message() : "missing");
             return;
         }
-        std::cout << "[ OK ] " << name << "=" << path.string() << "\n";
+        addCheck(name, "ok", path);
     };
 
     checkPath("config_path", gPaths.configPath, true);
@@ -581,10 +852,10 @@ int doDoctorCommand(const std::vector<std::string>& args) {
         std::string reason;
         if (!checkDirWritable(path, reason)) {
             ++failed;
-            std::cout << "[FAIL] " << name << "=" << path.string() << " (" << reason << ")\n";
+            addCheck(name, "fail", path, reason);
             return;
         }
-        std::cout << "[ OK ] " << name << " writable\n";
+        addCheck(name, "ok", path, "writable");
     };
 
     checkWritable("config_dir", gPaths.configDir);
@@ -598,31 +869,35 @@ int doDoctorCommand(const std::vector<std::string>& args) {
         std::error_code ec;
         if (item.second.empty() || !std::filesystem::is_regular_file(item.second, ec) || ec) {
             ++failed;
-            std::cout << "[FAIL] " << item.first << "=" << item.second << "\n";
+            addCheck(item.first, "fail", item.second, ec ? ec.message() : "missing");
         } else {
-            std::cout << "[ OK ] " << item.first << "=" << item.second << "\n";
+            addCheck(item.first, "ok", item.second);
         }
     }
     const auto cores = discoverCorePaths(cfg);
 
     auto checkCore = [&](const std::string& key, const std::string& value) {
         if (value.empty()) {
-            std::cout << "[WARN] " << key << " not found in PATH and not configured\n";
+            addCheck(key, "warn", {}, "not found in PATH and not configured");
             return;
         }
         if (!isExecutableFile(value)) {
             ++failed;
-            std::cout << "[FAIL] " << key << "=" << value << " (not executable)\n";
+            addCheck(key, "fail", value, "not executable");
             return;
         }
-        std::cout << "[ OK ] " << key << "=" << value << "\n";
+        addCheck(key, "ok", value);
     };
 
     checkCore("core.mihomo", cores.mihomo);
     checkCore("core.sing-box", cores.singBox);
     checkCore("core.xray", cores.xray);
 
-    std::cout << "doctor summary: failed=" << failed << "\n";
+    if (jsonOutput) {
+        printJsonLine({{"failed", failed}, {"checks", checks}});
+    } else {
+        std::cout << "doctor summary: failed=" << failed << "\n";
+    }
     return failed == 0 ? 0 : 1;
 }
 
@@ -636,20 +911,25 @@ int doCheckCommand(const std::vector<std::string>& args) {
         printCheckUsage();
         return 1;
     }
+    if (!validateOptions(args, 2, {"--file", "--output-dir", "--timeout"}, {"--file", "--output-dir", "--timeout"})) {
+        return ExitUsage;
+    }
+    if (!ensureNoExtraPositionals(args, 2, {"--file", "--output-dir", "--timeout"}, "check accepts only one target and options")) {
+        return ExitUsage;
+    }
 
     AppConfig cfg = loadConfig(gPaths.configPath.string());
     applyConfigDefaults(cfg);
     int timeoutSec = 30;
-    if (hasOption(args, "--timeout") && !parseIntValue(argValue(args, "--timeout", "30"), "--timeout", timeoutSec)) {
+    if (hasOption(args, "--timeout") && !parseBoundedIntValue(argValue(args, "--timeout", "30"), "--timeout", 1, timeoutSec)) {
         return 1;
     }
-    timeoutSec = std::max(1, timeoutSec);
 
     ExportTarget target;
     std::string defaultFile;
     if (!parseExportTarget(args[1], target, defaultFile)) {
         std::cerr << "unknown check target: " << args[1] << "\n";
-        return 1;
+        return ExitUsage;
     }
 
     std::string filePath = argValue(args, "--file");
@@ -671,6 +951,23 @@ int doCheckCommand(const std::vector<std::string>& args) {
     return runConfigCheckForTarget(cfg, target, filePath, timeoutSec);
 }
 
+int doCompletionCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printCompletionUsage();
+        return 0;
+    }
+    if (args.size() != 2) {
+        printCompletionUsage();
+        return 1;
+    }
+    if (args[1] != "bash") {
+        std::cerr << "unsupported completion shell: " << args[1] << "\n";
+        return 1;
+    }
+    std::cout << generateBashCompletion();
+    return 0;
+}
+
 int doSubCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         printSubUsage();
@@ -686,6 +983,18 @@ int doSubCommand(const std::vector<std::string>& args) {
 
     const std::string cmd = args[1];
     if (cmd == "list") {
+        if (!validateOptions(args, 2, {"--json"}, {})) {
+            return 1;
+        }
+        const bool jsonOutput = hasFlag(args, "--json");
+        if ((!jsonOutput && args.size() != 2) || (jsonOutput && args.size() != 3)) {
+            std::cerr << "sub list does not accept arguments\n";
+            return 1;
+        }
+        if (jsonOutput) {
+            printJsonLine(subscriptionsToJson(subs));
+            return 0;
+        }
         for (const auto& s : subs) {
             std::cout << s.id << "\t" << s.name << "\t" << (s.enabled ? "enabled" : "disabled") << "\tgroup="
                       << s.group << "\tpriority=" << s.priority << "\tupdate_interval=" << s.updateInterval << "\ttimeout="
@@ -702,6 +1011,14 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "add") {
+        if (!validateOptions(
+                args,
+                2,
+                {"--id", "--name", "--url", "--group", "--format-hint", "--user-agent", "--timeout", "--retry", "--priority", "--update-interval", "--tag", "--tags", "--header", "--force"},
+                {"--id", "--name", "--url", "--group", "--format-hint", "--user-agent", "--timeout", "--retry", "--priority", "--update-interval", "--tag", "--tags", "--header"}
+            )) {
+            return 1;
+        }
         const std::string name = argValue(args, "--name");
         const std::string url = argValue(args, "--url");
         const std::string maybeId = argValue(args, "--id");
@@ -709,15 +1026,13 @@ int doSubCommand(const std::vector<std::string>& args) {
         const std::string formatHint = argValue(args, "--format-hint", "auto");
         const std::string userAgent = argValue(args, "--user-agent", "");
         int timeout = 15;
-        if (!parseIntValue(argValue(args, "--timeout", "15"), "--timeout", timeout)) {
+        if (!parseBoundedIntValue(argValue(args, "--timeout", "15"), "--timeout", 1, timeout)) {
             return 1;
         }
-        timeout = std::max(1, timeout);
         int retry = 2;
-        if (!parseIntValue(argValue(args, "--retry", "2"), "--retry", retry)) {
+        if (!parseBoundedIntValue(argValue(args, "--retry", "2"), "--retry", 0, retry)) {
             return 1;
         }
-        retry = std::max(0, retry);
         const bool timeoutOverride = hasOption(args, "--timeout");
         const bool retryOverride = hasOption(args, "--retry");
         const bool force = hasFlag(args, "--force");
@@ -734,6 +1049,14 @@ int doSubCommand(const std::vector<std::string>& args) {
         Subscription s;
         s.id = maybeId.empty() ? makeIdFromName(name) : maybeId;
         s.name = name;
+        if (subscriptionIdOrNameExists(subs, s.id, "")) {
+            std::cerr << "subscription id already exists: " << s.id << "\n";
+            return 1;
+        }
+        if (subscriptionIdOrNameExists(subs, "", s.name)) {
+            std::cerr << "subscription name already exists: " << s.name << "\n";
+            return 1;
+        }
         s.url = url;
         s.group = group;
         s.formatHint = formatHint;
@@ -743,16 +1066,24 @@ int doSubCommand(const std::vector<std::string>& args) {
         s.retry = retry;
         s.retryOverride = retryOverride;
         s.tags = tags;
+        for (const auto& rawHeader : argValues(args, "--header")) {
+            std::string key;
+            std::string value;
+            if (!parseHeaderOption(rawHeader, key, value)) {
+                return 1;
+            }
+            s.headers[key] = value;
+        }
         int priority = 100;
-        if (!parseIntValue(argValue(args, "--priority", "100"), "--priority", priority)) {
+        if (!parseBoundedIntValue(argValue(args, "--priority", "100"), "--priority", 0, priority)) {
             return 1;
         }
-        s.priority = std::max(0, priority);
+        s.priority = priority;
         int updateInterval = 3600;
-        if (!parseIntValue(argValue(args, "--update-interval", "3600"), "--update-interval", updateInterval)) {
+        if (!parseBoundedIntValue(argValue(args, "--update-interval", "3600"), "--update-interval", 0, updateInterval)) {
             return 1;
         }
-        s.updateInterval = std::max(0, updateInterval);
+        s.updateInterval = updateInterval;
         s.cachePath = "subscriptions/" + s.id + ".cache";
         s.lastUpdated = nowIso8601();
 
@@ -780,20 +1111,18 @@ int doSubCommand(const std::vector<std::string>& args) {
             }
         }
 
-        auto it = std::find_if(subs.begin(), subs.end(), [&](const Subscription& x) { return x.id == s.id; });
-        if (it != subs.end()) {
-            *it = s;
-        } else {
-            subs.push_back(s);
-        }
+        subs.push_back(s);
         saveSubscriptions(gPaths.subPath.string(), subs);
         std::cout << "added subscription: " << s.id << "\n";
         return 0;
     }
 
     if (cmd == "remove") {
-        if (args.size() < 3) {
-            std::cerr << "sub remove requires <id>\n";
+        if (!validateOptions(args, 3, {}, {})) {
+            return 1;
+        }
+        if (args.size() != 3) {
+            std::cerr << "sub remove requires exactly <id|name>\n";
             return 1;
         }
         const std::string id = args[2];
@@ -812,8 +1141,11 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "enable" || cmd == "disable") {
-        if (args.size() < 3) {
-            std::cerr << "sub " << cmd << " requires <id|name>\n";
+        if (!validateOptions(args, 3, {}, {})) {
+            return 1;
+        }
+        if (args.size() != 3) {
+            std::cerr << "sub " << cmd << " requires exactly <id|name>\n";
             return 1;
         }
         auto* s = findSub(subs, args[2]);
@@ -828,8 +1160,20 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "edit") {
+        const std::set<std::string> editValueOptions = {"--name", "--url", "--group", "--format-hint", "--user-agent", "--timeout", "--retry", "--priority", "--update-interval", "--tags", "--header", "--remove-header"};
+        if (!validateOptions(
+                args,
+                3,
+                {"--name", "--url", "--group", "--format-hint", "--user-agent", "--timeout", "--retry", "--priority", "--update-interval", "--tags", "--header", "--remove-header", "--clear-headers", "--enable", "--disable"},
+                editValueOptions
+            )) {
+            return 1;
+        }
         if (args.size() < 3) {
             std::cerr << "sub edit requires <id|name>\n";
+            return 1;
+        }
+        if (!ensureNoExtraPositionals(args, 3, editValueOptions, "sub edit accepts exactly one <id|name>")) {
             return 1;
         }
         auto* s = findSub(subs, args[2]);
@@ -849,6 +1193,10 @@ int doSubCommand(const std::vector<std::string>& args) {
         const auto tagsCsv = argValue(args, "--tags");
 
         if (!name.empty()) {
+            if (subscriptionIdOrNameExists(subs, "", name, s->id)) {
+                std::cerr << "subscription name already exists: " << name << "\n";
+                return 1;
+            }
             s->name = name;
         }
         if (!url.empty()) {
@@ -865,36 +1213,50 @@ int doSubCommand(const std::vector<std::string>& args) {
         }
         if (!timeout.empty()) {
             int parsed = 0;
-            if (!parseIntValue(timeout, "--timeout", parsed)) {
+            if (!parseBoundedIntValue(timeout, "--timeout", 1, parsed)) {
                 return 1;
             }
-            s->timeout = std::max(1, parsed);
+            s->timeout = parsed;
             s->timeoutOverride = true;
         }
         if (!retry.empty()) {
             int parsed = 0;
-            if (!parseIntValue(retry, "--retry", parsed)) {
+            if (!parseBoundedIntValue(retry, "--retry", 0, parsed)) {
                 return 1;
             }
-            s->retry = std::max(0, parsed);
+            s->retry = parsed;
             s->retryOverride = true;
         }
         if (!priority.empty()) {
             int parsed = 0;
-            if (!parseIntValue(priority, "--priority", parsed)) {
+            if (!parseBoundedIntValue(priority, "--priority", 0, parsed)) {
                 return 1;
             }
-            s->priority = std::max(0, parsed);
+            s->priority = parsed;
         }
         if (!updateInterval.empty()) {
             int parsed = 0;
-            if (!parseIntValue(updateInterval, "--update-interval", parsed)) {
+            if (!parseBoundedIntValue(updateInterval, "--update-interval", 0, parsed)) {
                 return 1;
             }
-            s->updateInterval = std::max(0, parsed);
+            s->updateInterval = parsed;
         }
         if (!tagsCsv.empty()) {
             s->tags = splitComma(tagsCsv);
+        }
+        if (hasFlag(args, "--clear-headers")) {
+            s->headers.clear();
+        }
+        for (const auto& key : argValues(args, "--remove-header")) {
+            s->headers.erase(key);
+        }
+        for (const auto& rawHeader : argValues(args, "--header")) {
+            std::string key;
+            std::string value;
+            if (!parseHeaderOption(rawHeader, key, value)) {
+                return 1;
+            }
+            s->headers[key] = value;
         }
         if (hasFlag(args, "--enable")) {
             s->enabled = true;
@@ -908,6 +1270,13 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "validate") {
+        if (!validateOptions(args, 2, {}, {})) {
+            return 1;
+        }
+        if (args.size() != 2 && args.size() != 3) {
+            std::cerr << "sub validate accepts at most one <id|name>\n";
+            return 1;
+        }
         auto cfg = loadConfig(gPaths.configPath.string());
         applyConfigDefaults(cfg);
         std::string only;
@@ -917,10 +1286,12 @@ int doSubCommand(const std::vector<std::string>& args) {
         int okCount = 0;
         int failCount = 0;
         int skippedNodes = 0;
+        int matchedCount = 0;
         for (auto& s : subs) {
             if (!only.empty() && s.id != only && s.name != only) {
                 continue;
             }
+            ++matchedCount;
             auto fr = fetchSubscriptionWithRetry(withEffectiveNetworkPolicy(s, cfg), false);
             if (!fr.ok || fr.content.empty()) {
                 ++failCount;
@@ -941,20 +1312,24 @@ int doSubCommand(const std::vector<std::string>& args) {
             ++okCount;
             std::cout << "valid: " << s.id << " nodes=" << parsed.nodes.size() << " skipped=" << parsed.skipped << "\n";
         }
+        if (!only.empty() && matchedCount == 0) {
+            std::cerr << "not found: " << only << "\n";
+            return 1;
+        }
         std::cout << "validate summary: success=" << okCount << " failed=" << failCount << " skipped_nodes=" << skippedNodes << "\n";
         return failCount > 0 ? 1 : 0;
     }
 
     if (cmd == "update") {
+        if (!validateOptions(args, 2, {"--tag", "--strict-network"}, {"--tag"})) {
+            return 1;
+        }
         auto cfg = loadConfig(gPaths.configPath.string());
         applyConfigDefaults(cfg);
         const bool strictNetwork = hasFlag(args, "--strict-network");
         std::set<std::string> ids;
-        for (size_t i = 2; i < args.size(); ++i) {
-            if (args[i].rfind("--", 0) == 0) {
-                continue;
-            }
-            ids.insert(args[i]);
+        for (const auto& id : positionalArgs(args, 2, {"--tag"})) {
+            ids.insert(id);
         }
         auto tagsFilter = argValues(args, "--tag");
 
@@ -1099,13 +1474,26 @@ int doConfigCommand(const std::vector<std::string>& args) {
         return 1;
     }
     const std::string cmd = args[1];
+    const bool jsonOutput = hasFlag(args, "--json");
     if (cmd == "list") {
+        if (!validateOptions(args, 2, {"--json"}, {})) {
+            return 1;
+        }
+        if ((!jsonOutput && args.size() != 2) || (jsonOutput && args.size() != 3)) {
+            std::cerr << "config list does not accept arguments\n";
+            return 1;
+        }
+        if (jsonOutput) {
+            printJsonLine(configToJson(cfg));
+            return 0;
+        }
         std::cout << "tun=" << (cfg.tun ? "true" : "false") << "\n";
         std::cout << "output_dir=" << cfg.outputDir << "\n";
         std::cout << "template_dir=" << cfg.templateDir << "\n";
         std::cout << "parallelism=" << cfg.parallelism << "\n";
         std::cout << "timeout=" << cfg.timeout << "\n";
         std::cout << "retry=" << cfg.retry << "\n";
+        std::cout << "fetch_max_bytes=" << cfg.fetchMaxBytes << "\n";
         std::cout << "log_level=" << cfg.logLevel << "\n";
         std::cout << "core_paths.mihomo=" << cfg.mihomoPath << "\n";
         std::cout << "core_paths.sing_box=" << cfg.singBoxPath << "\n";
@@ -1127,7 +1515,7 @@ int doConfigCommand(const std::vector<std::string>& args) {
         return 0;
     }
     if (cmd == "get") {
-        if (args.size() < 3) {
+        if (args.size() != 3) {
             std::cerr << "config get requires <key>\n";
             return 1;
         }
@@ -1154,6 +1542,10 @@ int doConfigCommand(const std::vector<std::string>& args) {
         }
         if (key == "retry") {
             std::cout << cfg.retry << "\n";
+            return 0;
+        }
+        if (key == "fetch_max_bytes") {
+            std::cout << cfg.fetchMaxBytes << "\n";
             return 0;
         }
         if (key == "log_level") {
@@ -1221,14 +1613,16 @@ int doConfigCommand(const std::vector<std::string>& args) {
         return 1;
     }
     if (cmd == "set") {
-        if (args.size() < 4) {
+        if (args.size() != 4) {
             std::cerr << "config set requires <key> <value>\n";
             return 1;
         }
         const auto& key = args[2];
         const auto& value = args[3];
         if (key == "tun") {
-            cfg.tun = (args[3] == "true" || args[3] == "1");
+            if (!parseBoolValue(value, "tun", cfg.tun)) {
+                return 1;
+            }
         } else if (key == "output_dir") {
             cfg.outputDir = resolveFromConfigDir(value);
         } else if (key == "template_dir") {
@@ -1237,22 +1631,28 @@ int doConfigCommand(const std::vector<std::string>& args) {
             updateTemplateDirDefaults(cfg, oldDir);
         } else if (key == "parallelism") {
             int parsed = 0;
-            if (!parseIntValue(value, "parallelism", parsed)) {
+            if (!parseBoundedIntValue(value, "parallelism", 1, parsed)) {
                 return 1;
             }
-            cfg.parallelism = std::max(1, parsed);
+            cfg.parallelism = parsed;
         } else if (key == "timeout") {
             int parsed = 0;
-            if (!parseIntValue(value, "timeout", parsed)) {
+            if (!parseBoundedIntValue(value, "timeout", 1, parsed)) {
                 return 1;
             }
-            cfg.timeout = std::max(1, parsed);
+            cfg.timeout = parsed;
         } else if (key == "retry") {
             int parsed = 0;
-            if (!parseIntValue(value, "retry", parsed)) {
+            if (!parseBoundedIntValue(value, "retry", 0, parsed)) {
                 return 1;
             }
-            cfg.retry = std::max(0, parsed);
+            cfg.retry = parsed;
+        } else if (key == "fetch_max_bytes") {
+            int parsed = 0;
+            if (!parseBoundedIntValue(value, "fetch_max_bytes", 1024, parsed)) {
+                return 1;
+            }
+            cfg.fetchMaxBytes = parsed;
         } else if (key == "log_level") {
             cfg.logLevel = value;
         } else if (key == "core_paths.mihomo") {
@@ -1262,7 +1662,9 @@ int doConfigCommand(const std::vector<std::string>& args) {
         } else if (key == "core_paths.xray") {
             cfg.xrayPath = resolveFromConfigDir(value);
         } else if (key == "node_management.dedupe") {
-            cfg.dedupeNodes = (value == "true" || value == "1");
+            if (!parseBoolValue(value, "node_management.dedupe", cfg.dedupeNodes)) {
+                return 1;
+            }
         } else if (key == "node_management.rename_template") {
             cfg.renameTemplate = value;
         } else if (key == "node_management.include_regex") {
@@ -1280,6 +1682,11 @@ int doConfigCommand(const std::vector<std::string>& args) {
             }
             const auto core = rest.substr(0, dot);
             const auto kind = rest.substr(dot + 1);
+            std::string error;
+            if (!parseTemplateTargetKind(core, kind, error)) {
+                std::cerr << error << "\n";
+                return 1;
+            }
             if (kind == "normal") {
                 cfg.templateNormal[core] = value;
             } else if (kind == "tun") {
@@ -1304,7 +1711,7 @@ int doConfigCommand(const std::vector<std::string>& args) {
         return 0;
     }
     if (cmd == "remove") {
-        if (args.size() < 3) {
+        if (args.size() != 3) {
             std::cerr << "config remove requires <key>\n";
             return 1;
         }
@@ -1323,6 +1730,8 @@ int doConfigCommand(const std::vector<std::string>& args) {
             cfg.timeout = 15;
         } else if (key == "retry") {
             cfg.retry = 2;
+        } else if (key == "fetch_max_bytes") {
+            cfg.fetchMaxBytes = 10 * 1024 * 1024;
         } else if (key == "log_level") {
             cfg.logLevel = "info";
         } else if (key == "core_paths.mihomo") {
@@ -1350,6 +1759,11 @@ int doConfigCommand(const std::vector<std::string>& args) {
             }
             const auto core = rest.substr(0, dot);
             const auto kind = rest.substr(dot + 1);
+            std::string error;
+            if (!parseTemplateTargetKind(core, kind, error)) {
+                std::cerr << error << "\n";
+                return 1;
+            }
             if (kind == "normal") {
                 cfg.templateNormal.erase(core);
             } else if (kind == "tun") {
@@ -1374,6 +1788,147 @@ int doConfigCommand(const std::vector<std::string>& args) {
     return 1;
 }
 
+int doTemplateCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printTemplateUsage();
+        return 0;
+    }
+    ensureDefaults();
+    AppConfig cfg = loadConfig(gPaths.configPath.string());
+    applyConfigDefaults(cfg);
+    if (args.size() < 2) {
+        printTemplateUsage();
+        return 1;
+    }
+
+    const std::string cmd = args[1];
+    const bool jsonOutput = hasFlag(args, "--json");
+    if (cmd == "list") {
+        if (!validateOptions(args, 2, {"--json"}, {})) {
+            return 1;
+        }
+        if ((!jsonOutput && args.size() != 2) || (jsonOutput && args.size() != 3)) {
+            std::cerr << "template list does not accept arguments\n";
+            return 1;
+        }
+        nlohmann::json templates = nlohmann::json::array();
+        for (const auto& item : templateTargetKinds()) {
+            const auto path = getTemplateValue(cfg, item.first, item.second);
+            std::error_code ec;
+            const bool exists = std::filesystem::is_regular_file(path, ec) && !ec;
+            if (jsonOutput) {
+                templates.push_back({{"target", item.first}, {"kind", item.second}, {"path", path}, {"exists", exists}});
+                continue;
+            }
+            std::cout << item.first << "." << item.second << "=" << path << "\t" << (exists ? "ok" : "missing") << "\n";
+        }
+        if (jsonOutput) {
+            printJsonLine({{"templates", templates}});
+        }
+        return 0;
+    }
+
+    if (cmd == "get") {
+        if (args.size() != 4) {
+            std::cerr << "template get requires <target> <normal|tun>\n";
+            return 1;
+        }
+        std::string error;
+        if (!parseTemplateTargetKind(args[2], args[3], error)) {
+            std::cerr << error << "\n";
+            return 1;
+        }
+        std::cout << getTemplateValue(cfg, args[2], args[3]) << "\n";
+        return 0;
+    }
+
+    if (cmd == "set") {
+        if (args.size() != 5) {
+            std::cerr << "template set requires <target> <normal|tun> <path>\n";
+            return 1;
+        }
+        std::string error;
+        if (!parseTemplateTargetKind(args[2], args[3], error)) {
+            std::cerr << error << "\n";
+            return 1;
+        }
+        const std::string path = resolveFromCliCwd(args[4]);
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec) || ec) {
+            std::cerr << "template file does not exist: " << path << "\n";
+            return 1;
+        }
+        setTemplateValue(cfg, args[2], args[3], path);
+        saveConfig(gPaths.configPath.string(), cfg);
+        std::cout << "updated template: " << args[2] << "." << args[3] << "\n";
+        return 0;
+    }
+
+    if (cmd == "reset") {
+        if (args.size() > 4) {
+            std::cerr << "template reset accepts [target] [normal|tun]\n";
+            return 1;
+        }
+        if (args.size() == 2) {
+            for (const auto& item : templateTargetKinds()) {
+                resetTemplateValue(cfg, item.first, item.second);
+            }
+        } else if (args.size() == 3) {
+            if (!isTemplateTarget(args[2])) {
+                std::cerr << "invalid template target: " << args[2] << "\n";
+                return 1;
+            }
+            resetTemplateValue(cfg, args[2], "normal");
+            resetTemplateValue(cfg, args[2], "tun");
+        } else {
+            std::string error;
+            if (!parseTemplateTargetKind(args[2], args[3], error)) {
+                std::cerr << error << "\n";
+                return 1;
+            }
+            resetTemplateValue(cfg, args[2], args[3]);
+        }
+        saveConfig(gPaths.configPath.string(), cfg);
+        std::cout << "reset template configuration\n";
+        return 0;
+    }
+
+    if (cmd == "validate") {
+        if (!validateOptions(args, 2, {"--json"}, {})) {
+            return 1;
+        }
+        if ((!jsonOutput && args.size() != 2) || (jsonOutput && args.size() != 3)) {
+            std::cerr << "template validate does not accept arguments\n";
+            return 1;
+        }
+        int failed = 0;
+        nlohmann::json templates = nlohmann::json::array();
+        for (const auto& item : templateTargetKinds()) {
+            const auto path = getTemplateValue(cfg, item.first, item.second);
+            std::error_code ec;
+            const bool exists = std::filesystem::is_regular_file(path, ec) && !ec;
+            templates.push_back({{"target", item.first}, {"kind", item.second}, {"path", path}, {"exists", exists}});
+            if (!exists) {
+                ++failed;
+                if (!jsonOutput) {
+                    std::cout << "[FAIL] " << item.first << "." << item.second << "=" << path << "\n";
+                }
+            } else {
+                if (!jsonOutput) {
+                    std::cout << "[ OK ] " << item.first << "." << item.second << "=" << path << "\n";
+                }
+            }
+        }
+        if (jsonOutput) {
+            printJsonLine({{"failed", failed}, {"templates", templates}});
+        }
+        return failed == 0 ? 0 : 1;
+    }
+
+    std::cerr << "unknown template command: " << cmd << "\n";
+    return 1;
+}
+
 int doExportCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         printExportUsage();
@@ -1387,7 +1942,18 @@ int doExportCommand(const std::vector<std::string>& args) {
     const std::string target = args[1];
     if (target != "all" && target != "mihomo" && target != "sing-box" && target != "xray") {
         std::cerr << "unknown export target: " << target << "\n";
-        return 1;
+        return ExitUsage;
+    }
+    if (!validateOptions(
+            args,
+            2,
+            {"--tun", "--check", "--check-timeout", "--output-dir", "--sub", "--tag", "--strict-network"},
+            {"--check-timeout", "--output-dir", "--sub", "--tag"}
+        )) {
+        return ExitUsage;
+    }
+    if (!ensureNoExtraPositionals(args, 2, {"--check-timeout", "--output-dir", "--sub", "--tag"}, "export accepts only one target and options")) {
+        return ExitUsage;
     }
 
     auto subs = loadSubscriptions(gPaths.subPath.string());
@@ -1396,10 +1962,9 @@ int doExportCommand(const std::vector<std::string>& args) {
     const bool tun = hasFlag(args, "--tun") ? true : cfg.tun;
     const bool strictNetwork = hasFlag(args, "--strict-network");
     int checkTimeoutSec = 30;
-    if (hasOption(args, "--check-timeout") && !parseIntValue(argValue(args, "--check-timeout", "30"), "--check-timeout", checkTimeoutSec)) {
+    if (hasOption(args, "--check-timeout") && !parseBoundedIntValue(argValue(args, "--check-timeout", "30"), "--check-timeout", 1, checkTimeoutSec)) {
         return 1;
     }
-    checkTimeoutSec = std::max(1, checkTimeoutSec);
     std::string outputDir;
     if (hasOption(args, "--output-dir")) {
         outputDir = resolveFromCliCwd(argValue(args, "--output-dir", cfg.outputDir));
@@ -1618,15 +2183,21 @@ int main(int argc, char** argv) {
         if (cmd == "config") {
             return doConfigCommand(tail);
         }
+        if (cmd == "template") {
+            return doTemplateCommand(tail);
+        }
         if (cmd == "export") {
             return doExportCommand(tail);
         }
         if (cmd == "check") {
             return doCheckCommand(tail);
         }
+        if (cmd == "completion") {
+            return doCompletionCommand(tail);
+        }
 
         std::cerr << "unknown command: " << cmd << "\n";
-        return 1;
+        return ExitUsage;
     } catch (const std::exception& ex) {
         std::cerr << "error: " << ex.what() << "\n";
         return 1;

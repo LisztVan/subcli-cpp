@@ -5,7 +5,10 @@
 
 #include "exporter_internal.hpp"
 #include "subcli/capabilities.hpp"
+#include "subcli/cli_completion.hpp"
+#include "subcli/cli_output.hpp"
 #include "subcli/exporter.hpp"
+#include "subcli/fetch.hpp"
 #include "subcli/node.hpp"
 #include "subcli/parser.hpp"
 #include "subcli/protocol_registry.hpp"
@@ -68,6 +71,27 @@ void testProtocolRegistryCoversOfficialTargets() {
     require(subcli::isProtocolExportReady(subcli::ExportTarget::Xray, "freedom"), "xray freedom should be export-ready");
     require(subcli::isProtocolExportReady(subcli::ExportTarget::Xray, "blackhole"), "xray blackhole should be export-ready");
     require(subcli::isProtocolExportReady(subcli::ExportTarget::Xray, "dns"), "xray dns should be export-ready");
+}
+
+void testCliOutputStatusJson() {
+    auto json = subcli::makeStatusJson("ok", "initialized");
+    require(json.value("status", "") == "ok", "status json should contain status");
+    require(json.value("message", "") == "initialized", "status json should contain message");
+}
+
+void testCliOutputDiagnosticsJson() {
+    std::vector<subcli::DiagnosticMessage> warnings = {{"invalid_include_regex", "include_regex is invalid and was ignored"}};
+    auto json = subcli::diagnosticMessagesToJson(warnings);
+    require(json.is_array(), "diagnostics json should be array");
+    require(json.size() == 1, "diagnostics json should include one warning");
+    require(json[0].value("code", "") == "invalid_include_regex", "diagnostic code should be preserved");
+}
+
+void testBashCompletionContainsCommands() {
+    const auto script = subcli::generateBashCompletion();
+    require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
+    require(script.find("init doctor sub config template export check completion") != std::string::npos, "completion should include root commands");
+    require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
 }
 
 void testCapabilityWarningsAreSpecific() {
@@ -831,8 +855,9 @@ void testExportFilteringByTarget() {
     require(singContent.find("\"type\": \"hysteria2\"") != std::string::npos, "sing-box export should keep hysteria2 outbound");
 
     auto xray = subcli::exportForTarget(subcli::ExportTarget::Xray, {hy2}, config, false, (outDir / "xray-hy2.json").string(), error);
-    require(xray.ok, "xray export should still succeed with skipped unsupported node");
+    require(!xray.ok, "xray export should fail when every node is unsupported");
     require(xray.skipped == 1, "xray export should skip unsupported hysteria2 node");
+    require(error.find("no supported nodes") != std::string::npos, "xray error should explain that no supported nodes remain");
 }
 
 void testExportXrayUsesStableRandomBalancer() {
@@ -946,6 +971,49 @@ void testStorePersistsOverrideFlags() {
     require(loaded[0].retry == 1, "retry should persist");
     require(loaded[0].timeoutOverride, "timeout_override should persist");
     require(loaded[0].retryOverride, "retry_override should persist");
+
+    fs::remove(path);
+}
+
+void testStorePersistsFetchMaxBytes() {
+    const fs::path path = fs::temp_directory_path() / "subcli-tests-fetch-config.yaml";
+    subcli::AppConfig config;
+    config.fetchMaxBytes = 4096;
+
+    subcli::saveConfig(path.string(), config);
+    auto loaded = subcli::loadConfig(path.string());
+    require(loaded.fetchMaxBytes == 4096, "fetch_max_bytes should persist");
+
+    fs::remove(path);
+}
+
+void testFetchRejectsUnsupportedScheme() {
+    subcli::Subscription sub;
+    sub.id = "bad";
+    sub.name = "bad";
+    sub.url = "ftp://example.com/sub";
+
+    auto result = subcli::fetchSubscription(sub, false);
+    require(!result.ok, "unsupported scheme fetch should fail");
+    require(result.error.find("unsupported subscription url scheme") != std::string::npos, "unsupported scheme error should be clear");
+}
+
+void testFetchFileHonorsMaxBytes() {
+    const fs::path path = fs::temp_directory_path() / "subcli-tests-large-sub.txt";
+    {
+        std::ofstream out(path);
+        out << "1234567890";
+    }
+
+    subcli::Subscription sub;
+    sub.id = "large";
+    sub.name = "large";
+    sub.url = "file://" + path.string();
+    sub.fetchMaxBytes = 5;
+
+    auto result = subcli::fetchSubscription(sub, false);
+    require(!result.ok, "oversized file fetch should fail");
+    require(result.error.find("fetch_max_bytes") != std::string::npos, "oversized fetch error should mention fetch_max_bytes");
 
     fs::remove(path);
 }
@@ -1086,6 +1154,9 @@ void testLoadConfigMalformedYamlThrows() {
 
 int main() {
     testProtocolRegistryCoversOfficialTargets();
+    testCliOutputStatusJson();
+    testCliOutputDiagnosticsJson();
+    testBashCompletionContainsCommands();
     testCapabilityWarningsAreSpecific();
     testLegacyBridgeBuildsStructuredCoreOptions();
     testStructuredWritersPreserveVlessEncryption();
@@ -1121,5 +1192,8 @@ int main() {
     testWriteFileCreatesParentDirectories();
     testLoadConfigMalformedYamlThrows();
     testStorePersistsOverrideFlags();
+    testStorePersistsFetchMaxBytes();
+    testFetchRejectsUnsupportedScheme();
+    testFetchFileHonorsMaxBytes();
     return 0;
 }

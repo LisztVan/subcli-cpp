@@ -22,6 +22,7 @@ struct Subscription {
     bool retryOverride = false;
     std::map<std::string, std::string> headers;
     int updateInterval = 3600;
+    long fetchMaxBytes = 10 * 1024 * 1024;
 
     std::string lastUpdated;
     std::string lastSuccess;
@@ -38,6 +39,7 @@ struct AppConfig {
     int parallelism = 4;
     int timeout = 15;
     int retry = 2;
+    long fetchMaxBytes = 10 * 1024 * 1024;
     std::string templateDir = "./templates";
     std::string outputDir = "./outputs";
     std::string mihomoPath;

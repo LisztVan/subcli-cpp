@@ -133,6 +133,7 @@ AppConfig loadConfig(const std::string& path) {
     c.parallelism = root["parallelism"].as<int>(4);
     c.timeout = root["timeout"].as<int>(15);
     c.retry = root["retry"].as<int>(2);
+    c.fetchMaxBytes = root["fetch_max_bytes"].as<long>(10 * 1024 * 1024);
     c.templateDir = root["template_dir"].as<std::string>("./templates");
     c.outputDir = root["output_dir"].as<std::string>("./outputs");
     if (root["core_paths"] && root["core_paths"].IsMap()) {
@@ -182,6 +183,7 @@ void saveConfig(const std::string& path, const AppConfig& c) {
     root["parallelism"] = c.parallelism;
     root["timeout"] = c.timeout;
     root["retry"] = c.retry;
+    root["fetch_max_bytes"] = c.fetchMaxBytes;
     root["template_dir"] = c.templateDir;
     root["output_dir"] = c.outputDir;
     root["core_paths"]["mihomo"] = c.mihomoPath;

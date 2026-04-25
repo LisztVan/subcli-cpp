@@ -100,6 +100,10 @@ ExportResult exportXrayImpl(
             result.warnings.push_back({"unsupported_node", node.name + ": " + reason});
         }
     }
+    if (supported.empty()) {
+        error = "xray has no supported nodes after filtering";
+        return result;
+    }
 
     std::vector<ProxyNode> managed = supported;
     for (size_t i = 0; i < managed.size(); ++i) {

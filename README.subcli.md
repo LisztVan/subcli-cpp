@@ -1,6 +1,6 @@
 # subcli
 
-`subcli` is a CLI application for subscription management and config export. It exports full configs for Mihomo, sing-box, and Xray. Proxy cores are not bundled.
+`subcli` is a CLI application for proxy subscription management and config export. You add one or more subscriptions, update or validate them, then export complete Mihomo, sing-box, or Xray configuration files from editable templates. Proxy cores are not bundled.
 
 ## Package Build
 
@@ -16,10 +16,13 @@ The generated archive is written under `build/`.
 
 ```bash
 subcli init
-subcli doctor
+subcli doctor --json
+subcli completion bash > ~/.local/share/bash-completion/completions/subcli
 subcli config set core_paths.sing_box /path/to/sing-box
 subcli config set core_paths.xray /path/to/xray
 subcli config set core_paths.mihomo /path/to/mihomo
+subcli config set fetch_max_bytes 10485760
+subcli template list
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --check
@@ -47,17 +50,26 @@ subcli doctor
 subcli sub add --name airport-a --url https://example/sub
 subcli sub add --name local --url file:///abs/path/sub.txt --force
 subcli sub list
+subcli sub edit airport-a --tags hk,sg --priority 20
+subcli sub disable airport-a
+subcli sub enable airport-a
+subcli sub remove airport-a
 subcli sub update
 subcli sub update --strict-network
 subcli sub validate airport-a
-subcli sub enable airport-a
-subcli sub disable airport-a
-subcli sub edit airport-a --tags hk,sg --priority 20
 
 subcli config list
+subcli config list --json
 subcli config get core_paths.sing_box
 subcli config set core_paths.sing_box /usr/local/bin/sing-box
 subcli config remove core_paths.sing_box
+
+subcli template list
+subcli template list --json
+subcli template get sing-box normal
+subcli template set sing-box normal ./templates/singbox_base.json
+subcli template reset sing-box normal
+subcli template validate
 
 subcli export all
 subcli export all --check
@@ -65,7 +77,111 @@ subcli export sing-box --output-dir ./outputs --check --check-timeout 30
 subcli export mihomo --strict-network
 
 subcli check sing-box --file ./outputs/sing-box.json --timeout 30
+subcli completion bash
 ```
+
+## Subscription Management
+
+Subscriptions support normal CRUD through `sub add`, `sub list`, `sub edit`, and `sub remove`. Subscription ids and names must be unique; `sub add` will not overwrite an existing subscription. Use `sub edit <id|name>` for changes.
+
+Useful fields:
+
+- `--name NAME`: display name and default id source.
+- `--id ID`: explicit unique id.
+- `--url URL`: HTTP(S) or `file://` subscription URL.
+- `--tag TAG` / `--tags a,b`: labels for update/export filtering.
+- `--header 'Key: Value'`: custom request header, repeatable.
+- `--priority N`: lower values are processed first.
+- `--format-hint auto|mihomo|sing-box|xray|uri`: parser preference.
+- `--force`: add without immediate fetch/parse validation.
+
+Header examples:
+
+```bash
+subcli sub edit airport-a --header 'Authorization: Bearer xxx'
+subcli sub edit airport-a --remove-header Authorization
+subcli sub edit airport-a --clear-headers
+```
+
+## Config Management
+
+`config list`, `config get`, `config set`, and `config remove` manage stored config values.
+
+Common keys:
+
+- `tun`
+- `output_dir`
+- `template_dir`
+- `parallelism`
+- `timeout`
+- `retry`
+- `fetch_max_bytes`
+- `log_level`
+- `core_paths.mihomo`
+- `core_paths.sing_box`
+- `core_paths.xray`
+- `node_management.dedupe`
+- `node_management.rename_template`
+- `node_management.include_regex`
+- `node_management.exclude_regex`
+- `node_management.sort_by`
+- `grouping.region_rules.<REGION>`
+
+Template paths can still be edited with `config set templates.<target>.<normal|tun> <path>`, but `subcli template ...` is the preferred interface.
+
+Persisted paths are resolved relative to the config directory. Use absolute paths for `core_paths.*` to avoid ambiguity.
+
+## Template Management
+
+Templates define the base config around generated proxies and groups. Supported targets are `mihomo`, `sing-box`, and `xray`; supported kinds are `normal` and `tun`.
+
+```bash
+subcli template list
+subcli template get mihomo normal
+subcli template set mihomo normal /path/to/mihomo_base.yaml
+subcli template reset mihomo normal
+subcli template reset
+subcli template validate
+```
+
+`template set` requires the file to exist. `template validate` returns non-zero if any configured template file is missing.
+
+## Machine-Readable Output
+
+Several read-only commands support `--json` for scripts:
+
+```bash
+subcli doctor --json
+subcli sub list --json
+subcli config list --json
+subcli template list --json
+subcli template validate --json
+```
+
+JSON output is emitted as a single compact JSON object on stdout. Warnings and failures remain represented in the JSON payload instead of relying on terminal formatting.
+
+## Shell Completion
+
+Bash completion can be generated with:
+
+```bash
+subcli completion bash > ~/.local/share/bash-completion/completions/subcli
+```
+
+Reload your shell after installing the generated script.
+
+## Export Behavior
+
+`export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, and optionally validates with external cores.
+
+- `--sub ID_OR_NAME` can be repeated to export only selected subscriptions.
+- `--tag TAG` can be repeated to export subscriptions with matching tags.
+- `--tun` selects tun templates for this export.
+- `--output-dir DIR` overrides the configured output directory.
+- `--check` runs the corresponding external core check after export.
+- `--strict-network` disables cache fallback.
+
+Export fails when no enabled subscription is selected, selected subscriptions parse into zero nodes, the target has no supported nodes after filtering, or the required template is missing.
 
 ## External Core Checks
 
@@ -80,6 +196,14 @@ subcli check sing-box --file ./outputs/sing-box.json --timeout 30
 ## Cache Behavior
 
 `sub update` and `export` can fall back to cached subscription content when network fetches fail. When this happens, `subcli` prints a warning. Use `--strict-network` to disable cache fallback and fail on network errors.
+
+Only `file://`, `http://`, and `https://` subscription URLs are accepted. Subscription content is capped by `fetch_max_bytes`, which defaults to `10485760` bytes.
+
+## Exit Codes
+
+- `0`: command succeeded.
+- `1`: runtime, network, config, parse, export, or validation failure.
+- `2`: invalid CLI usage such as an unknown command, unsupported target, or extra positional argument.
 
 ## Troubleshooting
 

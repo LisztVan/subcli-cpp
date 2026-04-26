@@ -232,6 +232,8 @@ subcli daemon stop
 - `--check`: validate exported config with core checks after export.
 - `--no-restart`: skip auto restart of currently running cores managed by `subcli run`.
 
+`daemon status` may also surface the last cycle summary as `last=ok` or `last=failed(...)`, which reflects the most recent `sub update -> export -> restart-running-cores` result, not just whether the process is still alive.
+
 ## Rule Assets
 
 Rule and geo databases are managed separately from subscriptions:

@@ -36,6 +36,9 @@ struct DaemonProcessStatus {
     std::string binaryPath;
     int intervalSec = 3600;
     std::string exportTarget = "all";
+    std::string lastCycleAt;
+    int lastCycleExitCode = 0;
+    std::string lastCycleMessage;
     DaemonOptions options;
 };
 
@@ -49,5 +52,6 @@ bool startDaemonProcess(
 
 DaemonProcessStatus inspectDaemonProcess(const std::filesystem::path& stateDir, std::string& error);
 bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, std::string& error);
+int runDaemonCycleWithState(const std::filesystem::path& stateDir, const DaemonOptions& options, const DaemonCallbacks& callbacks);
 
 } // namespace subcli

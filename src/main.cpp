@@ -2643,9 +2643,25 @@ int doDaemonCommand(const std::vector<std::string>& args) {
         }
         if (status.running) {
             std::cout << "daemon\trunning\tpid=" << status.pid << "\tinterval=" << status.options.intervalSec
-                      << "\ttarget=" << status.options.exportTarget << "\n";
+                      << "\ttarget=" << status.options.exportTarget;
+            if (!status.lastCycleMessage.empty()) {
+                if (status.lastCycleExitCode == 0) {
+                    std::cout << "\tlast=ok";
+                } else {
+                    std::cout << "\tlast=failed(" << status.lastCycleMessage << ")";
+                }
+            }
+            std::cout << "\n";
         } else {
-            std::cout << "daemon\tstale\tpid=" << status.pid << "\n";
+            std::cout << "daemon\tstale\tpid=" << status.pid;
+            if (!status.lastCycleMessage.empty()) {
+                if (status.lastCycleExitCode == 0) {
+                    std::cout << "\tlast=ok";
+                } else {
+                    std::cout << "\tlast=failed(" << status.lastCycleMessage << ")";
+                }
+            }
+            std::cout << "\n";
         }
         return ExitOk;
     }
@@ -2730,7 +2746,7 @@ int doDaemonCommand(const std::vector<std::string>& args) {
     }
 
     if (mode == "once") {
-        const int rc = runDaemonCycle(options, callbacks);
+        const int rc = runDaemonCycleWithState(gPaths.stateDir, options, callbacks);
         if (rc == 0) {
             std::cout << "daemon cycle completed\n";
             return ExitOk;
@@ -2740,7 +2756,7 @@ int doDaemonCommand(const std::vector<std::string>& args) {
     }
 
     while (true) {
-        const int rc = runDaemonCycle(options, callbacks);
+        const int rc = runDaemonCycleWithState(gPaths.stateDir, options, callbacks);
         if (rc != 0) {
             std::cerr << "daemon cycle failed with code " << rc << "\n";
         }

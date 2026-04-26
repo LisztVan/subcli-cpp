@@ -3,6 +3,7 @@
 #include <chrono>
 #include <csignal>
 #include <cerrno>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -13,6 +14,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include "subcli/util.hpp"
 
 namespace subcli {
 
@@ -56,6 +59,9 @@ bool writeDaemonState(const std::filesystem::path& stateDir, const DaemonProcess
         {"strict_network", status.options.strictNetwork},
         {"check", status.options.check},
         {"restart_running", status.options.restartRunning},
+        {"last_cycle_at", status.lastCycleAt},
+        {"last_cycle_exit_code", status.lastCycleExitCode},
+        {"last_cycle_message", status.lastCycleMessage},
     };
     const auto path = daemonStatePath(stateDir);
     std::ofstream out(path);
@@ -65,6 +71,25 @@ bool writeDaemonState(const std::filesystem::path& stateDir, const DaemonProcess
     }
     out << state.dump(2);
     return true;
+}
+
+bool updateDaemonCycleSummary(const std::filesystem::path& stateDir, const DaemonOptions& options, int exitCode, const std::string& message) {
+    std::string error;
+    if (!ensureDaemonDir(stateDir, error)) {
+        return false;
+    }
+    auto state = inspectDaemonProcess(stateDir, error);
+    if (!error.empty()) {
+        return false;
+    }
+    state.hasState = true;
+    state.intervalSec = options.intervalSec;
+    state.exportTarget = options.exportTarget;
+    state.options = options;
+    state.lastCycleAt = nowIso8601();
+    state.lastCycleExitCode = exitCode;
+    state.lastCycleMessage = message;
+    return writeDaemonState(stateDir, state, error);
 }
 
 void removeDaemonState(const std::filesystem::path& stateDir) {
@@ -200,6 +225,9 @@ DaemonProcessStatus inspectDaemonProcess(const std::filesystem::path& stateDir, 
     status.options.strictNetwork = parsed.value("strict_network", false);
     status.options.check = parsed.value("check", false);
     status.options.restartRunning = parsed.value("restart_running", true);
+    status.lastCycleAt = parsed.value("last_cycle_at", "");
+    status.lastCycleExitCode = parsed.value("last_cycle_exit_code", 0);
+    status.lastCycleMessage = parsed.value("last_cycle_message", "");
     status.running = isPidRunning(static_cast<pid_t>(status.pid));
     return status;
 }
@@ -232,13 +260,26 @@ bool startDaemonProcess(
         removeDaemonState(stateDir);
     }
 
+    int pipeFd[2] = {-1, -1};
+    if (pipe(pipeFd) != 0) {
+        error = "failed to create daemon handshake pipe";
+        return false;
+    }
+    const int flags = fcntl(pipeFd[1], F_GETFD);
+    if (flags >= 0) {
+        (void)fcntl(pipeFd[1], F_SETFD, flags | FD_CLOEXEC);
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
+        close(pipeFd[0]);
+        close(pipeFd[1]);
         error = "failed to fork daemon process";
         return false;
     }
 
     if (pid == 0) {
+        close(pipeFd[0]);
         setsid();
 
         const int stdinFd = open("/dev/null", O_RDONLY);
@@ -263,7 +304,21 @@ bool startDaemonProcess(
         }
         argv.push_back(nullptr);
         execv(binaryPath.c_str(), argv.data());
+        const int execErr = errno;
+        (void)write(pipeFd[1], &execErr, sizeof(execErr));
+        close(pipeFd[1]);
         _exit(127);
+    }
+
+    close(pipeFd[1]);
+    int execErr = 0;
+    const ssize_t readCount = read(pipeFd[0], &execErr, sizeof(execErr));
+    close(pipeFd[0]);
+    if (readCount > 0) {
+        int waitStatus = 0;
+        (void)waitpid(pid, &waitStatus, 0);
+        error = "failed to exec daemon process: " + std::string(std::strerror(execErr));
+        return false;
     }
 
     DaemonProcessStatus state;
@@ -320,6 +375,49 @@ bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, st
     (void)waitpid(pid, &waitStatus, WNOHANG);
     removeDaemonState(stateDir);
     return true;
+}
+
+int runDaemonCycleWithState(const std::filesystem::path& stateDir, const DaemonOptions& options, const DaemonCallbacks& callbacks) {
+    if (!callbacks.runSubCommand || !callbacks.runExportCommand || !callbacks.isCoreRunning || !callbacks.runRestartCommand) {
+        updateDaemonCycleSummary(stateDir, options, 1, "invalid callbacks");
+        return 1;
+    }
+
+    const auto subArgs = buildDaemonSubUpdateArgs(options);
+    const int subRc = callbacks.runSubCommand(subArgs);
+    if (subRc != 0) {
+        updateDaemonCycleSummary(stateDir, options, subRc, "sub update failed");
+        return subRc;
+    }
+
+    const auto exportArgs = buildDaemonExportArgs(options);
+    const int exportRc = callbacks.runExportCommand(exportArgs);
+    if (exportRc != 0) {
+        updateDaemonCycleSummary(stateDir, options, exportRc, "export failed");
+        return exportRc;
+    }
+
+    if (options.restartRunning) {
+        for (const auto& target : daemonTargetsForExportTarget(options.exportTarget)) {
+            std::string error;
+            const bool running = callbacks.isCoreRunning(target, error);
+            if (!error.empty()) {
+                updateDaemonCycleSummary(stateDir, options, 1, "restart status check failed");
+                return 1;
+            }
+            if (!running) {
+                continue;
+            }
+            const int restartRc = callbacks.runRestartCommand({"restart", target});
+            if (restartRc != 0) {
+                updateDaemonCycleSummary(stateDir, options, restartRc, "restart failed");
+                return restartRc;
+            }
+        }
+    }
+
+    updateDaemonCycleSummary(stateDir, options, 0, "ok");
+    return 0;
 }
 
 } // namespace subcli

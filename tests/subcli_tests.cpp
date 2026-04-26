@@ -166,6 +166,85 @@ void testDaemonProcessLifecycle() {
     fs::remove_all(stateDir);
 }
 
+void testStartDaemonProcessFailsWhenExecCannotStart() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-daemon-start-fail-tests";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    subcli::DaemonOptions options;
+    std::string error;
+
+    const bool started = subcli::startDaemonProcess(
+        stateDir,
+        "/definitely/missing/subcli-binary",
+        {"daemon", "run"},
+        options,
+        error
+    );
+
+    require(!started, "startDaemonProcess should fail when exec target is missing");
+    require(!error.empty(), "startDaemonProcess should report exec failure");
+    const auto status = subcli::inspectDaemonProcess(stateDir, error);
+    require(!status.hasState, "failed daemon start should not leave daemon state");
+
+    fs::remove_all(stateDir);
+}
+
+void testRunDaemonCycleWithStateUpdatesSuccessSummary() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-daemon-run-summary-tests";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    subcli::DaemonOptions options;
+    subcli::DaemonCallbacks callbacks;
+    callbacks.runSubCommand = [&](const std::vector<std::string>&) { return 0; };
+    callbacks.runExportCommand = [&](const std::vector<std::string>&) { return 0; };
+    callbacks.isCoreRunning = [&](const std::string&, std::string& error) {
+        error.clear();
+        return false;
+    };
+    callbacks.runRestartCommand = [&](const std::vector<std::string>&) { return 0; };
+
+    require(subcli::runDaemonCycleWithState(stateDir, options, callbacks) == 0, "cycle should succeed");
+
+    std::string error;
+    const auto status = subcli::inspectDaemonProcess(stateDir, error);
+    require(status.lastCycleMessage == "ok", "successful cycle should persist ok summary");
+    require(status.lastCycleExitCode == 0, "successful cycle should persist zero exit code");
+    require(!status.lastCycleAt.empty(), "successful cycle should persist timestamp");
+
+    fs::remove_all(stateDir);
+}
+
+void testInspectDaemonProcessExposesLastCycleFailure() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-daemon-status-tests";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    subcli::DaemonOptions options;
+    std::string error;
+    require(subcli::startDaemonProcess(stateDir, "/bin/sleep", {"30"}, options, error), "daemon start should succeed");
+
+    subcli::DaemonCallbacks callbacks;
+    callbacks.runSubCommand = [&](const std::vector<std::string>&) { return 1; };
+    callbacks.runExportCommand = [&](const std::vector<std::string>&) { return 0; };
+    callbacks.isCoreRunning = [&](const std::string&, std::string& err) {
+        err.clear();
+        return false;
+    };
+    callbacks.runRestartCommand = [&](const std::vector<std::string>&) { return 0; };
+
+    require(subcli::runDaemonCycleWithState(stateDir, options, callbacks) != 0, "cycle should fail");
+
+    const auto status = subcli::inspectDaemonProcess(stateDir, error);
+    require(status.running, "daemon process should still be running");
+    require(status.lastCycleExitCode != 0, "status should expose failed last cycle");
+    require(status.lastCycleMessage == "sub update failed", "status should expose failure summary");
+
+    require(subcli::stopDaemonProcess(stateDir, 1, error), "daemon stop should succeed");
+    fs::remove_all(stateDir);
+}
+
 void testDaemonCycleRestartsOnlyRunningCores() {
     subcli::DaemonOptions options;
     options.exportTarget = "all";
@@ -1876,6 +1955,9 @@ int main() {
     testBashCompletionContainsCommands();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
+    testStartDaemonProcessFailsWhenExecCannotStart();
+    testRunDaemonCycleWithStateUpdatesSuccessSummary();
+    testInspectDaemonProcessExposesLastCycleFailure();
     testDaemonCycleRestartsOnlyRunningCores();
     testDaemonCycleStopsOnUpdateFailure();
     testCapabilityWarningsAreSpecific();

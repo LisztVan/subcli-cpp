@@ -2,6 +2,7 @@
 
 #include <filesystem>
 
+#include "subcli/fetch.hpp"
 #include "subcli/util.hpp"
 
 namespace subcli {
@@ -22,24 +23,45 @@ void appendMihomoProxyNodes(const YAML::Node& proxies, const std::string& source
     }
 }
 
-void appendLocalProviderNodes(const YAML::Node& providers, const std::string& sourceId, const AppConfig& config, ParseResult& result) {
+void appendProviderContent(const std::string& content, const std::string& sourceId, const AppConfig& config, ParseResult& result) {
+    const auto providerRoot = YAML::Load(content);
+    appendMihomoProxyNodes(providerRoot["proxies"], sourceId, config, result);
+}
+
+void appendProviderNodes(const YAML::Node& providers, const std::string& sourceId, const AppConfig& config, ParseResult& result) {
     if (!providers || !providers.IsMap()) {
         return;
     }
     for (const auto& item : providers) {
         const auto provider = item.second;
         const auto type = provider["type"].as<std::string>("");
-        if (type != "file") {
-            continue;
-        }
-        const auto path = provider["path"].as<std::string>("");
-        if (path.empty() || !std::filesystem::exists(path)) {
-            ++result.skipped;
-            continue;
-        }
         try {
-            const auto providerRoot = YAML::Load(readFile(path));
-            appendMihomoProxyNodes(providerRoot["proxies"], sourceId, config, result);
+            if (type == "file") {
+                const auto path = provider["path"].as<std::string>("");
+                if (path.empty() || !std::filesystem::exists(path)) {
+                    ++result.skipped;
+                    continue;
+                }
+                appendProviderContent(readFile(path), sourceId, config, result);
+                continue;
+            }
+            if (type == "http") {
+                Subscription sub;
+                sub.id = sourceId + ":" + item.first.as<std::string>("provider");
+                sub.name = sub.id;
+                sub.url = provider["url"].as<std::string>("");
+                sub.timeout = config.timeout;
+                sub.timeoutOverride = true;
+                sub.retry = 0;
+                sub.retryOverride = true;
+                sub.fetchMaxBytes = config.fetchMaxBytes;
+                const auto fetched = fetchSubscription(sub, false);
+                if (!fetched.ok) {
+                    ++result.skipped;
+                    continue;
+                }
+                appendProviderContent(fetched.content, sourceId, config, result);
+            }
         } catch (...) {
             ++result.skipped;
         }
@@ -56,7 +78,7 @@ ParseResult parseMihomoSubscription(const std::string& content, const std::strin
             return result;
         }
         appendMihomoProxyNodes(y["proxies"], sourceId, config, result);
-        appendLocalProviderNodes(y["proxy-providers"], sourceId, config, result);
+        appendProviderNodes(y["proxy-providers"], sourceId, config, result);
     } catch (...) {
     }
     return result;

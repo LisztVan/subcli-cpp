@@ -11,7 +11,7 @@
 - Manage HTTP and `file://` subscriptions from a single CLI.
 - Parse common subscription formats including Mihomo YAML, sing-box/Xray JSON, URI lists, and base64 URI lists.
 - URI lists support `vmess`, `vless`, `trojan`, `ss`, `hy2`/`hysteria2`, `tuic`, and `wireguard` links.
-- Mihomo YAML supports inline `proxies` and local `proxy-providers` with `type: file`.
+- Mihomo YAML supports inline `proxies`, local `proxy-providers` with `type: file`, and remote `proxy-providers` with `type: http`/`url`.
 - Export non-`tun` and `tun` templates for Mihomo, sing-box, and Xray.
 - Generate the default `bypass-cn` profile with mainland/LAN direct rules and proxy fallback.
 - Manage geo/rule assets with `subcli asset list|validate|update`.

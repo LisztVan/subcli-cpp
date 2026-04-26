@@ -1,0 +1,4 @@
+proxy-providers:
+  remote:
+    type: http
+    url: "file://tests/fixtures/provider-nodes.yaml"

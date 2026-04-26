@@ -630,6 +630,36 @@ void testParseMihomoLocalProxyProvider() {
     fs::remove_all(dir);
 }
 
+void testParseMihomoRemoteProxyProvider() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-remote-provider-tests";
+    fs::create_directories(dir);
+    const fs::path providerPath = dir / "remote-provider.yaml";
+    {
+        std::ofstream provider(providerPath);
+        provider << R"YAML(proxies:
+  - name: Remote Provider HK
+    type: ss
+    server: remote-provider.example.com
+    port: 8388
+    cipher: chacha20-ietf-poly1305
+    password: password
+)YAML";
+    }
+
+    const std::string content = std::string(R"YAML(proxy-providers:
+  airport:
+    type: http
+    url: "file://)YAML") + providerPath.string() + R"YAML("
+)YAML";
+
+    auto result = subcli::parseSubscription(content, "fixture", "mihomo", makeConfig());
+    require(result.nodes.size() == 1, "mihomo remote proxy-provider should expand one node");
+    require(result.nodes[0].name == "Remote Provider HK", "remote provider node name should parse");
+    require(result.nodes[0].server == "remote-provider.example.com", "remote provider node server should parse");
+
+    fs::remove_all(dir);
+}
+
 void testParseMihomoHighFrequencyOptionalFields() {
     const std::string content = R"YAML(proxies:
   - name: VLESS XHTTP
@@ -1382,6 +1412,7 @@ int main() {
     testParseMihomoHttpOpts();
     testParseMihomoH2Opts();
     testParseMihomoLocalProxyProvider();
+    testParseMihomoRemoteProxyProvider();
     testParseMihomoHighFrequencyOptionalFields();
     testParseSingBoxTlsDisabledObject();
     testParseSingBoxHighFrequencyOptionalFields();

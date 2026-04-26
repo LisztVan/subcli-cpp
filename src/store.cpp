@@ -137,6 +137,17 @@ AppConfig loadConfig(const std::string& path) {
     c.templateDir = root["template_dir"].as<std::string>("./templates");
     c.outputDir = root["output_dir"].as<std::string>("./outputs");
     c.profile = root["profile"].as<std::string>("bypass-cn");
+    if (root["routing"] && root["routing"]["rules"] && root["routing"]["rules"].IsSequence()) {
+        for (const auto& n : root["routing"]["rules"]) {
+            AppConfig::RoutingRule rule;
+            rule.type = n["type"].as<std::string>("");
+            rule.value = n["value"].as<std::string>("");
+            rule.outbound = n["outbound"].as<std::string>("");
+            if (!rule.type.empty() && !rule.outbound.empty()) {
+                c.routingRules.push_back(rule);
+            }
+        }
+    }
     c.assetDir = root["asset_dir"].as<std::string>("./assets");
     if (root["core_paths"] && root["core_paths"].IsMap()) {
         c.mihomoPath = root["core_paths"]["mihomo"].as<std::string>("");
@@ -174,6 +185,24 @@ AppConfig loadConfig(const std::string& path) {
             c.regionRules[kv.first.as<std::string>()] = kv.second.as<std::string>();
         }
     }
+    if (root["grouping"] && root["grouping"]["strategy_groups"] && root["grouping"]["strategy_groups"].IsSequence()) {
+        for (const auto& node : root["grouping"]["strategy_groups"]) {
+            AppConfig::StrategyGroup group;
+            group.name = node["name"].as<std::string>("");
+            group.type = node["type"].as<std::string>("select");
+            group.url = node["url"].as<std::string>("");
+            group.interval = node["interval"].as<int>(300);
+            group.defaultMember = node["default"].as<std::string>("");
+            if (node["members"] && node["members"].IsSequence()) {
+                for (const auto& member : node["members"]) {
+                    group.members.push_back(member.as<std::string>());
+                }
+            }
+            if (!group.name.empty()) {
+                c.strategyGroups.push_back(group);
+            }
+        }
+    }
     if (root["assets"] && root["assets"].IsMap()) {
         if (root["assets"]["paths"] && root["assets"]["paths"].IsMap()) {
             for (const auto& kv : root["assets"]["paths"]) {
@@ -201,6 +230,14 @@ void saveConfig(const std::string& path, const AppConfig& c) {
     root["template_dir"] = c.templateDir;
     root["output_dir"] = c.outputDir;
     root["profile"] = c.profile;
+    root["routing"]["rules"] = YAML::Node(YAML::NodeType::Sequence);
+    for (const auto& rule : c.routingRules) {
+        YAML::Node node;
+        node["type"] = rule.type;
+        node["value"] = rule.value;
+        node["outbound"] = rule.outbound;
+        root["routing"]["rules"].push_back(node);
+    }
     root["asset_dir"] = c.assetDir;
     root["core_paths"]["mihomo"] = c.mihomoPath;
     root["core_paths"]["sing_box"] = c.singBoxPath;
@@ -219,6 +256,20 @@ void saveConfig(const std::string& path, const AppConfig& c) {
     root["grouping"]["region_rules"] = YAML::Node(YAML::NodeType::Map);
     for (const auto& kv : c.regionRules) {
         root["grouping"]["region_rules"][kv.first] = kv.second;
+    }
+    root["grouping"]["strategy_groups"] = YAML::Node(YAML::NodeType::Sequence);
+    for (const auto& group : c.strategyGroups) {
+        YAML::Node node;
+        node["name"] = group.name;
+        node["type"] = group.type;
+        node["url"] = group.url;
+        node["interval"] = group.interval;
+        node["default"] = group.defaultMember;
+        node["members"] = YAML::Node(YAML::NodeType::Sequence);
+        for (const auto& member : group.members) {
+            node["members"].push_back(member);
+        }
+        root["grouping"]["strategy_groups"].push_back(node);
     }
     root["assets"]["paths"] = YAML::Node(YAML::NodeType::Map);
     for (const auto& kv : c.assetPaths) {

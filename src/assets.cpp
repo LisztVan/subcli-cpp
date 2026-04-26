@@ -1,11 +1,64 @@
 #include "subcli/assets.hpp"
 
 #include <algorithm>
+#include <filesystem>
+
+#include <nlohmann/json.hpp>
 
 #include "subcli/fetch.hpp"
 #include "subcli/util.hpp"
 
 namespace subcli {
+
+namespace {
+
+std::filesystem::path assetMetadataPath(const std::string& assetPath) {
+    return std::filesystem::path(assetPath + ".meta.json");
+}
+
+void fillAssetMetadata(AssetRecord& record) {
+    const auto metaPath = assetMetadataPath(record.path);
+    if (!fileExists(metaPath.string())) {
+        return;
+    }
+    const auto parsed = nlohmann::json::parse(readFile(metaPath.string()), nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object()) {
+        return;
+    }
+    record.updatedAt = parsed.value("updated_at", "");
+    record.sourceUrl = parsed.value("source_url", "");
+    record.sizeBytes = parsed.value("size_bytes", record.sizeBytes);
+}
+
+bool writeAssetMetadata(const AssetRecord& asset, long sizeBytes, std::string& error) {
+    const nlohmann::json meta = {
+        {"updated_at", nowIso8601()},
+        {"source_url", asset.url},
+        {"size_bytes", sizeBytes},
+    };
+    return writeFile(assetMetadataPath(asset.path).string(), meta.dump(2), error);
+}
+
+bool writeAssetAtomically(const std::string& path, const std::string& content, std::string& error) {
+    const std::filesystem::path target(path);
+    const std::filesystem::path tmp(path + ".tmp");
+    if (!writeFile(tmp.string(), content, error)) {
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::rename(tmp, target, ec);
+    if (!ec) {
+        return true;
+    }
+
+    std::error_code cleanupEc;
+    std::filesystem::remove(tmp, cleanupEc);
+    error = "failed to replace asset file: " + ec.message();
+    return false;
+}
+
+} // namespace
 
 std::vector<AssetRecord> configuredAssets(const AppConfig& config) {
     std::vector<AssetRecord> out;
@@ -19,6 +72,15 @@ std::vector<AssetRecord> configuredAssets(const AppConfig& config) {
             record.url = url->second;
         }
         record.exists = fileExists(record.path);
+        record.sourceUrl = record.url;
+        if (record.exists) {
+            std::error_code ec;
+            record.sizeBytes = static_cast<long>(std::filesystem::file_size(record.path, ec));
+            if (ec) {
+                record.sizeBytes = -1;
+            }
+        }
+        fillAssetMetadata(record);
         out.push_back(record);
     }
     std::sort(out.begin(), out.end(), [](const AssetRecord& a, const AssetRecord& b) { return a.key < b.key; });
@@ -60,7 +122,13 @@ bool updateAsset(const AssetRecord& asset, int timeoutSec, long maxBytes, std::s
         error = fetched.error;
         return false;
     }
-    return writeFile(asset.path, fetched.content, error);
+    if (!writeAssetAtomically(asset.path, fetched.content, error)) {
+        return false;
+    }
+    if (!writeAssetMetadata(asset, static_cast<long>(fetched.content.size()), error)) {
+        return false;
+    }
+    return true;
 }
 
 } // namespace subcli

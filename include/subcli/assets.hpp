@@ -12,6 +12,9 @@ struct AssetRecord {
     std::string path;
     std::string url;
     bool exists = false;
+    std::string updatedAt;
+    std::string sourceUrl;
+    long sizeBytes = -1;
 };
 
 std::vector<AssetRecord> configuredAssets(const AppConfig& config);

@@ -48,6 +48,7 @@ subcli asset update
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --check
+subcli daemon once --target all --strict-network
 subcli run sing-box
 subcli status sing-box
 subcli stop sing-box

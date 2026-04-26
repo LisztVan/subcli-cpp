@@ -74,14 +74,19 @@ subcli template reset sing-box normal
 subcli template validate
 
 subcli asset list
+subcli asset status
 subcli asset validate
 subcli asset update
+subcli asset update xray.geoip
 
 subcli export all
 subcli export all --check
 subcli export sing-box --output-dir ./outputs --check --check-timeout 30
 subcli export mihomo --strict-network
 subcli export mihomo --download-assets
+
+subcli daemon once --target all --strict-network
+subcli daemon run --interval 1800 --target sing-box --update-assets
 
 subcli run sing-box
 subcli status
@@ -204,14 +209,33 @@ The default profile is `bypass-cn`: LAN/private traffic and mainland China domai
 
 Export fails when no enabled subscription is selected, selected subscriptions parse into zero nodes, the target has no supported nodes after filtering, or the required template is missing.
 
+## Daemon Automation
+
+Use daemon mode to run update/export cycles automatically:
+
+```bash
+subcli daemon once --target all --strict-network
+subcli daemon run --interval 1800 --target sing-box --update-assets
+```
+
+- `once`: run one cycle (`sub update` -> `export`) and exit.
+- `run`: loop forever with the configured interval in seconds.
+- `--target`: choose `all|mihomo|sing-box|xray` export target.
+- `--update-assets`: pass asset download behavior through export (`--download-assets`).
+- `--strict-network`: disable cache fallback in both update and export.
+- `--check`: validate exported config with core checks after export.
+- `--no-restart`: skip auto restart of currently running cores managed by `subcli run`.
+
 ## Rule Assets
 
 Rule and geo databases are managed separately from subscriptions:
 
 ```bash
 subcli asset list
+subcli asset status
 subcli asset validate
 subcli asset update
+subcli asset update xray.geoip
 ```
 
 Default asset keys include:
@@ -223,7 +247,7 @@ Default asset keys include:
 - `xray.geosite`
 - `xray.geoip`
 
-`asset update` downloads the configured URLs into `asset_dir`. `asset validate` returns non-zero if a configured asset file is missing. Generated configs can be written before assets exist, but direct core runs need the referenced geo/rule files available at the configured paths. `export` warns when assets are missing; use `--download-assets` to download missing configured assets before export.
+`asset update` downloads the configured URLs into `asset_dir` (all assets by default, or one asset key when provided). Downloads are written through a temporary file and then swapped into place to avoid partial files. `asset status` shows presence, size, source URL, and last update time metadata. `asset validate` returns non-zero if a configured asset file is missing. Generated configs can be written before assets exist, but direct core runs need the referenced geo/rule files available at the configured paths. `export` warns when assets are missing; use `--download-assets` to download missing configured assets before export.
 
 ## Running Cores
 

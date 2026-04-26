@@ -34,6 +34,15 @@ struct Subscription {
 };
 
 struct AppConfig {
+    struct StrategyGroup {
+        std::string name;
+        std::string type;
+        std::vector<std::string> members;
+        std::string url;
+        int interval = 300;
+        std::string defaultMember;
+    };
+
     bool tun = false;
     std::string logLevel = "info";
     int parallelism = 4;
@@ -49,7 +58,14 @@ struct AppConfig {
     std::map<std::string, std::string> templateNormal;
     std::map<std::string, std::string> templateTun;
     std::map<std::string, std::string> regionRules;
+    std::vector<StrategyGroup> strategyGroups;
     std::string profile = "bypass-cn";
+    struct RoutingRule {
+        std::string type;
+        std::string value;
+        std::string outbound;
+    };
+    std::vector<RoutingRule> routingRules;
     std::string assetDir = "./assets";
     std::map<std::string, std::string> assetPaths;
     std::map<std::string, std::string> assetUrls;

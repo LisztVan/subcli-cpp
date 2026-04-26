@@ -121,6 +121,38 @@ void ensureXrayBypassCnProfile(nlohmann::json& root) {
     }
 }
 
+std::string customXrayFinalOutbound(const AppConfig& config) {
+    for (const auto& item : config.routingRules) {
+        const std::string type = toLower(item.type);
+        if ((type == "final" || type == "match") && !item.outbound.empty()) {
+            return item.outbound;
+        }
+    }
+    return "";
+}
+
+void ensureXrayCustomRoutingRules(nlohmann::json& root, const AppConfig& config) {
+    if (!root.contains("routing") || !root["routing"].is_object()) {
+        root["routing"] = nlohmann::json::object();
+    }
+    if (!root["routing"].contains("rules") || !root["routing"]["rules"].is_array()) {
+        root["routing"]["rules"] = nlohmann::json::array();
+    }
+    for (const auto& item : config.routingRules) {
+        const std::string type = toLower(item.type);
+        const std::string value = toLower(item.value);
+        if (type == "geosite" && !value.empty() && !item.outbound.empty()) {
+            root["routing"]["rules"].push_back(
+                {{"type", "field"}, {"domain", nlohmann::json::array({"geosite:" + value})}, {"outboundTag", item.outbound}}
+            );
+        } else if (type == "geoip" && !value.empty() && !item.outbound.empty()) {
+            root["routing"]["rules"].push_back(
+                {{"type", "field"}, {"ip", nlohmann::json::array({"geoip:" + value})}, {"outboundTag", item.outbound}}
+            );
+        }
+    }
+}
+
 } // namespace
 
 ExportResult exportXrayImpl(
@@ -179,7 +211,9 @@ ExportResult exportXrayImpl(
     if (!root.contains("routing") || !root["routing"].is_object()) {
         root["routing"] = nlohmann::json::object();
     }
-    if (config.profile == "bypass-cn") {
+    if (!config.routingRules.empty()) {
+        ensureXrayCustomRoutingRules(root, config);
+    } else if (config.profile == "bypass-cn") {
         ensureXrayBypassCnProfile(root);
     }
     if (!root["routing"].contains("balancers") || !root["routing"]["balancers"].is_array()) {
@@ -194,9 +228,16 @@ ExportResult exportXrayImpl(
         root["routing"]["balancers"].push_back(
             {{"tag", "PROXY"}, {"selector", nlohmann::json::array({kManagedTagPrefix})}, {"fallbackTag", "DIRECT"}, {"strategy", {{"type", strategy}}}}
         );
-        if (!hasXrayCatchAllRule(root["routing"]["rules"], "PROXY")) {
+        const std::string finalOutbound = customXrayFinalOutbound(config);
+        if (finalOutbound == "PROXY" || finalOutbound.empty()) {
+            if (!hasXrayCatchAllRule(root["routing"]["rules"], "PROXY")) {
+                root["routing"]["rules"].push_back(
+                    {{"type", "field"}, {"network", "tcp,udp"}, {"balancerTag", "PROXY"}}
+                );
+            }
+        } else if (!hasXrayCatchAllRule(root["routing"]["rules"], finalOutbound)) {
             root["routing"]["rules"].push_back(
-                {{"type", "field"}, {"network", "tcp,udp"}, {"balancerTag", "PROXY"}}
+                {{"type", "field"}, {"network", "tcp,udp"}, {"outboundTag", finalOutbound}}
             );
         }
         ensureObservatoryForStrategy(root, strategy);

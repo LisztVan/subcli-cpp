@@ -13,6 +13,7 @@
 #include "subcli/capabilities.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
+#include "subcli/daemon.hpp"
 #include "subcli/core_runtime.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
@@ -97,8 +98,80 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
-    require(script.find("init doctor sub config template asset export run stop status restart check completion") != std::string::npos, "completion should include root commands");
+    require(script.find("init doctor sub config template asset export daemon run stop status restart check completion") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
+}
+
+void testDaemonBuildsExpectedArgs() {
+    subcli::DaemonOptions options;
+    options.exportTarget = "sing-box";
+    options.updateAssets = true;
+    options.strictNetwork = true;
+    options.check = true;
+
+    const auto subArgs = subcli::buildDaemonSubUpdateArgs(options);
+    require(subArgs.size() == 3, "daemon sub update args should include strict-network");
+    require(subArgs[0] == "sub" && subArgs[1] == "update", "daemon sub update args should keep base command");
+    require(subArgs[2] == "--strict-network", "daemon sub update args should include strict-network");
+
+    const auto exportArgs = subcli::buildDaemonExportArgs(options);
+    require(exportArgs.size() == 5, "daemon export args should include selected flags");
+    require(exportArgs[0] == "export" && exportArgs[1] == "sing-box", "daemon export args should target configured backend");
+    require(exportArgs[2] == "--strict-network", "daemon export args should include strict-network");
+    require(exportArgs[3] == "--download-assets", "daemon export args should include download-assets");
+    require(exportArgs[4] == "--check", "daemon export args should include check");
+}
+
+void testDaemonCycleRestartsOnlyRunningCores() {
+    subcli::DaemonOptions options;
+    options.exportTarget = "all";
+
+    bool subCalled = false;
+    bool exportCalled = false;
+    std::vector<std::string> restarted;
+    subcli::DaemonCallbacks callbacks;
+    callbacks.runSubCommand = [&](const std::vector<std::string>&) {
+        subCalled = true;
+        return 0;
+    };
+    callbacks.runExportCommand = [&](const std::vector<std::string>&) {
+        exportCalled = true;
+        return 0;
+    };
+    callbacks.isCoreRunning = [&](const std::string& target, std::string& error) {
+        error.clear();
+        return target == "sing-box";
+    };
+    callbacks.runRestartCommand = [&](const std::vector<std::string>& args) {
+        restarted.push_back(args.size() >= 2 ? args[1] : "");
+        return 0;
+    };
+
+    const int rc = subcli::runDaemonCycle(options, callbacks);
+    require(rc == 0, "daemon cycle should succeed when callbacks succeed");
+    require(subCalled, "daemon cycle should run sub update first");
+    require(exportCalled, "daemon cycle should run export after update");
+    require(restarted.size() == 1 && restarted[0] == "sing-box", "daemon cycle should restart only running targets");
+}
+
+void testDaemonCycleStopsOnUpdateFailure() {
+    subcli::DaemonOptions options;
+    bool exportCalled = false;
+    subcli::DaemonCallbacks callbacks;
+    callbacks.runSubCommand = [&](const std::vector<std::string>&) { return 1; };
+    callbacks.runExportCommand = [&](const std::vector<std::string>&) {
+        exportCalled = true;
+        return 0;
+    };
+    callbacks.isCoreRunning = [&](const std::string&, std::string& error) {
+        error.clear();
+        return false;
+    };
+    callbacks.runRestartCommand = [&](const std::vector<std::string>&) { return 0; };
+
+    const int rc = subcli::runDaemonCycle(options, callbacks);
+    require(rc != 0, "daemon cycle should fail when update fails");
+    require(!exportCalled, "daemon cycle should not run export after update failure");
 }
 
 void testCapabilityWarningsAreSpecific() {
@@ -1290,6 +1363,167 @@ void testStorePersistsProfileAndAssets() {
     fs::remove(path);
 }
 
+void testStorePersistsRoutingRules() {
+    const fs::path path = fs::temp_directory_path() / "subcli-tests-routing-config.yaml";
+    subcli::AppConfig config;
+    config.routingRules.push_back({"geosite", "cn", "PROXY"});
+    config.routingRules.push_back({"geoip", "cn", "PROXY"});
+    config.routingRules.push_back({"final", "", "DIRECT"});
+
+    subcli::saveConfig(path.string(), config);
+    auto loaded = subcli::loadConfig(path.string());
+    require(loaded.routingRules.size() == 3, "routing rules should persist");
+    require(loaded.routingRules[0].type == "geosite", "routing rule type should persist");
+    require(loaded.routingRules[0].value == "cn", "routing rule value should persist");
+    require(loaded.routingRules[0].outbound == "PROXY", "routing rule outbound should persist");
+
+    fs::remove(path);
+}
+
+void testStorePersistsStrategyGroups() {
+    const fs::path path = fs::temp_directory_path() / "subcli-tests-groups-config.yaml";
+    subcli::AppConfig config;
+    subcli::AppConfig::StrategyGroup proxy;
+    proxy.name = "PROXY";
+    proxy.type = "select";
+    proxy.members = {"AUTO", "DIRECT", "HK"};
+    proxy.defaultMember = "AUTO";
+    config.strategyGroups.push_back(proxy);
+
+    subcli::AppConfig::StrategyGroup autoGroup;
+    autoGroup.name = "AUTO";
+    autoGroup.type = "url-test";
+    autoGroup.url = "http://www.gstatic.com/generate_204";
+    autoGroup.interval = 300;
+    autoGroup.members = {"HK"};
+    config.strategyGroups.push_back(autoGroup);
+
+    subcli::saveConfig(path.string(), config);
+    auto loaded = subcli::loadConfig(path.string());
+    require(loaded.strategyGroups.size() == 2, "strategy groups should persist");
+    require(loaded.strategyGroups[0].name == "PROXY", "strategy group name should persist");
+    require(loaded.strategyGroups[0].members.size() == 3, "strategy group members should persist");
+    require(loaded.strategyGroups[1].type == "url-test", "strategy group type should persist");
+
+    fs::remove(path);
+}
+
+void testCustomStrategyGroupsRenderForMihomoAndSingBox() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::AppConfig::StrategyGroup proxy;
+    proxy.name = "PROXY";
+    proxy.type = "select";
+    proxy.members = {"AUTO", "DIRECT", "HK"};
+    proxy.defaultMember = "AUTO";
+    config.strategyGroups.push_back(proxy);
+
+    subcli::AppConfig::StrategyGroup autoGroup;
+    autoGroup.name = "AUTO";
+    autoGroup.type = "url-test";
+    autoGroup.url = "http://www.gstatic.com/generate_204";
+    autoGroup.interval = 300;
+    autoGroup.members = {"HK"};
+    config.strategyGroups.push_back(autoGroup);
+
+    subcli::AppConfig::StrategyGroup hk;
+    hk.name = "HK";
+    hk.type = "select";
+    hk.members = {"DIRECT"};
+    hk.defaultMember = "DIRECT";
+    config.strategyGroups.push_back(hk);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-custom-groups";
+    fs::create_directories(outDir);
+    const auto node = makeExportReadyShadowsocksNode("HK Node");
+    std::string error;
+
+    auto mihomo = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {node}, config, false, (outDir / "mihomo-groups.yaml").string(), error);
+    require(mihomo.ok, "mihomo custom groups export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "mihomo-groups.yaml");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("name: PROXY") != std::string::npos, "mihomo should include PROXY group");
+        require(content.find("type: url-test") != std::string::npos, "mihomo should include url-test group");
+    }
+
+    auto sing = subcli::exportForTarget(subcli::ExportTarget::SingBox, {node}, config, false, (outDir / "sing-groups.json").string(), error);
+    require(sing.ok, "sing-box custom groups export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "sing-groups.json");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("\"tag\": \"PROXY\"") != std::string::npos, "sing-box should include PROXY group");
+        require(content.find("\"type\": \"urltest\"") != std::string::npos, "sing-box should include urltest group");
+    }
+}
+
+void testCustomRoutingRulesMapToAllTargets() {
+    auto config = makeConfig();
+    config.profile = "custom";
+    config.routingRules = {
+        {"geosite", "cn", "PROXY"},
+        {"geoip", "cn", "PROXY"},
+        {"final", "", "DIRECT"},
+    };
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-routing";
+    fs::create_directories(outDir);
+    const auto node = makeExportReadyShadowsocksNode("HK Node");
+    std::string error;
+
+    auto mihomo = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {node}, config, false, (outDir / "mihomo-routing.yaml").string(), error);
+    require(mihomo.ok, "mihomo custom routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "mihomo-routing.yaml");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("GEOSITE,cn,PROXY") != std::string::npos, "mihomo should map custom geosite rule");
+        require(content.find("GEOIP,cn,PROXY") != std::string::npos, "mihomo should map custom geoip rule");
+        require(content.find("MATCH,DIRECT") != std::string::npos, "mihomo should map custom final rule");
+    }
+
+    auto sing = subcli::exportForTarget(subcli::ExportTarget::SingBox, {node}, config, false, (outDir / "sing-routing.json").string(), error);
+    require(sing.ok, "sing-box custom routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "sing-routing.json");
+        const auto json = nlohmann::json::parse(in);
+        require(json["route"].value("final", "") == "DIRECT", "sing-box should map custom final rule");
+        bool hasGeositeProxy = false;
+        bool hasGeoipProxy = false;
+        for (const auto& rule : json["route"]["rules"]) {
+            if (rule.value("outbound", "") != "PROXY" || !rule.contains("rule_set")) {
+                continue;
+            }
+            for (const auto& name : rule["rule_set"]) {
+                hasGeositeProxy = hasGeositeProxy || name.get<std::string>() == "geosite-cn";
+                hasGeoipProxy = hasGeoipProxy || name.get<std::string>() == "geoip-cn";
+            }
+        }
+        require(hasGeositeProxy, "sing-box should map geosite cn to PROXY");
+        require(hasGeoipProxy, "sing-box should map geoip cn to PROXY");
+    }
+
+    auto xray = subcli::exportForTarget(subcli::ExportTarget::Xray, {node}, config, false, (outDir / "xray-routing.json").string(), error);
+    require(xray.ok, "xray custom routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "xray-routing.json");
+        const auto json = nlohmann::json::parse(in);
+        bool hasGeositeProxy = false;
+        bool hasGeoipProxy = false;
+        bool hasFinalDirect = false;
+        for (const auto& rule : json["routing"]["rules"]) {
+            const auto domainText = rule.contains("domain") ? rule["domain"].dump() : "";
+            const auto ipText = rule.contains("ip") ? rule["ip"].dump() : "";
+            hasGeositeProxy = hasGeositeProxy || (rule.value("outboundTag", "") == "PROXY" && domainText.find("geosite:cn") != std::string::npos);
+            hasGeoipProxy = hasGeoipProxy || (rule.value("outboundTag", "") == "PROXY" && ipText.find("geoip:cn") != std::string::npos);
+            hasFinalDirect = hasFinalDirect || (rule.value("outboundTag", "") == "DIRECT" && rule.value("network", "") == "tcp,udp");
+        }
+        require(hasGeositeProxy, "xray should map geosite cn to PROXY");
+        require(hasGeoipProxy, "xray should map geoip cn to PROXY");
+        require(hasFinalDirect, "xray should map final rule to DIRECT");
+    }
+}
+
 void testAssetRecordsExposeConfiguredFiles() {
     subcli::AppConfig config;
     config.assetPaths["xray.geoip"] = "/tmp/subcli-assets/xray/geoip.dat";
@@ -1323,6 +1557,62 @@ void testMissingAssetsReturnsOnlyMissingRecords() {
     const auto missing = subcli::missingAssets(config);
     require(missing.size() == 1, "missingAssets should return only missing assets");
     require(missing[0].key == "missing", "missingAssets should keep missing asset key");
+
+    fs::remove_all(dir);
+}
+
+void testUpdateAssetPersistsMetadata() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-asset-update-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    const fs::path source = dir / "source.dat";
+    {
+        std::ofstream out(source);
+        out << "new-asset";
+    }
+    const fs::path target = dir / "geoip.dat";
+
+    subcli::AssetRecord asset;
+    asset.key = "xray.geoip";
+    asset.path = target.string();
+    asset.url = "file://" + source.string();
+
+    std::string error;
+    require(subcli::updateAsset(asset, 5, 1024 * 1024, error), "updateAsset should succeed: " + error);
+    require(subcli::readFile(target.string()) == "new-asset", "updateAsset should write downloaded content");
+
+    subcli::AppConfig config;
+    config.assetPaths[asset.key] = asset.path;
+    config.assetUrls[asset.key] = asset.url;
+    auto records = subcli::configuredAssets(config);
+    require(records.size() == 1, "configuredAssets should include updated asset");
+    require(records[0].sizeBytes == 9, "configuredAssets should expose stored asset size");
+    require(records[0].sourceUrl == asset.url, "configuredAssets should expose metadata source url");
+    require(!records[0].updatedAt.empty(), "configuredAssets should expose metadata updated time");
+
+    fs::remove_all(dir);
+}
+
+void testUpdateAssetFailureKeepsPreviousFile() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-asset-failure-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    const fs::path target = dir / "geoip.dat";
+    {
+        std::ofstream out(target);
+        out << "old-asset";
+    }
+
+    subcli::AssetRecord asset;
+    asset.key = "xray.geoip";
+    asset.path = target.string();
+    asset.url = "file://" + (dir / "missing.dat").string();
+
+    std::string error;
+    require(!subcli::updateAsset(asset, 5, 1024 * 1024, error), "updateAsset should fail for missing source");
+    require(subcli::readFile(target.string()) == "old-asset", "failed update should keep previous asset content");
 
     fs::remove_all(dir);
 }
@@ -1540,6 +1830,9 @@ int main() {
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();
     testBashCompletionContainsCommands();
+    testDaemonBuildsExpectedArgs();
+    testDaemonCycleRestartsOnlyRunningCores();
+    testDaemonCycleStopsOnUpdateFailure();
     testCapabilityWarningsAreSpecific();
     testLegacyBridgeBuildsStructuredCoreOptions();
     testStructuredWritersPreserveVlessEncryption();
@@ -1585,8 +1878,14 @@ int main() {
     testStorePersistsOverrideFlags();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
+    testStorePersistsRoutingRules();
+    testStorePersistsStrategyGroups();
+    testCustomRoutingRulesMapToAllTargets();
+    testCustomStrategyGroupsRenderForMihomoAndSingBox();
     testAssetRecordsExposeConfiguredFiles();
     testMissingAssetsReturnsOnlyMissingRecords();
+    testUpdateAssetPersistsMetadata();
+    testUpdateAssetFailureKeepsPreviousFile();
     testFetchRejectsUnsupportedScheme();
     testFetchFileHonorsMaxBytes();
     return 0;

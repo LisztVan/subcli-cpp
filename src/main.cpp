@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <curl/curl.h>
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <system_error>
 
 #include <yaml-cpp/yaml.h>
@@ -19,6 +21,7 @@
 #include "subcli/core_check.hpp"
 #include "subcli/core_discovery.hpp"
 #include "subcli/core_runtime.hpp"
+#include "subcli/daemon.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
 #include "subcli/exporter.hpp"
@@ -360,7 +363,7 @@ bool hasHelp(const std::vector<std::string>& args) {
 }
 
 void printRootUsage() {
-    std::cout << "subcli <init|doctor|sub|config|template|asset|export|run|stop|status|restart|check|completion> ...\n"
+    std::cout << "subcli <init|doctor|sub|config|template|asset|export|daemon|run|stop|status|restart|check|completion> ...\n"
               << "\n"
               << "Common flow:\n"
               << "  subcli init\n"
@@ -368,6 +371,7 @@ void printRootUsage() {
               << "  subcli sub add --name NAME --url URL\n"
               << "  subcli sub update\n"
               << "  subcli export all --check\n"
+              << "  subcli daemon once --target all\n"
               << "  subcli run sing-box\n"
               << "\n"
               << "Use 'subcli <command> --help' for command details.\n";
@@ -410,15 +414,21 @@ void printTemplateUsage() {
 }
 
 void printAssetUsage() {
-    std::cout << "usage: subcli asset <list|validate|update>\n"
+    std::cout << "usage: subcli asset <list|status|validate|update>\n"
               << "  subcli asset list\n"
+              << "  subcli asset status\n"
               << "  subcli asset validate\n"
-              << "  subcli asset update\n";
+              << "  subcli asset update [asset-key]\n";
 }
 
 void printExportUsage() {
     std::cout << "usage: subcli export <all|mihomo|sing-box|xray> [--tun] [--check] [--check-timeout SEC]\n"
               << "       [--output-dir DIR] [--sub ID_OR_NAME] [--tag TAG] [--strict-network]\n";
+}
+
+void printDaemonUsage() {
+    std::cout << "usage: subcli daemon <once|run> [--interval SEC] [--target all|mihomo|sing-box|xray]\n"
+              << "       [--update-assets] [--strict-network] [--check] [--no-restart]\n";
 }
 
 void printCheckUsage() {
@@ -2276,6 +2286,21 @@ int doAssetCommand(const std::vector<std::string>& args) {
         return ExitOk;
     }
 
+    if (cmd == "status") {
+        if (args.size() != 2) {
+            std::cerr << "asset status does not accept arguments\n";
+            return ExitUsage;
+        }
+        for (const auto& asset : records) {
+            std::cout << asset.key << " status=" << (asset.exists ? "present" : "missing")
+                      << " size=" << (asset.sizeBytes >= 0 ? std::to_string(asset.sizeBytes) : "-")
+                      << " updated=" << (asset.updatedAt.empty() ? "-" : asset.updatedAt)
+                      << " source=" << (asset.sourceUrl.empty() ? "-" : asset.sourceUrl)
+                      << " path=" << asset.path << "\n";
+        }
+        return ExitOk;
+    }
+
     if (cmd == "validate") {
         if (args.size() != 2) {
             std::cerr << "asset validate does not accept arguments\n";
@@ -2296,12 +2321,28 @@ int doAssetCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "update") {
-        if (args.size() != 2) {
-            std::cerr << "asset update does not accept arguments\n";
+        if (args.size() > 3) {
+            std::cerr << "asset update accepts at most one [asset-key]\n";
             return ExitUsage;
         }
+
+        std::vector<AssetRecord> selected;
+        if (args.size() == 3) {
+            for (const auto& asset : records) {
+                if (asset.key == args[2]) {
+                    selected.push_back(asset);
+                }
+            }
+            if (selected.empty()) {
+                std::cerr << "asset key not found: " << args[2] << "\n";
+                return ExitUsage;
+            }
+        } else {
+            selected = records;
+        }
+
         int failed = 0;
-        for (const auto& asset : records) {
+        for (const auto& asset : selected) {
             std::string error;
             if (!updateAsset(asset, cfg.timeout, cfg.fetchMaxBytes, error)) {
                 ++failed;
@@ -2554,6 +2595,83 @@ int doExportCommand(const std::vector<std::string>& args) {
     return failed > 0 ? 1 : (success > 0 ? 0 : 1);
 }
 
+int doDaemonCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printDaemonUsage();
+        return ExitOk;
+    }
+    if (args.size() < 2) {
+        printDaemonUsage();
+        return ExitUsage;
+    }
+    if (!validateOptions(
+            args,
+            2,
+            {"--interval", "--target", "--update-assets", "--strict-network", "--check", "--no-restart"},
+            {"--interval", "--target"}
+        )) {
+        return ExitUsage;
+    }
+    if (!ensureNoExtraPositionals(args, 2, {"--interval", "--target"}, "daemon accepts mode and options")) {
+        return ExitUsage;
+    }
+
+    const std::string mode = args[1];
+    if (mode != "once" && mode != "run") {
+        std::cerr << "unknown daemon mode: " << mode << "\n";
+        return ExitUsage;
+    }
+
+    int intervalSec = 3600;
+    if (hasOption(args, "--interval") && !parseBoundedIntValue(argValue(args, "--interval", "3600"), "--interval", 1, intervalSec)) {
+        return ExitUsage;
+    }
+    const std::string target = argValue(args, "--target", "all");
+    if (target != "all") {
+        ExportTarget parsedTarget;
+        std::string defaultFile;
+        if (!parseExportTarget(target, parsedTarget, defaultFile)) {
+            std::cerr << "invalid daemon target: " << target << "\n";
+            return ExitUsage;
+        }
+    }
+
+    DaemonOptions options;
+    options.intervalSec = intervalSec;
+    options.exportTarget = target;
+    options.updateAssets = hasFlag(args, "--update-assets");
+    options.strictNetwork = hasFlag(args, "--strict-network");
+    options.check = hasFlag(args, "--check");
+    options.restartRunning = !hasFlag(args, "--no-restart");
+
+    DaemonCallbacks callbacks;
+    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return doSubCommand(subArgs); };
+    callbacks.runExportCommand = [&](const std::vector<std::string>& exportArgs) { return doExportCommand(exportArgs); };
+    callbacks.isCoreRunning = [&](const std::string& coreTarget, std::string& error) {
+        const auto status = inspectCoreRuntime(gPaths.stateDir, coreTarget, error);
+        return status.running;
+    };
+    callbacks.runRestartCommand = [&](const std::vector<std::string>& restartArgs) { return doRestartCommand(restartArgs); };
+
+    if (mode == "once") {
+        const int rc = runDaemonCycle(options, callbacks);
+        if (rc == 0) {
+            std::cout << "daemon cycle completed\n";
+            return ExitOk;
+        }
+        std::cerr << "daemon cycle failed\n";
+        return ExitError;
+    }
+
+    while (true) {
+        const int rc = runDaemonCycle(options, callbacks);
+        if (rc != 0) {
+            std::cerr << "daemon cycle failed with code " << rc << "\n";
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(options.intervalSec));
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -2603,6 +2721,9 @@ int main(int argc, char** argv) {
         }
         if (cmd == "export") {
             return doExportCommand(tail);
+        }
+        if (cmd == "daemon") {
+            return doDaemonCommand(tail);
         }
         if (cmd == "run") {
             return doRunCommand(tail);

@@ -12,7 +12,7 @@ std::string generateBashCompletion() {
     subcmd="${COMP_WORDS[2]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "init doctor sub config template asset export run stop status restart check completion" -- "$cur") )
+        COMPREPLY=( $(compgen -W "init doctor sub config template asset export daemon run stop status restart check completion" -- "$cur") )
         return 0
     fi
 
@@ -39,7 +39,7 @@ std::string generateBashCompletion() {
             COMPREPLY=( $(compgen -W "mihomo sing-box xray normal tun --json" -- "$cur") )
             ;;
         asset)
-            COMPREPLY=( $(compgen -W "list validate update" -- "$cur") )
+            COMPREPLY=( $(compgen -W "list status validate update" -- "$cur") )
             ;;
         export)
             if [[ $COMP_CWORD -eq 2 ]]; then
@@ -47,6 +47,13 @@ std::string generateBashCompletion() {
                 return 0
             fi
             COMPREPLY=( $(compgen -W "--tun --check --check-timeout --output-dir --sub --tag --strict-network" -- "$cur") )
+            ;;
+        daemon)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "once run" -- "$cur") )
+                return 0
+            fi
+            COMPREPLY=( $(compgen -W "--interval --target --update-assets --strict-network --check --no-restart" -- "$cur") )
             ;;
         run|restart)
             if [[ $COMP_CWORD -eq 2 ]]; then

@@ -7,6 +7,14 @@ namespace subcli {
 
 namespace {
 
+std::string normalizeMihomoGroupType(std::string type) {
+    type = toLower(type);
+    if (type == "url-test" || type == "urltest") {
+        return "url-test";
+    }
+    return "select";
+}
+
 void ensureMihomoBypassCnProfile(YAML::Node& root) {
     if (!root["dns"] || !root["dns"].IsMap()) {
         root["dns"] = YAML::Node(YAML::NodeType::Map);
@@ -32,6 +40,28 @@ void ensureMihomoBypassCnProfile(YAML::Node& root) {
     for (const auto& rule : desired) {
         if (!hasMihomoRule(root["rules"], rule)) {
             root["rules"].push_back(rule);
+        }
+    }
+}
+
+void ensureMihomoCustomRoutingRules(YAML::Node& root, const AppConfig& config) {
+    if (!root["rules"] || !root["rules"].IsSequence()) {
+        root["rules"] = YAML::Node(YAML::NodeType::Sequence);
+    }
+    for (const auto& rule : config.routingRules) {
+        const std::string type = toLower(rule.type);
+        std::string rendered;
+        if (type == "geosite") {
+            rendered = "GEOSITE," + rule.value + "," + rule.outbound;
+        } else if (type == "geoip") {
+            rendered = "GEOIP," + rule.value + "," + rule.outbound;
+        } else if (type == "match" || type == "final") {
+            rendered = "MATCH," + rule.outbound;
+        } else {
+            continue;
+        }
+        if (!hasMihomoRule(root["rules"], rendered)) {
+            root["rules"].push_back(rendered);
         }
     }
 }
@@ -94,8 +124,14 @@ ExportResult exportMihomoImpl(
 
     YAML::Node proxyGroups(YAML::NodeType::Sequence);
     std::set<std::string> managedGroups = {"PROXY", "AUTO"};
-    for (const auto& region : groups.regionOrder) {
-        managedGroups.insert(region);
+    if (!config.strategyGroups.empty()) {
+        for (const auto& group : config.strategyGroups) {
+            managedGroups.insert(group.name);
+        }
+    } else {
+        for (const auto& region : groups.regionOrder) {
+            managedGroups.insert(region);
+        }
     }
     if (root["proxy-groups"] && root["proxy-groups"].IsSequence()) {
         for (const auto& group : root["proxy-groups"]) {
@@ -129,14 +165,37 @@ ExportResult exportMihomoImpl(
         proxyGroups.push_back(group);
     };
 
-    addGroup("PROXY", groups.groups.at("PROXY"));
-    addGroup("AUTO", groups.groups.at("AUTO"));
-    for (const auto& region : groups.regionOrder) {
-        addGroup(region, groups.groups.at(region));
+    if (!config.strategyGroups.empty()) {
+        for (const auto& configured : config.strategyGroups) {
+            YAML::Node group;
+            group["name"] = configured.name;
+            const auto groupType = normalizeMihomoGroupType(configured.type);
+            group["type"] = groupType;
+            if (groupType == "url-test") {
+                group["url"] = configured.url.empty() ? "http://www.gstatic.com/generate_204" : configured.url;
+                group["interval"] = configured.interval > 0 ? configured.interval : 300;
+            }
+            group["proxies"] = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& member : configured.members) {
+                group["proxies"].push_back(member);
+            }
+            if (group["proxies"].size() == 0) {
+                group["proxies"].push_back("DIRECT");
+            }
+            proxyGroups.push_back(group);
+        }
+    } else {
+        addGroup("PROXY", groups.groups.at("PROXY"));
+        addGroup("AUTO", groups.groups.at("AUTO"));
+        for (const auto& region : groups.regionOrder) {
+            addGroup(region, groups.groups.at(region));
+        }
     }
     root["proxy-groups"] = proxyGroups;
 
-    if (config.profile == "bypass-cn") {
+    if (!config.routingRules.empty()) {
+        ensureMihomoCustomRoutingRules(root, config);
+    } else if (config.profile == "bypass-cn") {
         ensureMihomoBypassCnProfile(root);
     } else {
         if (!root["rules"] || !root["rules"].IsSequence()) {

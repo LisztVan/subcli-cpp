@@ -83,6 +83,11 @@ subcli export sing-box --output-dir ./outputs --check --check-timeout 30
 subcli export mihomo --strict-network
 subcli export mihomo --download-assets
 
+subcli run sing-box
+subcli status
+subcli stop sing-box
+subcli restart sing-box
+
 subcli check sing-box --file ./outputs/sing-box.json --timeout 30
 subcli completion bash
 ```
@@ -228,6 +233,15 @@ After exporting, run the generated configs directly with the matching core:
 mihomo -f ~/.local/share/subcli/outputs/mihomo.yaml
 sing-box run -c ~/.local/share/subcli/outputs/sing-box.json
 xray run -config ~/.local/share/subcli/outputs/xray.json
+```
+
+You can also let `subcli` manage runtime lifecycle directly:
+
+```bash
+subcli run sing-box
+subcli status
+subcli stop sing-box
+subcli restart sing-box
 ```
 
 Mihomo and sing-box TUN configs can be run directly when the core has the required platform permissions. Xray has no native TUN device; `xray_tun.json` is a transparent-proxy helper and still needs OS redirect/tproxy/tun2socks-style plumbing.

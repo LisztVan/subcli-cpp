@@ -48,6 +48,9 @@ subcli asset update
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --check
+subcli run sing-box
+subcli status sing-box
+subcli stop sing-box
 ```
 
 Proxy cores are not bundled. Configure core paths explicitly or make them available on `PATH`.

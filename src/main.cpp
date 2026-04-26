@@ -18,6 +18,7 @@
 #include "subcli/assets.hpp"
 #include "subcli/core_check.hpp"
 #include "subcli/core_discovery.hpp"
+#include "subcli/core_runtime.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
 #include "subcli/exporter.hpp"
@@ -359,7 +360,7 @@ bool hasHelp(const std::vector<std::string>& args) {
 }
 
 void printRootUsage() {
-    std::cout << "subcli <init|doctor|sub|config|template|asset|export|check|completion> ...\n"
+    std::cout << "subcli <init|doctor|sub|config|template|asset|export|run|stop|status|restart|check|completion> ...\n"
               << "\n"
               << "Common flow:\n"
               << "  subcli init\n"
@@ -367,6 +368,7 @@ void printRootUsage() {
               << "  subcli sub add --name NAME --url URL\n"
               << "  subcli sub update\n"
               << "  subcli export all --check\n"
+              << "  subcli run sing-box\n"
               << "\n"
               << "Use 'subcli <command> --help' for command details.\n";
 }
@@ -421,6 +423,22 @@ void printExportUsage() {
 
 void printCheckUsage() {
     std::cout << "usage: subcli check <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR] [--timeout SEC]\n";
+}
+
+void printRunUsage() {
+    std::cout << "usage: subcli run <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR]\n";
+}
+
+void printStopUsage() {
+    std::cout << "usage: subcli stop <mihomo|sing-box|xray>\n";
+}
+
+void printStatusUsage() {
+    std::cout << "usage: subcli status [mihomo|sing-box|xray]\n";
+}
+
+void printRestartUsage() {
+    std::cout << "usage: subcli restart <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR]\n";
 }
 
 void printCompletionUsage() {
@@ -810,6 +828,192 @@ int runConfigCheckForTarget(const AppConfig& cfg, ExportTarget target, const std
     }
     std::cout << "check passed: " << filePath << "\n";
     return 0;
+}
+
+std::string coreBinaryForTarget(const CorePaths& cores, ExportTarget target) {
+    if (target == ExportTarget::Mihomo) {
+        return cores.mihomo;
+    }
+    if (target == ExportTarget::SingBox) {
+        return cores.singBox;
+    }
+    return cores.xray;
+}
+
+std::vector<std::string> runtimeArgsForTarget(ExportTarget target, const std::string& configPath) {
+    if (target == ExportTarget::Mihomo) {
+        return {"-f", configPath};
+    }
+    if (target == ExportTarget::SingBox) {
+        return {"run", "-c", configPath};
+    }
+    return {"run", "-config", configPath};
+}
+
+std::string runtimeConfigPathFromArgs(const std::vector<std::string>& args, const AppConfig& cfg, const std::string& defaultFile) {
+    if (hasOption(args, "--file")) {
+        return resolveFromCliCwd(argValue(args, "--file"));
+    }
+    std::string outputDir;
+    if (hasOption(args, "--output-dir")) {
+        outputDir = resolveFromCliCwd(argValue(args, "--output-dir", cfg.outputDir));
+    } else {
+        outputDir = cfg.outputDir;
+    }
+    return (std::filesystem::path(outputDir) / defaultFile).string();
+}
+
+int startRuntimeForTarget(const std::vector<std::string>& args, bool restart) {
+    if (!validateOptions(args, 2, {"--file", "--output-dir"}, {"--file", "--output-dir"})) {
+        return ExitUsage;
+    }
+    if (!ensureNoExtraPositionals(args, 2, {"--file", "--output-dir"}, "run/restart accepts one target and options")) {
+        return ExitUsage;
+    }
+    if (args.size() < 2) {
+        return ExitUsage;
+    }
+
+    ExportTarget target;
+    std::string defaultFile;
+    if (!parseExportTarget(args[1], target, defaultFile)) {
+        std::cerr << "unknown target: " << args[1] << "\n";
+        return ExitUsage;
+    }
+
+    ensureDefaults();
+    auto cfg = loadConfig(gPaths.configPath.string());
+    applyConfigDefaults(cfg);
+
+    const std::string configPath = runtimeConfigPathFromArgs(args, cfg, defaultFile);
+    if (!fileExists(configPath)) {
+        std::cerr << "runtime config does not exist: " << configPath << "\n";
+        return ExitError;
+    }
+
+    const auto cores = discoverCorePaths(cfg);
+    const std::string binary = coreBinaryForTarget(cores, target);
+    if (binary.empty()) {
+        std::cerr << "core binary not found for target: " << args[1] << "\n";
+        return ExitError;
+    }
+    if (!isExecutableFile(binary)) {
+        std::cerr << "core binary is not executable: " << binary << "\n";
+        return ExitError;
+    }
+
+    std::string error;
+    if (restart && !stopCoreRuntime(gPaths.stateDir, args[1], 5, error)) {
+        std::cerr << "restart stop failed: " << error << "\n";
+        return ExitError;
+    }
+    if (!startCoreRuntime(gPaths.stateDir, args[1], binary, runtimeArgsForTarget(target, configPath), configPath, error)) {
+        std::cerr << "runtime start failed: " << error << "\n";
+        return ExitError;
+    }
+
+    const auto status = inspectCoreRuntime(gPaths.stateDir, args[1], error);
+    if (!error.empty()) {
+        std::cerr << "runtime status read failed: " << error << "\n";
+        return ExitError;
+    }
+    std::cout << "running " << args[1] << " pid=" << status.pid << " config=" << configPath << "\n";
+    return ExitOk;
+}
+
+int doRunCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printRunUsage();
+        return ExitOk;
+    }
+    if (args.size() < 2) {
+        printRunUsage();
+        return ExitUsage;
+    }
+    return startRuntimeForTarget(args, false);
+}
+
+int doRestartCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printRestartUsage();
+        return ExitOk;
+    }
+    if (args.size() < 2) {
+        printRestartUsage();
+        return ExitUsage;
+    }
+    return startRuntimeForTarget(args, true);
+}
+
+int doStopCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printStopUsage();
+        return ExitOk;
+    }
+    if (!validateOptions(args, 2, {}, {})) {
+        return ExitUsage;
+    }
+    if (args.size() != 2) {
+        printStopUsage();
+        return ExitUsage;
+    }
+    ExportTarget target;
+    std::string defaultFile;
+    if (!parseExportTarget(args[1], target, defaultFile)) {
+        std::cerr << "unknown target: " << args[1] << "\n";
+        return ExitUsage;
+    }
+    std::string error;
+    if (!stopCoreRuntime(gPaths.stateDir, args[1], 5, error)) {
+        std::cerr << "runtime stop failed: " << error << "\n";
+        return ExitError;
+    }
+    std::cout << "stopped " << args[1] << "\n";
+    return ExitOk;
+}
+
+int printRuntimeStatus(const std::string& target) {
+    std::string error;
+    const auto status = inspectCoreRuntime(gPaths.stateDir, target, error);
+    if (!error.empty()) {
+        std::cerr << "runtime status failed for " << target << ": " << error << "\n";
+        return ExitError;
+    }
+    std::cout << target << "\t";
+    if (status.running) {
+        std::cout << "running\tpid=" << status.pid << "\tconfig=" << status.configPath << "\n";
+    } else {
+        std::cout << "stopped\n";
+    }
+    return ExitOk;
+}
+
+int doStatusCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printStatusUsage();
+        return ExitOk;
+    }
+    if (!validateOptions(args, 1, {}, {})) {
+        return ExitUsage;
+    }
+    if (args.size() == 1) {
+        int rc = ExitOk;
+        rc = std::max(rc, printRuntimeStatus("mihomo"));
+        rc = std::max(rc, printRuntimeStatus("sing-box"));
+        rc = std::max(rc, printRuntimeStatus("xray"));
+        return rc;
+    }
+    if (args.size() != 2) {
+        printStatusUsage();
+        return ExitUsage;
+    }
+    ExportTarget target;
+    std::string defaultFile;
+    if (!parseExportTarget(args[1], target, defaultFile)) {
+        std::cerr << "unknown target: " << args[1] << "\n";
+        return ExitUsage;
+    }
+    return printRuntimeStatus(args[1]);
 }
 
 int doInitCommand(const std::vector<std::string>& args) {
@@ -2399,6 +2603,18 @@ int main(int argc, char** argv) {
         }
         if (cmd == "export") {
             return doExportCommand(tail);
+        }
+        if (cmd == "run") {
+            return doRunCommand(tail);
+        }
+        if (cmd == "stop") {
+            return doStopCommand(tail);
+        }
+        if (cmd == "status") {
+            return doStatusCommand(tail);
+        }
+        if (cmd == "restart") {
+            return doRestartCommand(tail);
         }
         if (cmd == "check") {
             return doCheckCommand(tail);

@@ -94,6 +94,7 @@ set(SUBCLI_SOURCES
     src/capabilities.cpp
     src/core_discovery.cpp
     src/core_check.cpp
+    src/core_runtime.cpp
     src/cli_completion.cpp
     src/cli_output.cpp
     src/assets.cpp

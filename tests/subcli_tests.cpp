@@ -13,6 +13,7 @@
 #include "subcli/capabilities.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
+#include "subcli/core_runtime.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
 #include "subcli/node.hpp"
@@ -96,7 +97,7 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
-    require(script.find("init doctor sub config template asset export check completion") != std::string::npos, "completion should include root commands");
+    require(script.find("init doctor sub config template asset export run stop status restart check completion") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
 }
 
@@ -1489,6 +1490,49 @@ void testLoadConfigMalformedYamlThrows() {
     fs::remove(path);
 }
 
+void testCoreRuntimeLifecycle() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-tests-runtime";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    std::string error;
+    const bool started = subcli::startCoreRuntime(
+        stateDir,
+        "sing-box",
+        "/bin/sleep",
+        {"30"},
+        "/tmp/subcli-tests-runtime-config.json",
+        error
+    );
+    require(started, "startCoreRuntime should start process: " + error);
+
+    auto status = subcli::inspectCoreRuntime(stateDir, "sing-box", error);
+    require(error.empty(), "inspectCoreRuntime should not fail for running process: " + error);
+    require(status.hasState, "inspectCoreRuntime should find saved runtime state");
+    require(status.running, "inspectCoreRuntime should report running process");
+    require(status.pid > 0, "inspectCoreRuntime should report pid");
+
+    const bool secondStart = subcli::startCoreRuntime(
+        stateDir,
+        "sing-box",
+        "/bin/sleep",
+        {"30"},
+        "/tmp/subcli-tests-runtime-config.json",
+        error
+    );
+    require(!secondStart, "startCoreRuntime should reject duplicate start");
+
+    const bool stopped = subcli::stopCoreRuntime(stateDir, "sing-box", 1, error);
+    require(stopped, "stopCoreRuntime should stop running process: " + error);
+
+    status = subcli::inspectCoreRuntime(stateDir, "sing-box", error);
+    require(error.empty(), "inspectCoreRuntime should not fail after stop: " + error);
+    require(!status.hasState, "inspectCoreRuntime should remove state after stop");
+    require(!status.running, "inspectCoreRuntime should report stopped process");
+
+    fs::remove_all(stateDir);
+}
+
 } // namespace
 
 int main() {
@@ -1537,6 +1581,7 @@ int main() {
     testInvalidRegexIsIgnored();
     testWriteFileCreatesParentDirectories();
     testLoadConfigMalformedYamlThrows();
+    testCoreRuntimeLifecycle();
     testStorePersistsOverrideFlags();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();

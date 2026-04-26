@@ -79,6 +79,48 @@ void ensureObservatoryForStrategy(nlohmann::json& root, const std::string& strat
     }
 }
 
+bool hasXrayDirectCnRule(const nlohmann::json& rules) {
+    if (!rules.is_array()) {
+        return false;
+    }
+    for (const auto& rule : rules) {
+        if (!rule.is_object() || rule.value("outboundTag", "") != "DIRECT") {
+            continue;
+        }
+        const auto domainText = rule.contains("domain") ? rule["domain"].dump() : "";
+        const auto ipText = rule.contains("ip") ? rule["ip"].dump() : "";
+        if (domainText.find("geosite:cn") != std::string::npos || ipText.find("geoip:cn") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ensureXrayBypassCnProfile(nlohmann::json& root) {
+    if (!root.contains("dns") || !root["dns"].is_object()) {
+        root["dns"] = nlohmann::json::object();
+    }
+    root["dns"]["queryStrategy"] = "UseIPv4";
+    root["dns"]["servers"] = nlohmann::json::array({"223.5.5.5", "119.29.29.29", "1.1.1.1"});
+
+    if (!root.contains("routing") || !root["routing"].is_object()) {
+        root["routing"] = nlohmann::json::object();
+    }
+    root["routing"]["domainStrategy"] = "IPIfNonMatch";
+    if (!root["routing"].contains("rules") || !root["routing"]["rules"].is_array()) {
+        root["routing"]["rules"] = nlohmann::json::array();
+    }
+    if (!hasXrayDirectCnRule(root["routing"]["rules"])) {
+        nlohmann::json rule = {
+            {"type", "field"},
+            {"domain", nlohmann::json::array({"geosite:private", "geosite:cn"})},
+            {"ip", nlohmann::json::array({"geoip:private", "geoip:cn"})},
+            {"outboundTag", "DIRECT"}
+        };
+        root["routing"]["rules"].insert(root["routing"]["rules"].begin(), rule);
+    }
+}
+
 } // namespace
 
 ExportResult exportXrayImpl(
@@ -136,6 +178,9 @@ ExportResult exportXrayImpl(
 
     if (!root.contains("routing") || !root["routing"].is_object()) {
         root["routing"] = nlohmann::json::object();
+    }
+    if (config.profile == "bypass-cn") {
+        ensureXrayBypassCnProfile(root);
     }
     if (!root["routing"].contains("balancers") || !root["routing"]["balancers"].is_array()) {
         root["routing"]["balancers"] = nlohmann::json::array();

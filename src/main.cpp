@@ -15,6 +15,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include "subcli/assets.hpp"
 #include "subcli/core_check.hpp"
 #include "subcli/core_discovery.hpp"
 #include "subcli/cli_completion.hpp"
@@ -215,6 +216,45 @@ void applyConfigDefaults(AppConfig& c) {
     } else {
         c.outputDir = resolveFromConfigDir(c.outputDir);
     }
+    if (c.profile.empty()) {
+        c.profile = "bypass-cn";
+    }
+    if (c.assetDir.empty() || c.assetDir == "./assets" || c.assetDir == "assets") {
+        c.assetDir = (gPaths.dataDir / "assets").string();
+    } else {
+        c.assetDir = resolveFromConfigDir(c.assetDir);
+    }
+    const std::map<std::string, std::string> defaultAssetPaths = {
+        {"mihomo.geosite", "mihomo/geosite.dat"},
+        {"mihomo.geoip", "mihomo/geoip.dat"},
+        {"sing-box.geosite-cn", "sing-box/geosite-cn.srs"},
+        {"sing-box.geoip-cn", "sing-box/geoip-cn.srs"},
+        {"xray.geosite", "xray/geosite.dat"},
+        {"xray.geoip", "xray/geoip.dat"},
+    };
+    const std::map<std::string, std::string> defaultAssetUrls = {
+        {"mihomo.geosite", "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat"},
+        {"mihomo.geoip", "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat"},
+        {"sing-box.geosite-cn", "https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite-cn.srs"},
+        {"sing-box.geoip-cn", "https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip-cn.srs"},
+        {"xray.geosite", "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"},
+        {"xray.geoip", "https://github.com/v2fly/geoip/releases/latest/download/geoip.dat"},
+    };
+    for (const auto& kv : defaultAssetPaths) {
+        if (!c.assetPaths.count(kv.first) || c.assetPaths[kv.first].empty()) {
+            c.assetPaths[kv.first] = (std::filesystem::path(c.assetDir) / kv.second).string();
+        } else {
+            std::filesystem::path assetPath(c.assetPaths[kv.first]);
+            if (!assetPath.is_absolute()) {
+                c.assetPaths[kv.first] = (std::filesystem::path(c.assetDir) / assetPath).string();
+            }
+        }
+    }
+    for (const auto& kv : defaultAssetUrls) {
+        if (!c.assetUrls.count(kv.first) || c.assetUrls[kv.first].empty()) {
+            c.assetUrls[kv.first] = kv.second;
+        }
+    }
     const std::string templateDir = c.templateDir;
     if (!c.templateNormal.count("mihomo")) {
         c.templateNormal["mihomo"] = defaultTemplatePath(templateDir, "mihomo_base.yaml");
@@ -319,7 +359,7 @@ bool hasHelp(const std::vector<std::string>& args) {
 }
 
 void printRootUsage() {
-    std::cout << "subcli <init|doctor|sub|config|template|export|check|completion> ...\n"
+    std::cout << "subcli <init|doctor|sub|config|template|asset|export|check|completion> ...\n"
               << "\n"
               << "Common flow:\n"
               << "  subcli init\n"
@@ -365,6 +405,13 @@ void printTemplateUsage() {
               << "  subcli template set <mihomo|sing-box|xray> <normal|tun> <path>\n"
               << "  subcli template reset [mihomo|sing-box|xray] [normal|tun]\n"
               << "  subcli template validate\n";
+}
+
+void printAssetUsage() {
+    std::cout << "usage: subcli asset <list|validate|update>\n"
+              << "  subcli asset list\n"
+              << "  subcli asset validate\n"
+              << "  subcli asset update\n";
 }
 
 void printExportUsage() {
@@ -623,11 +670,21 @@ nlohmann::json configToJson(const AppConfig& cfg) {
     for (const auto& kv : cfg.regionRules) {
         regions[kv.first] = kv.second;
     }
+    nlohmann::json assetPaths = nlohmann::json::object();
+    for (const auto& kv : cfg.assetPaths) {
+        assetPaths[kv.first] = kv.second;
+    }
+    nlohmann::json assetUrls = nlohmann::json::object();
+    for (const auto& kv : cfg.assetUrls) {
+        assetUrls[kv.first] = kv.second;
+    }
 
     return {
         {"tun", cfg.tun},
+        {"profile", cfg.profile},
         {"output_dir", cfg.outputDir},
         {"template_dir", cfg.templateDir},
+        {"asset_dir", cfg.assetDir},
         {"parallelism", cfg.parallelism},
         {"timeout", cfg.timeout},
         {"retry", cfg.retry},
@@ -636,6 +693,7 @@ nlohmann::json configToJson(const AppConfig& cfg) {
         {"core_paths", {{"mihomo", cfg.mihomoPath}, {"sing_box", cfg.singBoxPath}, {"xray", cfg.xrayPath}}},
         {"node_management", {{"dedupe", cfg.dedupeNodes}, {"rename_template", cfg.renameTemplate}, {"include_regex", cfg.includeRegex}, {"exclude_regex", cfg.excludeRegex}, {"sort_by", cfg.sortBy}}},
         {"templates", templates},
+        {"assets", {{"paths", assetPaths}, {"urls", assetUrls}}},
         {"grouping", {{"region_rules", regions}}},
     };
 }
@@ -1488,8 +1546,10 @@ int doConfigCommand(const std::vector<std::string>& args) {
             return 0;
         }
         std::cout << "tun=" << (cfg.tun ? "true" : "false") << "\n";
+        std::cout << "profile=" << cfg.profile << "\n";
         std::cout << "output_dir=" << cfg.outputDir << "\n";
         std::cout << "template_dir=" << cfg.templateDir << "\n";
+        std::cout << "asset_dir=" << cfg.assetDir << "\n";
         std::cout << "parallelism=" << cfg.parallelism << "\n";
         std::cout << "timeout=" << cfg.timeout << "\n";
         std::cout << "retry=" << cfg.retry << "\n";
@@ -1512,6 +1572,12 @@ int doConfigCommand(const std::vector<std::string>& args) {
         for (const auto& kv : cfg.regionRules) {
             std::cout << "grouping.region_rules." << kv.first << "=" << kv.second << "\n";
         }
+        for (const auto& kv : cfg.assetPaths) {
+            std::cout << "assets.paths." << kv.first << "=" << kv.second << "\n";
+        }
+        for (const auto& kv : cfg.assetUrls) {
+            std::cout << "assets.urls." << kv.first << "=" << kv.second << "\n";
+        }
         return 0;
     }
     if (cmd == "get") {
@@ -1526,6 +1592,14 @@ int doConfigCommand(const std::vector<std::string>& args) {
         }
         if (key == "output_dir") {
             std::cout << cfg.outputDir << "\n";
+            return 0;
+        }
+        if (key == "profile") {
+            std::cout << cfg.profile << "\n";
+            return 0;
+        }
+        if (key == "asset_dir") {
+            std::cout << cfg.assetDir << "\n";
             return 0;
         }
         if (key == "template_dir") {
@@ -1609,6 +1683,22 @@ int doConfigCommand(const std::vector<std::string>& args) {
                 return 0;
             }
         }
+        const std::string assetPathPrefix = "assets.paths.";
+        if (key.rfind(assetPathPrefix, 0) == 0) {
+            const auto assetKey = key.substr(assetPathPrefix.size());
+            if (cfg.assetPaths.count(assetKey)) {
+                std::cout << cfg.assetPaths[assetKey] << "\n";
+                return 0;
+            }
+        }
+        const std::string assetUrlPrefix = "assets.urls.";
+        if (key.rfind(assetUrlPrefix, 0) == 0) {
+            const auto assetKey = key.substr(assetUrlPrefix.size());
+            if (cfg.assetUrls.count(assetKey)) {
+                std::cout << cfg.assetUrls[assetKey] << "\n";
+                return 0;
+            }
+        }
         std::cerr << "unsupported key in v1\n";
         return 1;
     }
@@ -1625,6 +1715,14 @@ int doConfigCommand(const std::vector<std::string>& args) {
             }
         } else if (key == "output_dir") {
             cfg.outputDir = resolveFromConfigDir(value);
+        } else if (key == "profile") {
+            if (value != "bypass-cn") {
+                std::cerr << "unsupported profile: " << value << "\n";
+                return 1;
+            }
+            cfg.profile = value;
+        } else if (key == "asset_dir") {
+            cfg.assetDir = resolveFromConfigDir(value);
         } else if (key == "template_dir") {
             const std::string oldDir = cfg.templateDir;
             cfg.templateDir = resolveFromConfigDir(value);
@@ -1702,6 +1800,20 @@ int doConfigCommand(const std::vector<std::string>& args) {
                 return 1;
             }
             cfg.regionRules[region] = value;
+        } else if (key.rfind("assets.paths.", 0) == 0) {
+            const auto assetKey = key.substr(std::string("assets.paths.").size());
+            if (assetKey.empty()) {
+                std::cerr << "invalid asset path key\n";
+                return 1;
+            }
+            cfg.assetPaths[assetKey] = value;
+        } else if (key.rfind("assets.urls.", 0) == 0) {
+            const auto assetKey = key.substr(std::string("assets.urls.").size());
+            if (assetKey.empty()) {
+                std::cerr << "invalid asset URL key\n";
+                return 1;
+            }
+            cfg.assetUrls[assetKey] = value;
         } else {
             std::cerr << "unsupported key in v1\n";
             return 1;
@@ -1718,6 +1830,10 @@ int doConfigCommand(const std::vector<std::string>& args) {
         const auto& key = args[2];
         if (key == "output_dir") {
             cfg.outputDir = gPaths.outputDir.string();
+        } else if (key == "profile") {
+            cfg.profile = "bypass-cn";
+        } else if (key == "asset_dir") {
+            cfg.assetDir = (gPaths.dataDir / "assets").string();
         } else if (key == "template_dir") {
             const std::string oldDir = cfg.templateDir;
             cfg.templateDir = gPaths.templateDir.string();
@@ -1775,6 +1891,10 @@ int doConfigCommand(const std::vector<std::string>& args) {
         } else if (key.rfind("grouping.region_rules.", 0) == 0) {
             const auto region = key.substr(std::string("grouping.region_rules.").size());
             cfg.regionRules.erase(region);
+        } else if (key.rfind("assets.paths.", 0) == 0) {
+            cfg.assetPaths.erase(key.substr(std::string("assets.paths.").size()));
+        } else if (key.rfind("assets.urls.", 0) == 0) {
+            cfg.assetUrls.erase(key.substr(std::string("assets.urls.").size()));
         } else {
             std::cerr << "unsupported key in v1\n";
             return 1;
@@ -1927,6 +2047,70 @@ int doTemplateCommand(const std::vector<std::string>& args) {
 
     std::cerr << "unknown template command: " << cmd << "\n";
     return 1;
+}
+
+int doAssetCommand(const std::vector<std::string>& args) {
+    if (args.size() < 2 || hasHelp(args)) {
+        printAssetUsage();
+        return 0;
+    }
+    ensureDefaults();
+    AppConfig cfg = loadConfig(gPaths.configPath.string());
+    applyConfigDefaults(cfg);
+    const auto records = configuredAssets(cfg);
+    const std::string cmd = args[1];
+
+    if (cmd == "list") {
+        if (args.size() != 2) {
+            std::cerr << "asset list does not accept arguments\n";
+            return ExitUsage;
+        }
+        for (const auto& asset : records) {
+            std::cout << asset.key << " path=" << asset.path << " url=" << asset.url
+                      << " status=" << (asset.exists ? "present" : "missing") << "\n";
+        }
+        return ExitOk;
+    }
+
+    if (cmd == "validate") {
+        if (args.size() != 2) {
+            std::cerr << "asset validate does not accept arguments\n";
+            return ExitUsage;
+        }
+        int missing = 0;
+        for (const auto& asset : records) {
+            if (!asset.exists) {
+                ++missing;
+                std::cerr << "missing asset: " << asset.key << " at " << asset.path << "\n";
+            }
+        }
+        if (missing > 0) {
+            return ExitError;
+        }
+        std::cout << "all assets present\n";
+        return ExitOk;
+    }
+
+    if (cmd == "update") {
+        if (args.size() != 2) {
+            std::cerr << "asset update does not accept arguments\n";
+            return ExitUsage;
+        }
+        int failed = 0;
+        for (const auto& asset : records) {
+            std::string error;
+            if (!updateAsset(asset, cfg.timeout, cfg.fetchMaxBytes, error)) {
+                ++failed;
+                std::cerr << "asset update failed: " << asset.key << ": " << error << "\n";
+                continue;
+            }
+            std::cout << "updated asset: " << asset.key << " -> " << asset.path << "\n";
+        }
+        return failed == 0 ? ExitOk : ExitError;
+    }
+
+    std::cerr << "unknown asset command: " << cmd << "\n";
+    return ExitUsage;
 }
 
 int doExportCommand(const std::vector<std::string>& args) {
@@ -2185,6 +2369,9 @@ int main(int argc, char** argv) {
         }
         if (cmd == "template") {
             return doTemplateCommand(tail);
+        }
+        if (cmd == "asset") {
+            return doAssetCommand(tail);
         }
         if (cmd == "export") {
             return doExportCommand(tail);

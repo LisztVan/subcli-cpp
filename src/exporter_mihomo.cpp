@@ -5,6 +5,39 @@
 
 namespace subcli {
 
+namespace {
+
+void ensureMihomoBypassCnProfile(YAML::Node& root) {
+    if (!root["dns"] || !root["dns"].IsMap()) {
+        root["dns"] = YAML::Node(YAML::NodeType::Map);
+    }
+    root["dns"]["enable"] = true;
+    root["dns"]["enhanced-mode"] = "fake-ip";
+    if (!root["dns"]["nameserver"] || !root["dns"]["nameserver"].IsSequence()) {
+        root["dns"]["nameserver"] = YAML::Node(YAML::NodeType::Sequence);
+        root["dns"]["nameserver"].push_back("https://dns.alidns.com/dns-query");
+        root["dns"]["nameserver"].push_back("https://doh.pub/dns-query");
+    }
+
+    if (!root["rules"] || !root["rules"].IsSequence()) {
+        root["rules"] = YAML::Node(YAML::NodeType::Sequence);
+    }
+    const std::vector<std::string> desired = {
+        "GEOIP,LAN,DIRECT",
+        "GEOSITE,private,DIRECT",
+        "GEOSITE,cn,DIRECT",
+        "GEOIP,CN,DIRECT",
+        "MATCH,PROXY",
+    };
+    for (const auto& rule : desired) {
+        if (!hasMihomoRule(root["rules"], rule)) {
+            root["rules"].push_back(rule);
+        }
+    }
+}
+
+} // namespace
+
 ExportResult exportMihomoImpl(
     const std::vector<ProxyNode>& nodes,
     const AppConfig& config,
@@ -103,11 +136,15 @@ ExportResult exportMihomoImpl(
     }
     root["proxy-groups"] = proxyGroups;
 
-    if (!root["rules"] || !root["rules"].IsSequence()) {
-        root["rules"] = YAML::Node(YAML::NodeType::Sequence);
-    }
-    if (!hasMihomoRule(root["rules"], "MATCH,PROXY")) {
-        root["rules"].push_back("MATCH,PROXY");
+    if (config.profile == "bypass-cn") {
+        ensureMihomoBypassCnProfile(root);
+    } else {
+        if (!root["rules"] || !root["rules"].IsSequence()) {
+            root["rules"] = YAML::Node(YAML::NodeType::Sequence);
+        }
+        if (!hasMihomoRule(root["rules"], "MATCH,PROXY")) {
+            root["rules"].push_back("MATCH,PROXY");
+        }
     }
 
     YAML::Emitter emitter;

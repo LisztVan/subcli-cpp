@@ -4,6 +4,7 @@
 #include <string>
 
 #include "exporter_internal.hpp"
+#include "subcli/assets.hpp"
 #include "subcli/capabilities.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
@@ -90,7 +91,7 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
-    require(script.find("init doctor sub config template export check completion") != std::string::npos, "completion should include root commands");
+    require(script.find("init doctor sub config template asset export check completion") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
 }
 
@@ -952,6 +953,113 @@ void testExportSingBoxDnsRuleUsesRouteActionWithPort53() {
     require(content.find("\"port\": 53") != std::string::npos, "sing-box dns direct rule should match port 53");
 }
 
+subcli::ProxyNode makeExportReadyShadowsocksNode(const std::string& name) {
+    subcli::ProxyNode node;
+    node.type = "ss";
+    node.name = name;
+    node.server = "1.2.3.4";
+    node.port = 443;
+    node.protocol.password = "password";
+    node.protocol.cipher = "chacha20-ietf-poly1305";
+    node.region = "HK";
+    node.normalize();
+    return node;
+}
+
+void testMihomoExportIncludesBypassCnProfileRules() {
+    auto config = makeConfig();
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests";
+    fs::create_directories(outDir);
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        (outDir / "mihomo-bypass-cn.yaml").string(),
+        error
+    );
+    require(result.ok, "mihomo bypass-cn export should succeed: " + error);
+
+    std::ifstream in(outDir / "mihomo-bypass-cn.yaml");
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    require(content.find("GEOSITE,cn,DIRECT") != std::string::npos, "mihomo should bypass mainland domains");
+    require(content.find("GEOIP,CN,DIRECT") != std::string::npos, "mihomo should bypass mainland IPs");
+    require(content.find("MATCH,PROXY") != std::string::npos, "mihomo should proxy unmatched traffic");
+}
+
+void testSingBoxExportIncludesBypassCnProfileRules() {
+    auto config = makeConfig();
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests";
+    fs::create_directories(outDir);
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        (outDir / "sing-box-bypass-cn.json").string(),
+        error
+    );
+    require(result.ok, "sing-box bypass-cn export should succeed: " + error);
+
+    std::ifstream in(outDir / "sing-box-bypass-cn.json");
+    const auto json = nlohmann::json::parse(in);
+    require(json["route"].value("final", "") == "PROXY", "sing-box should proxy unmatched traffic");
+    require(json["route"].contains("rule_set"), "sing-box route should declare rule_set assets");
+
+    bool hasGeositeCnRule = false;
+    bool hasGeoipCnRule = false;
+    for (const auto& rule : json["route"]["rules"]) {
+        if (rule.value("outbound", "") != "DIRECT") {
+            continue;
+        }
+        if (rule.contains("rule_set") && rule["rule_set"].is_array()) {
+            for (const auto& name : rule["rule_set"]) {
+                hasGeositeCnRule = hasGeositeCnRule || name.get<std::string>() == "geosite-cn";
+                hasGeoipCnRule = hasGeoipCnRule || name.get<std::string>() == "geoip-cn";
+            }
+        }
+    }
+    require(hasGeositeCnRule, "sing-box should bypass mainland domain rule set");
+    require(hasGeoipCnRule, "sing-box should bypass mainland IP rule set");
+}
+
+void testXrayExportIncludesBypassCnProfileRules() {
+    auto config = makeConfig();
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests";
+    fs::create_directories(outDir);
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Xray,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        (outDir / "xray-bypass-cn.json").string(),
+        error
+    );
+    require(result.ok, "xray bypass-cn export should succeed: " + error);
+
+    std::ifstream in(outDir / "xray-bypass-cn.json");
+    const auto json = nlohmann::json::parse(in);
+    bool hasDirectCnRule = false;
+    bool hasProxyFallback = false;
+    for (const auto& rule : json["routing"]["rules"]) {
+        if (rule.value("outboundTag", "") == "DIRECT") {
+            const auto domainText = rule.contains("domain") ? rule["domain"].dump() : "";
+            const auto ipText = rule.contains("ip") ? rule["ip"].dump() : "";
+            hasDirectCnRule = hasDirectCnRule || domainText.find("geosite:cn") != std::string::npos ||
+                              ipText.find("geoip:cn") != std::string::npos;
+        }
+        hasProxyFallback = hasProxyFallback || rule.value("balancerTag", "") == "PROXY";
+    }
+    require(hasDirectCnRule, "xray should bypass mainland geosite/geoip rules");
+    require(hasProxyFallback, "xray should proxy unmatched traffic through PROXY balancer");
+}
+
 void testStorePersistsOverrideFlags() {
     const fs::path path = fs::temp_directory_path() / "subcli-tests-subs.yaml";
 
@@ -985,6 +1093,39 @@ void testStorePersistsFetchMaxBytes() {
     require(loaded.fetchMaxBytes == 4096, "fetch_max_bytes should persist");
 
     fs::remove(path);
+}
+
+void testStorePersistsProfileAndAssets() {
+    const fs::path path = fs::temp_directory_path() / "subcli-tests-profile-config.yaml";
+    subcli::AppConfig config;
+    config.profile = "bypass-cn";
+    config.assetDir = "/tmp/subcli-assets";
+    config.assetPaths["sing-box.geosite-cn"] = "/tmp/subcli-assets/sing-box/geosite-cn.srs";
+    config.assetUrls["sing-box.geosite-cn"] = "file:///tmp/geosite-cn.srs";
+
+    subcli::saveConfig(path.string(), config);
+    auto loaded = subcli::loadConfig(path.string());
+    require(loaded.profile == "bypass-cn", "profile should persist");
+    require(loaded.assetDir == "/tmp/subcli-assets", "asset_dir should persist");
+    require(loaded.assetPaths["sing-box.geosite-cn"] == "/tmp/subcli-assets/sing-box/geosite-cn.srs", "asset path should persist");
+    require(loaded.assetUrls["sing-box.geosite-cn"] == "file:///tmp/geosite-cn.srs", "asset URL should persist");
+
+    fs::remove(path);
+}
+
+void testAssetRecordsExposeConfiguredFiles() {
+    subcli::AppConfig config;
+    config.assetPaths["xray.geoip"] = "/tmp/subcli-assets/xray/geoip.dat";
+    config.assetUrls["xray.geoip"] = "file:///tmp/geoip.dat";
+
+    const auto records = subcli::configuredAssets(config);
+    bool found = false;
+    for (const auto& record : records) {
+        if (record.key == "xray.geoip") {
+            found = record.path == "/tmp/subcli-assets/xray/geoip.dat" && record.url == "file:///tmp/geoip.dat";
+        }
+    }
+    require(found, "configuredAssets should expose configured xray geoip asset");
 }
 
 void testFetchRejectsUnsupportedScheme() {
@@ -1186,6 +1327,9 @@ int main() {
     testExportXrayUsesStableRandomBalancer();
     testExportXraySupportsLeastLoadStrategyFromTemplate();
     testExportSingBoxDnsRuleUsesRouteActionWithPort53();
+    testMihomoExportIncludesBypassCnProfileRules();
+    testSingBoxExportIncludesBypassCnProfileRules();
+    testXrayExportIncludesBypassCnProfileRules();
     testStructuredFieldsSurviveExportNormalization();
     testNodeManagementPreprocess();
     testInvalidRegexIsIgnored();
@@ -1193,6 +1337,8 @@ int main() {
     testLoadConfigMalformedYamlThrows();
     testStorePersistsOverrideFlags();
     testStorePersistsFetchMaxBytes();
+    testStorePersistsProfileAndAssets();
+    testAssetRecordsExposeConfiguredFiles();
     testFetchRejectsUnsupportedScheme();
     testFetchFileHonorsMaxBytes();
     return 0;

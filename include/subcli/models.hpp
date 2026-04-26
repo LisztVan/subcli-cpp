@@ -49,6 +49,10 @@ struct AppConfig {
     std::map<std::string, std::string> templateNormal;
     std::map<std::string, std::string> templateTun;
     std::map<std::string, std::string> regionRules;
+    std::string profile = "bypass-cn";
+    std::string assetDir = "./assets";
+    std::map<std::string, std::string> assetPaths;
+    std::map<std::string, std::string> assetUrls;
 
     bool dedupeNodes = true;
     std::string renameTemplate = "{name}";

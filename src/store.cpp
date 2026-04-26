@@ -136,6 +136,8 @@ AppConfig loadConfig(const std::string& path) {
     c.fetchMaxBytes = root["fetch_max_bytes"].as<long>(10 * 1024 * 1024);
     c.templateDir = root["template_dir"].as<std::string>("./templates");
     c.outputDir = root["output_dir"].as<std::string>("./outputs");
+    c.profile = root["profile"].as<std::string>("bypass-cn");
+    c.assetDir = root["asset_dir"].as<std::string>("./assets");
     if (root["core_paths"] && root["core_paths"].IsMap()) {
         c.mihomoPath = root["core_paths"]["mihomo"].as<std::string>("");
         c.singBoxPath = root["core_paths"]["sing_box"].as<std::string>("");
@@ -172,6 +174,18 @@ AppConfig loadConfig(const std::string& path) {
             c.regionRules[kv.first.as<std::string>()] = kv.second.as<std::string>();
         }
     }
+    if (root["assets"] && root["assets"].IsMap()) {
+        if (root["assets"]["paths"] && root["assets"]["paths"].IsMap()) {
+            for (const auto& kv : root["assets"]["paths"]) {
+                c.assetPaths[kv.first.as<std::string>()] = kv.second.as<std::string>();
+            }
+        }
+        if (root["assets"]["urls"] && root["assets"]["urls"].IsMap()) {
+            for (const auto& kv : root["assets"]["urls"]) {
+                c.assetUrls[kv.first.as<std::string>()] = kv.second.as<std::string>();
+            }
+        }
+    }
     return c;
 }
 
@@ -186,6 +200,8 @@ void saveConfig(const std::string& path, const AppConfig& c) {
     root["fetch_max_bytes"] = c.fetchMaxBytes;
     root["template_dir"] = c.templateDir;
     root["output_dir"] = c.outputDir;
+    root["profile"] = c.profile;
+    root["asset_dir"] = c.assetDir;
     root["core_paths"]["mihomo"] = c.mihomoPath;
     root["core_paths"]["sing_box"] = c.singBoxPath;
     root["core_paths"]["xray"] = c.xrayPath;
@@ -203,6 +219,14 @@ void saveConfig(const std::string& path, const AppConfig& c) {
     root["grouping"]["region_rules"] = YAML::Node(YAML::NodeType::Map);
     for (const auto& kv : c.regionRules) {
         root["grouping"]["region_rules"][kv.first] = kv.second;
+    }
+    root["assets"]["paths"] = YAML::Node(YAML::NodeType::Map);
+    for (const auto& kv : c.assetPaths) {
+        root["assets"]["paths"][kv.first] = kv.second;
+    }
+    root["assets"]["urls"] = YAML::Node(YAML::NodeType::Map);
+    for (const auto& kv : c.assetUrls) {
+        root["assets"]["urls"][kv.first] = kv.second;
     }
 
     YAML::Emitter out;

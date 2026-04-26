@@ -11,6 +11,8 @@
 - Manage HTTP and `file://` subscriptions from a single CLI.
 - Parse common subscription formats including Mihomo YAML, sing-box/Xray JSON, URI lists, and base64 URI lists.
 - Export non-`tun` and `tun` templates for Mihomo, sing-box, and Xray.
+- Generate the default `bypass-cn` profile with mainland/LAN direct rules and proxy fallback.
+- Manage geo/rule assets with `subcli asset list|validate|update`.
 - Validate exported configs with external cores via `--check`.
 - Use XDG runtime directories for config, data, cache, state, and outputs.
 - Preserve cache fallback visibility and support strict network mode.
@@ -40,6 +42,7 @@ subcli config set core_paths.sing_box /path/to/sing-box
 subcli config set core_paths.xray /path/to/xray
 subcli config set fetch_max_bytes 10485760
 subcli template list
+subcli asset update
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --check
@@ -71,6 +74,16 @@ subcli export mihomo --check
 subcli export sing-box --check
 subcli export xray --check
 ```
+
+Run generated configs directly with the matching core:
+
+```bash
+mihomo -f ~/.local/share/subcli/outputs/mihomo.yaml
+sing-box run -c ~/.local/share/subcli/outputs/sing-box.json
+xray run -config ~/.local/share/subcli/outputs/xray.json
+```
+
+Xray does not provide a native TUN device. The Xray TUN template is a transparent-proxy helper and still needs OS-level redirect/tproxy/tun2socks plumbing.
 
 ## Documentation
 

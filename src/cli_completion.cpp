@@ -12,7 +12,7 @@ std::string generateBashCompletion() {
     subcmd="${COMP_WORDS[2]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "init doctor sub config template export check completion" -- "$cur") )
+        COMPREPLY=( $(compgen -W "init doctor sub config template asset export check completion" -- "$cur") )
         return 0
     fi
 
@@ -29,7 +29,7 @@ std::string generateBashCompletion() {
                 COMPREPLY=( $(compgen -W "list get set remove" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "tun output_dir template_dir parallelism timeout retry log_level core_paths.mihomo core_paths.sing_box core_paths.xray node_management.dedupe node_management.rename_template node_management.include_regex node_management.exclude_regex node_management.sort_by fetch_max_bytes --json" -- "$cur") )
+            COMPREPLY=( $(compgen -W "tun profile output_dir template_dir asset_dir parallelism timeout retry log_level core_paths.mihomo core_paths.sing_box core_paths.xray node_management.dedupe node_management.rename_template node_management.include_regex node_management.exclude_regex node_management.sort_by fetch_max_bytes --json" -- "$cur") )
             ;;
         template)
             if [[ $COMP_CWORD -eq 2 ]]; then
@@ -37,6 +37,9 @@ std::string generateBashCompletion() {
                 return 0
             fi
             COMPREPLY=( $(compgen -W "mihomo sing-box xray normal tun --json" -- "$cur") )
+            ;;
+        asset)
+            COMPREPLY=( $(compgen -W "list validate update" -- "$cur") )
             ;;
         export)
             if [[ $COMP_CWORD -eq 2 ]]; then

@@ -6,6 +6,90 @@
 
 namespace subcli {
 
+namespace {
+
+std::string assetPathOrEmpty(const AppConfig& config, const std::string& key) {
+    const auto it = config.assetPaths.find(key);
+    return it == config.assetPaths.end() ? "" : it->second;
+}
+
+void removeSingBoxManagedRuleSets(nlohmann::json& ruleSets) {
+    if (!ruleSets.is_array()) {
+        ruleSets = nlohmann::json::array();
+        return;
+    }
+    nlohmann::json kept = nlohmann::json::array();
+    for (const auto& item : ruleSets) {
+        const std::string tag = item.is_object() ? item.value("tag", "") : "";
+        if (tag == "geosite-cn" || tag == "geoip-cn") {
+            continue;
+        }
+        kept.push_back(item);
+    }
+    ruleSets = kept;
+}
+
+bool hasRuleSetDirectRule(const nlohmann::json& rules, const std::string& tag) {
+    if (!rules.is_array()) {
+        return false;
+    }
+    for (const auto& rule : rules) {
+        if (!rule.is_object() || rule.value("outbound", "") != "DIRECT" || !rule.contains("rule_set")) {
+            continue;
+        }
+        for (const auto& item : rule["rule_set"]) {
+            if (item.get<std::string>() == tag) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void ensureSingBoxBypassCnProfile(nlohmann::json& root, const AppConfig& config) {
+    if (!root.contains("dns") || !root["dns"].is_object()) {
+        root["dns"] = nlohmann::json::object();
+    }
+    root["dns"]["final"] = "dns-direct";
+    root["dns"]["strategy"] = "prefer_ipv4";
+    root["dns"]["servers"] = nlohmann::json::array({
+        {{"type", "https"}, {"tag", "dns-direct"}, {"server", "223.5.5.5"}},
+        {{"type", "https"}, {"tag", "dns-remote"}, {"server", "1.1.1.1"}},
+    });
+
+    if (!root.contains("route") || !root["route"].is_object()) {
+        root["route"] = nlohmann::json::object();
+    }
+    root["route"]["auto_detect_interface"] = true;
+    root["route"]["default_domain_resolver"] = "dns-direct";
+    root["route"]["final"] = "PROXY";
+
+    removeSingBoxManagedRuleSets(root["route"]["rule_set"]);
+    root["route"]["rule_set"].push_back(
+        {{"type", "local"}, {"tag", "geosite-cn"}, {"format", "binary"}, {"path", assetPathOrEmpty(config, "sing-box.geosite-cn")}}
+    );
+    root["route"]["rule_set"].push_back(
+        {{"type", "local"}, {"tag", "geoip-cn"}, {"format", "binary"}, {"path", assetPathOrEmpty(config, "sing-box.geoip-cn")}}
+    );
+
+    if (!root["route"].contains("rules") || !root["route"]["rules"].is_array()) {
+        root["route"]["rules"] = nlohmann::json::array();
+    }
+    if (!hasSingBoxDnsDirectRule(root["route"]["rules"])) {
+        root["route"]["rules"].push_back(
+            {{"port", 53}, {"network", nlohmann::json::array({"udp"})}, {"action", "route"}, {"outbound", "DIRECT"}}
+        );
+    }
+    if (!hasRuleSetDirectRule(root["route"]["rules"], "geosite-cn")) {
+        root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geosite-cn"})}, {"outbound", "DIRECT"}});
+    }
+    if (!hasRuleSetDirectRule(root["route"]["rules"], "geoip-cn")) {
+        root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geoip-cn"})}, {"outbound", "DIRECT"}});
+    }
+}
+
+} // namespace
+
 ExportResult exportSingBoxImpl(
     const std::vector<ProxyNode>& nodes,
     const AppConfig& config,
@@ -95,6 +179,9 @@ ExportResult exportSingBoxImpl(
         );
     }
 
+    if (config.profile == "bypass-cn") {
+        ensureSingBoxBypassCnProfile(root, config);
+    } else {
     if (!root.contains("dns") || !root["dns"].is_object()) {
         root["dns"] = nlohmann::json::object();
     }
@@ -134,6 +221,7 @@ ExportResult exportSingBoxImpl(
     }
     if (!root["route"].contains("final")) {
         root["route"]["final"] = "PROXY";
+    }
     }
 
     result.ok = writeFile(outPath, root.dump(2), error);

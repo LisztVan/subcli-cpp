@@ -22,7 +22,9 @@ subcli config set core_paths.sing_box /path/to/sing-box
 subcli config set core_paths.xray /path/to/xray
 subcli config set core_paths.mihomo /path/to/mihomo
 subcli config set fetch_max_bytes 10485760
+subcli config get profile
 subcli template list
+subcli asset update
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --check
@@ -71,6 +73,10 @@ subcli template set sing-box normal ./templates/singbox_base.json
 subcli template reset sing-box normal
 subcli template validate
 
+subcli asset list
+subcli asset validate
+subcli asset update
+
 subcli export all
 subcli export all --check
 subcli export sing-box --output-dir ./outputs --check --check-timeout 30
@@ -117,6 +123,8 @@ Common keys:
 - `retry`
 - `fetch_max_bytes`
 - `log_level`
+- `profile`
+- `asset_dir`
 - `core_paths.mihomo`
 - `core_paths.sing_box`
 - `core_paths.xray`
@@ -126,6 +134,8 @@ Common keys:
 - `node_management.exclude_regex`
 - `node_management.sort_by`
 - `grouping.region_rules.<REGION>`
+- `assets.paths.<asset-key>`
+- `assets.urls.<asset-key>`
 
 Template paths can still be edited with `config set templates.<target>.<normal|tun> <path>`, but `subcli template ...` is the preferred interface.
 
@@ -172,7 +182,9 @@ Reload your shell after installing the generated script.
 
 ## Export Behavior
 
-`export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, and optionally validates with external cores.
+`export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, applies the configured profile, and optionally validates with external cores.
+
+The default profile is `bypass-cn`: LAN/private traffic and mainland China domain/IP rules go to `DIRECT`, and unmatched traffic goes to `PROXY`. The first implementation intentionally supports this one profile well instead of adding half-complete profile names; custom template rules remain available for advanced cases.
 
 - `--sub ID_OR_NAME` can be repeated to export only selected subscriptions.
 - `--tag TAG` can be repeated to export subscriptions with matching tags.
@@ -182,6 +194,39 @@ Reload your shell after installing the generated script.
 - `--strict-network` disables cache fallback.
 
 Export fails when no enabled subscription is selected, selected subscriptions parse into zero nodes, the target has no supported nodes after filtering, or the required template is missing.
+
+## Rule Assets
+
+Rule and geo databases are managed separately from subscriptions:
+
+```bash
+subcli asset list
+subcli asset validate
+subcli asset update
+```
+
+Default asset keys include:
+
+- `mihomo.geosite`
+- `mihomo.geoip`
+- `sing-box.geosite-cn`
+- `sing-box.geoip-cn`
+- `xray.geosite`
+- `xray.geoip`
+
+`asset update` downloads the configured URLs into `asset_dir`. `asset validate` returns non-zero if a configured asset file is missing. Generated configs can be written before assets exist, but direct core runs need the referenced geo/rule files available at the configured paths.
+
+## Running Cores
+
+After exporting, run the generated configs directly with the matching core:
+
+```bash
+mihomo -f ~/.local/share/subcli/outputs/mihomo.yaml
+sing-box run -c ~/.local/share/subcli/outputs/sing-box.json
+xray run -config ~/.local/share/subcli/outputs/xray.json
+```
+
+Mihomo and sing-box TUN configs can be run directly when the core has the required platform permissions. Xray has no native TUN device; `xray_tun.json` is a transparent-proxy helper and still needs OS redirect/tproxy/tun2socks-style plumbing.
 
 ## External Core Checks
 

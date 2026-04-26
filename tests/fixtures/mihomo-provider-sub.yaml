@@ -1,0 +1,4 @@
+proxy-providers:
+  local:
+    type: file
+    path: tests/fixtures/provider-nodes.yaml

@@ -1,0 +1,7 @@
+proxies:
+  - name: Provider HK
+    type: ss
+    server: provider.example.com
+    port: 8388
+    cipher: chacha20-ietf-poly1305
+    password: password

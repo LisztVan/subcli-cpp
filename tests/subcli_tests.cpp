@@ -599,6 +599,37 @@ void testParseMihomoH2Opts() {
     require(node.transport.host == "a.example.com,b.example.com", "mihomo parser should parse h2 host list");
 }
 
+void testParseMihomoLocalProxyProvider() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-provider-tests";
+    fs::create_directories(dir);
+    const fs::path providerPath = dir / "provider.yaml";
+    {
+        std::ofstream provider(providerPath);
+        provider << R"YAML(proxies:
+  - name: Provider HK
+    type: ss
+    server: provider.example.com
+    port: 8388
+    cipher: chacha20-ietf-poly1305
+    password: password
+)YAML";
+    }
+
+    const std::string content = std::string(R"YAML(proxy-providers:
+  airport:
+    type: file
+    path: ")YAML") + providerPath.string() + R"YAML("
+)YAML";
+
+    auto result = subcli::parseSubscription(content, "fixture", "mihomo", makeConfig());
+    require(result.nodes.size() == 1, "mihomo local proxy-provider should expand one node");
+    require(result.nodes[0].name == "Provider HK", "provider node name should parse");
+    require(result.nodes[0].server == "provider.example.com", "provider node server should parse");
+    require(result.nodes[0].sourceId == "fixture", "provider node source id should remain subscription source");
+
+    fs::remove_all(dir);
+}
+
 void testParseMihomoHighFrequencyOptionalFields() {
     const std::string content = R"YAML(proxies:
   - name: VLESS XHTTP
@@ -1350,6 +1381,7 @@ int main() {
     testHintParseFailedFallsBackToAuto();
     testParseMihomoHttpOpts();
     testParseMihomoH2Opts();
+    testParseMihomoLocalProxyProvider();
     testParseMihomoHighFrequencyOptionalFields();
     testParseSingBoxTlsDisabledObject();
     testParseSingBoxHighFrequencyOptionalFields();

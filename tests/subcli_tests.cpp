@@ -1,7 +1,12 @@
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <thread>
 #include <stdexcept>
 #include <string>
+#include <unistd.h>
 
 #include "exporter_internal.hpp"
 #include "subcli/assets.hpp"
@@ -658,6 +663,82 @@ void testParseMihomoRemoteProxyProvider() {
     require(result.nodes[0].server == "remote-provider.example.com", "remote provider node server should parse");
 
     fs::remove_all(dir);
+}
+
+void testParseMihomoRemoteProxyProviderWithHttpFields() {
+    const int serverFd = ::socket(AF_INET, SOCK_STREAM, 0);
+    require(serverFd >= 0, "test server socket should create");
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    require(::bind(serverFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "test server bind should succeed");
+    require(::listen(serverFd, 1) == 0, "test server listen should succeed");
+
+    sockaddr_in bound{};
+    socklen_t boundLen = sizeof(bound);
+    require(::getsockname(serverFd, reinterpret_cast<sockaddr*>(&bound), &boundLen) == 0, "test server should report bound port");
+    const int port = ntohs(bound.sin_port);
+
+    std::promise<std::string> requestPromise;
+    auto requestFuture = requestPromise.get_future();
+    std::thread serverThread([serverFd, p = std::move(requestPromise)]() mutable {
+        int client = ::accept(serverFd, nullptr, nullptr);
+        if (client < 0) {
+            p.set_value("");
+            ::close(serverFd);
+            return;
+        }
+        std::string request;
+        char buf[1024];
+        while (request.find("\r\n\r\n") == std::string::npos) {
+            const ssize_t n = ::recv(client, buf, sizeof(buf), 0);
+            if (n <= 0) {
+                break;
+            }
+            request.append(buf, static_cast<size_t>(n));
+        }
+        const std::string body = R"YAML(proxies:
+  - name: Header Provider HK
+    type: ss
+    server: header-provider.example.com
+    port: 8388
+    cipher: chacha20-ietf-poly1305
+    password: password
+)YAML";
+        const std::string response =
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/plain\r\n"
+            "Content-Length: " +
+            std::to_string(body.size()) +
+            "\r\n"
+            "Connection: close\r\n\r\n" +
+            body;
+        (void)::send(client, response.c_str(), response.size(), 0);
+        ::close(client);
+        ::close(serverFd);
+        p.set_value(request);
+    });
+
+    const std::string content = std::string(R"YAML(proxy-providers:
+  airport:
+    type: http
+    url: "http://127.0.0.1:)YAML") + std::to_string(port) + R"YAML(/provider"
+    user-agent: "SubCLI-Provider-UA/1.0"
+    header:
+      Authorization: "Bearer provider-token"
+)YAML";
+
+    auto result = subcli::parseSubscription(content, "fixture", "mihomo", makeConfig());
+    serverThread.join();
+    const auto request = requestFuture.get();
+
+    require(result.nodes.size() == 1, "mihomo remote provider with http fields should expand one node");
+    require(result.nodes[0].name == "Header Provider HK", "remote provider node name should parse with http fields");
+    require(result.nodes[0].server == "header-provider.example.com", "remote provider node server should parse with http fields");
+    require(request.find("Authorization: Bearer provider-token\r\n") != std::string::npos, "provider request should include Authorization header");
+    require(request.find("User-Agent: SubCLI-Provider-UA/1.0\r\n") != std::string::npos, "provider request should include user-agent");
 }
 
 void testParseMihomoHighFrequencyOptionalFields() {
@@ -1413,6 +1494,7 @@ int main() {
     testParseMihomoH2Opts();
     testParseMihomoLocalProxyProvider();
     testParseMihomoRemoteProxyProvider();
+    testParseMihomoRemoteProxyProviderWithHttpFields();
     testParseMihomoHighFrequencyOptionalFields();
     testParseSingBoxTlsDisabledObject();
     testParseSingBoxHighFrequencyOptionalFields();

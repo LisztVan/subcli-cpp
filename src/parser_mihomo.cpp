@@ -28,6 +28,42 @@ void appendProviderContent(const std::string& content, const std::string& source
     appendMihomoProxyNodes(providerRoot["proxies"], sourceId, config, result);
 }
 
+void applyProviderHttpFields(const YAML::Node& provider, Subscription& sub) {
+    sub.userAgent = provider["user-agent"].as<std::string>("");
+
+    const auto headers = provider["header"];
+    if (!headers) {
+        return;
+    }
+
+    if (headers.IsMap()) {
+        for (const auto& item : headers) {
+            const auto key = item.first.as<std::string>("");
+            if (key.empty()) {
+                continue;
+            }
+            sub.headers[key] = item.second.as<std::string>("");
+        }
+        return;
+    }
+
+    if (headers.IsSequence()) {
+        for (const auto& lineNode : headers) {
+            const auto line = lineNode.as<std::string>("");
+            const auto colon = line.find(':');
+            if (colon == std::string::npos) {
+                continue;
+            }
+            auto key = trim(line.substr(0, colon));
+            if (key.empty()) {
+                continue;
+            }
+            auto value = trim(line.substr(colon + 1));
+            sub.headers[key] = value;
+        }
+    }
+}
+
 void appendProviderNodes(const YAML::Node& providers, const std::string& sourceId, const AppConfig& config, ParseResult& result) {
     if (!providers || !providers.IsMap()) {
         return;
@@ -55,6 +91,7 @@ void appendProviderNodes(const YAML::Node& providers, const std::string& sourceI
                 sub.retry = 0;
                 sub.retryOverride = true;
                 sub.fetchMaxBytes = config.fetchMaxBytes;
+                applyProviderHttpFields(provider, sub);
                 const auto fetched = fetchSubscription(sub, false);
                 if (!fetched.ok) {
                     ++result.skipped;

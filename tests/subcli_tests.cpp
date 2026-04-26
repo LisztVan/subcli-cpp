@@ -100,6 +100,7 @@ void testBashCompletionContainsCommands() {
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
     require(script.find("init doctor sub config template asset export daemon run stop status restart check completion") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
+    require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -120,6 +121,49 @@ void testDaemonBuildsExpectedArgs() {
     require(exportArgs[2] == "--strict-network", "daemon export args should include strict-network");
     require(exportArgs[3] == "--download-assets", "daemon export args should include download-assets");
     require(exportArgs[4] == "--check", "daemon export args should include check");
+
+    const auto runArgs = subcli::buildDaemonRunArgs(options);
+    require(runArgs.size() == 9, "daemon run args should include mode and flags");
+    require(runArgs[0] == "daemon" && runArgs[1] == "run", "daemon run args should start from daemon run");
+    require(runArgs[2] == "--interval" && runArgs[3] == "3600", "daemon run args should include default interval");
+    require(runArgs[4] == "--target" && runArgs[5] == "sing-box", "daemon run args should include export target");
+    require(runArgs[8] == "--check", "daemon run args should include check flag");
+}
+
+void testDaemonProcessLifecycle() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-daemon-lifecycle-tests";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    subcli::DaemonOptions options;
+    options.intervalSec = 120;
+    options.exportTarget = "sing-box";
+    options.updateAssets = true;
+    std::string error;
+
+    const bool started = subcli::startDaemonProcess(stateDir, "/bin/sleep", {"30"}, options, error);
+    require(started, "startDaemonProcess should start daemon process: " + error);
+
+    auto status = subcli::inspectDaemonProcess(stateDir, error);
+    require(error.empty(), "inspectDaemonProcess should not fail when state is valid: " + error);
+    require(status.hasState, "inspectDaemonProcess should find daemon state");
+    require(status.running, "inspectDaemonProcess should report running process");
+    require(status.pid > 0, "inspectDaemonProcess should expose pid");
+    require(status.intervalSec == 120, "inspectDaemonProcess should expose interval");
+    require(status.exportTarget == "sing-box", "inspectDaemonProcess should expose export target");
+
+    const bool duplicate = subcli::startDaemonProcess(stateDir, "/bin/sleep", {"30"}, options, error);
+    require(!duplicate, "startDaemonProcess should reject duplicate start");
+
+    const bool stopped = subcli::stopDaemonProcess(stateDir, 1, error);
+    require(stopped, "stopDaemonProcess should stop daemon process: " + error);
+
+    status = subcli::inspectDaemonProcess(stateDir, error);
+    require(error.empty(), "inspectDaemonProcess should not fail after stop: " + error);
+    require(!status.hasState, "inspectDaemonProcess should remove state after stop");
+    require(!status.running, "inspectDaemonProcess should report stopped process");
+
+    fs::remove_all(stateDir);
 }
 
 void testDaemonCycleRestartsOnlyRunningCores() {
@@ -1831,6 +1875,7 @@ int main() {
     testCliOutputDiagnosticsJson();
     testBashCompletionContainsCommands();
     testDaemonBuildsExpectedArgs();
+    testDaemonProcessLifecycle();
     testDaemonCycleRestartsOnlyRunningCores();
     testDaemonCycleStopsOnUpdateFailure();
     testCapabilityWarningsAreSpecific();

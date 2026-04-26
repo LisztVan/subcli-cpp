@@ -51,6 +51,7 @@ struct RuntimePaths {
 };
 
 RuntimePaths gPaths;
+std::string gExecutablePath;
 
 std::filesystem::path normalizeAbsolutePath(const std::filesystem::path& path) {
     std::error_code ec;
@@ -59,6 +60,18 @@ std::filesystem::path normalizeAbsolutePath(const std::filesystem::path& path) {
         return path;
     }
     return abs.lexically_normal();
+}
+
+std::string detectExecutablePath(const std::string& argv0) {
+    std::error_code ec;
+    const auto procSelf = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec && !procSelf.empty()) {
+        return normalizeAbsolutePath(procSelf).string();
+    }
+    if (!argv0.empty()) {
+        return normalizeAbsolutePath(argv0).string();
+    }
+    return "";
 }
 
 bool looksLikeAppRoot(const std::filesystem::path& path) {
@@ -427,7 +440,7 @@ void printExportUsage() {
 }
 
 void printDaemonUsage() {
-    std::cout << "usage: subcli daemon <once|run> [--interval SEC] [--target all|mihomo|sing-box|xray]\n"
+    std::cout << "usage: subcli daemon <once|run|start|stop|status> [--interval SEC] [--target all|mihomo|sing-box|xray]\n"
               << "       [--update-assets] [--strict-network] [--check] [--no-restart]\n";
 }
 
@@ -2604,6 +2617,56 @@ int doDaemonCommand(const std::vector<std::string>& args) {
         printDaemonUsage();
         return ExitUsage;
     }
+    const std::string mode = args[1];
+    if (mode != "once" && mode != "run" && mode != "start" && mode != "stop" && mode != "status") {
+        std::cerr << "unknown daemon mode: " << mode << "\n";
+        return ExitUsage;
+    }
+
+    if (mode == "status") {
+        if (!validateOptions(args, 2, {}, {})) {
+            return ExitUsage;
+        }
+        if (args.size() != 2) {
+            printDaemonUsage();
+            return ExitUsage;
+        }
+        std::string error;
+        const auto status = inspectDaemonProcess(gPaths.stateDir, error);
+        if (!error.empty()) {
+            std::cerr << "daemon status failed: " << error << "\n";
+            return ExitError;
+        }
+        if (!status.hasState) {
+            std::cout << "daemon\tstopped\n";
+            return ExitOk;
+        }
+        if (status.running) {
+            std::cout << "daemon\trunning\tpid=" << status.pid << "\tinterval=" << status.options.intervalSec
+                      << "\ttarget=" << status.options.exportTarget << "\n";
+        } else {
+            std::cout << "daemon\tstale\tpid=" << status.pid << "\n";
+        }
+        return ExitOk;
+    }
+
+    if (mode == "stop") {
+        if (!validateOptions(args, 2, {}, {})) {
+            return ExitUsage;
+        }
+        if (args.size() != 2) {
+            printDaemonUsage();
+            return ExitUsage;
+        }
+        std::string error;
+        if (!stopDaemonProcess(gPaths.stateDir, 5, error)) {
+            std::cerr << "daemon stop failed: " << error << "\n";
+            return ExitError;
+        }
+        std::cout << "daemon stopped\n";
+        return ExitOk;
+    }
+
     if (!validateOptions(
             args,
             2,
@@ -2613,12 +2676,6 @@ int doDaemonCommand(const std::vector<std::string>& args) {
         return ExitUsage;
     }
     if (!ensureNoExtraPositionals(args, 2, {"--interval", "--target"}, "daemon accepts mode and options")) {
-        return ExitUsage;
-    }
-
-    const std::string mode = args[1];
-    if (mode != "once" && mode != "run") {
-        std::cerr << "unknown daemon mode: " << mode << "\n";
         return ExitUsage;
     }
 
@@ -2653,6 +2710,25 @@ int doDaemonCommand(const std::vector<std::string>& args) {
     };
     callbacks.runRestartCommand = [&](const std::vector<std::string>& restartArgs) { return doRestartCommand(restartArgs); };
 
+    if (mode == "start") {
+        if (gExecutablePath.empty()) {
+            std::cerr << "cannot resolve subcli executable path\n";
+            return ExitError;
+        }
+        std::string error;
+        if (!startDaemonProcess(gPaths.stateDir, gExecutablePath, buildDaemonRunArgs(options), options, error)) {
+            std::cerr << "daemon start failed: " << error << "\n";
+            return ExitError;
+        }
+        const auto status = inspectDaemonProcess(gPaths.stateDir, error);
+        if (!error.empty()) {
+            std::cerr << "daemon status read failed: " << error << "\n";
+            return ExitError;
+        }
+        std::cout << "daemon started pid=" << status.pid << "\n";
+        return ExitOk;
+    }
+
     if (mode == "once") {
         const int rc = runDaemonCycle(options, callbacks);
         if (rc == 0) {
@@ -2683,6 +2759,7 @@ int main(int argc, char** argv) {
     try {
         const std::string argv0 = (argc > 0 && argv[0]) ? argv[0] : "";
         gPaths = buildRuntimePaths(argv0);
+        gExecutablePath = detectExecutablePath(argv0);
 
         std::vector<std::string> args;
         args.reserve(static_cast<size_t>(argc));

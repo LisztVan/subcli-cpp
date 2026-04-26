@@ -216,10 +216,16 @@ Use daemon mode to run update/export cycles automatically:
 ```bash
 subcli daemon once --target all --strict-network
 subcli daemon run --interval 1800 --target sing-box --update-assets
+subcli daemon start --interval 1800 --target sing-box --update-assets
+subcli daemon status
+subcli daemon stop
 ```
 
 - `once`: run one cycle (`sub update` -> `export`) and exit.
 - `run`: loop forever with the configured interval in seconds.
+- `start`: fork a background daemon process and persist pid/state under XDG state dir.
+- `status`: show whether the managed daemon process is running and its configured target/interval.
+- `stop`: terminate the managed background daemon process.
 - `--target`: choose `all|mihomo|sing-box|xray` export target.
 - `--update-assets`: pass asset download behavior through export (`--download-assets`).
 - `--strict-network`: disable cache fallback in both update and export.

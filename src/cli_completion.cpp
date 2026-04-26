@@ -50,7 +50,11 @@ std::string generateBashCompletion() {
             ;;
         daemon)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "once run" -- "$cur") )
+                COMPREPLY=( $(compgen -W "once run start stop status" -- "$cur") )
+                return 0
+            fi
+            if [[ "$subcmd" == "stop" || "$subcmd" == "status" ]]; then
+                COMPREPLY=()
                 return 0
             fi
             COMPREPLY=( $(compgen -W "--interval --target --update-assets --strict-network --check --no-restart" -- "$cur") )

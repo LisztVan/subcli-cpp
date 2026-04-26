@@ -28,37 +28,37 @@
 
 ### Task 1: Save Plan And Establish Failing Tests
 
-- [ ] Add tests showing Mihomo export includes `GEOSITE,cn,DIRECT`, `GEOIP,CN,DIRECT`, and `MATCH,PROXY` for default `bypass-cn`.
-- [ ] Add tests showing sing-box export includes `geosite-cn`, `geoip-cn`, direct routing, and final `PROXY`.
-- [ ] Add tests showing Xray export includes `geosite:cn`, `geoip:cn`, direct routing, and proxy fallback.
-- [ ] Run `cmake --build build -j && ctest --test-dir build --output-on-failure` and verify the new tests fail for missing behavior.
+- [x] Add tests showing Mihomo export includes `GEOSITE,cn,DIRECT`, `GEOIP,CN,DIRECT`, and `MATCH,PROXY` for default `bypass-cn`.
+- [x] Add tests showing sing-box export includes `geosite-cn`, `geoip-cn`, direct routing, and final `PROXY`.
+- [x] Add tests showing Xray export includes `geosite:cn`, `geoip:cn`, direct routing, and proxy fallback.
+- [x] Run `cmake --build build -j && ctest --test-dir build --output-on-failure` and verify the new tests fail for missing behavior.
 
 ### Task 2: Implement Profile Defaults Cleanly
 
-- [ ] Add `profile`, `assetDir`, and target asset path fields to `AppConfig`.
-- [ ] Set default profile to `bypass-cn` in config defaults.
-- [ ] Persist fields in `store.cpp` using simple YAML keys.
-- [ ] Run tests and verify profile-related tests now pass where they do not depend on exporter routing.
+- [x] Add `profile`, `assetDir`, and target asset path fields to `AppConfig`.
+- [x] Set default profile to `bypass-cn` in config defaults.
+- [x] Persist fields in `store.cpp` using simple YAML keys.
+- [x] Run tests and verify profile-related tests now pass where they do not depend on exporter routing.
 
 ### Task 3: Rewrite Export Routing Per Target
 
-- [ ] Rewrite Mihomo route injection so `bypass-cn` output has LAN/CN direct rules and `MATCH,PROXY` fallback.
-- [ ] Rewrite sing-box route injection so `bypass-cn` output has local/geosite/geoip direct rules and `final: PROXY`.
-- [ ] Rewrite Xray route injection so `bypass-cn` output has private/CN direct rules and otherwise proxies.
-- [ ] Keep exporter code small and target-specific; do not pile feature flags into one giant helper.
-- [ ] Run tests after each target exporter change.
+- [x] Rewrite Mihomo route injection so `bypass-cn` output has LAN/CN direct rules and `MATCH,PROXY` fallback.
+- [x] Rewrite sing-box route injection so `bypass-cn` output has local/geosite/geoip direct rules and `final: PROXY`.
+- [x] Rewrite Xray route injection so `bypass-cn` output has private/CN direct rules and otherwise proxies.
+- [x] Keep exporter code small and target-specific; do not pile feature flags into one giant helper.
+- [x] Run tests after each target exporter change.
 
 ### Task 4: Add Asset Management
 
-- [ ] Add `asset list`, `asset validate`, and `asset update` commands.
-- [ ] Use existing fetch code for downloads where practical; keep network behavior explicit and readable.
-- [ ] `asset validate` should report missing configured files and return non-zero when required profile assets are absent.
-- [ ] Document that `export` can generate config without downloading assets, but direct core run requires assets to be in the configured locations.
+- [x] Add `asset list`, `asset validate`, and `asset update` commands.
+- [x] Use existing fetch code for downloads where practical; keep network behavior explicit and readable.
+- [x] `asset validate` should report missing configured files and return non-zero when required profile assets are absent.
+- [x] Document that `export` can generate config without downloading assets, but direct core run requires assets to be in the configured locations.
 
 ### Task 5: Verify And Document Direct Core Use
 
-- [ ] Run `cmake -S . -B build && cmake --build build -j`.
-- [ ] Run `ctest --test-dir build --output-on-failure`.
-- [ ] Run targeted CLI smoke commands for `export mihomo`, `export sing-box`, `export xray` using a local file subscription.
-- [ ] Update docs with `mihomo -f`, `sing-box run -c`, and `xray run -config` commands.
-- [ ] Explicitly document that Xray transparent/TUN behavior needs OS-level redirect plumbing.
+- [x] Run `cmake -S . -B build && cmake --build build -j`.
+- [x] Run `ctest --test-dir build --output-on-failure`.
+- [x] Run targeted CLI smoke commands for `export mihomo`, `export sing-box`, `export xray` using a local file subscription.
+- [x] Update docs with `mihomo -f`, `sing-box run -c`, and `xray run -config` commands.
+- [x] Explicitly document that Xray transparent/TUN behavior needs OS-level redirect plumbing.

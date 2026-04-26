@@ -22,7 +22,9 @@ ParseResult parseUriSubscription(const std::string& content, const std::string& 
             continue;
         }
         if (line.rfind("vmess://", 0) == 0 || line.rfind("vless://", 0) == 0 ||
-            line.rfind("trojan://", 0) == 0 || line.rfind("ss://", 0) == 0) {
+            line.rfind("trojan://", 0) == 0 || line.rfind("ss://", 0) == 0 ||
+            line.rfind("hy2://", 0) == 0 || line.rfind("hysteria2://", 0) == 0 ||
+            line.rfind("tuic://", 0) == 0 || line.rfind("wireguard://", 0) == 0) {
             try {
                 auto p = fromUri(line, sourceId, config);
                 if (!p.type.empty() && !p.server.empty() && p.port > 0) {

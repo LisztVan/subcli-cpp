@@ -472,6 +472,40 @@ void testParseUriIgnoresInvalidVmessPort() {
     require(result.skipped == 1, "invalid uri row should increment skipped count");
 }
 
+void testParseModernUdpUriLinks() {
+    const std::string content =
+        "hy2://hy-pass@hy2.example.com:443?sni=www.google.com&insecure=1&obfs=salamander&obfs-password=obfs-pass#HK%20HY2\n"
+        "tuic://22222222-2222-2222-2222-222222222222:tuic-pass@tuic.example.com:8443?sni=www.google.com&congestion_control=bbr&udp_relay_mode=native#JP%20TUIC\n"
+        "wireguard://private-key@wg.example.com:51820?publickey=peer-public-key&address=10.0.0.2%2F32&allowedips=0.0.0.0%2F0&reserved=1,2,3#WG%20Node\n";
+
+    auto result = subcli::parseSubscription(content, "fixture", "uri", makeConfig());
+    require(result.nodes.size() == 3, "modern UDP URI links should parse");
+
+    const auto& hy2 = result.nodes[0];
+    require(hy2.type == "hysteria2", "hy2 URI should parse as hysteria2");
+    require(hy2.server == "hy2.example.com", "hy2 URI should parse server");
+    require(hy2.port == 443, "hy2 URI should parse port");
+    require(hy2.protocol.password == "hy-pass", "hy2 URI should parse password");
+    require(hy2.tlsConfig.sni == "www.google.com", "hy2 URI should parse SNI");
+    require(hy2.tlsConfig.allowInsecure, "hy2 URI should parse insecure flag");
+    require(hy2.protocol.values.at("obfs_type") == "salamander", "hy2 URI should parse obfs type");
+    require(hy2.protocol.values.at("obfs_password") == "obfs-pass", "hy2 URI should parse obfs password");
+
+    const auto& tuic = result.nodes[1];
+    require(tuic.type == "tuic", "tuic URI should parse as tuic");
+    require(tuic.protocol.uuid == "22222222-2222-2222-2222-222222222222", "tuic URI should parse uuid");
+    require(tuic.protocol.password == "tuic-pass", "tuic URI should parse password");
+    require(tuic.protocol.values.at("congestion_control") == "bbr", "tuic URI should parse congestion control");
+    require(tuic.protocol.values.at("udp_relay_mode") == "native", "tuic URI should parse UDP relay mode");
+
+    const auto& wg = result.nodes[2];
+    require(wg.type == "wireguard", "wireguard URI should parse as wireguard");
+    require(wg.protocol.values.at("private_key") == "private-key", "wireguard URI should parse private key");
+    require(wg.protocol.values.at("peer_public_key") == "peer-public-key", "wireguard URI should parse peer public key");
+    require(wg.protocol.values.at("local_address") == "10.0.0.2/32", "wireguard URI should parse local address");
+    require(wg.protocol.values.at("peer_allowed_ips") == "0.0.0.0/0", "wireguard URI should parse allowed IPs");
+}
+
 void testUnknownFormatHintFallsBackToAuto() {
     const std::string content = "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#Node\n";
     auto result = subcli::parseSubscription(content, "fixture", "mystery-format", makeConfig());
@@ -1311,6 +1345,7 @@ int main() {
     testNativeLongTailPassthroughWriters();
     testParseXrayJson();
     testParseUriIgnoresInvalidVmessPort();
+    testParseModernUdpUriLinks();
     testUnknownFormatHintFallsBackToAuto();
     testHintParseFailedFallsBackToAuto();
     testParseMihomoHttpOpts();

@@ -142,6 +142,41 @@ std::string joinYamlIntList(const YAML::Node& node) {
     return out;
 }
 
+std::string queryValue(const std::map<std::string, std::string>& query, const std::string& key) {
+    const auto it = query.find(key);
+    return it == query.end() ? "" : it->second;
+}
+
+std::string firstQueryValue(const std::map<std::string, std::string>& query, const std::vector<std::string>& keys) {
+    for (const auto& key : keys) {
+        const auto value = queryValue(query, key);
+        if (!value.empty()) {
+            return value;
+        }
+    }
+    return "";
+}
+
+void splitUriParts(std::string rest, std::string& body, std::map<std::string, std::string>& query, std::string& name) {
+    const auto hashPos = rest.find('#');
+    if (hashPos != std::string::npos) {
+        name = urlDecode(rest.substr(hashPos + 1));
+        rest = rest.substr(0, hashPos);
+    }
+    const auto queryPos = rest.find('?');
+    if (queryPos != std::string::npos) {
+        query = parseQuery(rest.substr(queryPos + 1));
+        rest = rest.substr(0, queryPos);
+    }
+    body = rest;
+}
+
+void setIfPresent(std::map<std::string, std::string>& values, const std::string& key, const std::string& value) {
+    if (!value.empty()) {
+        values[key] = value;
+    }
+}
+
 std::string yamlScalarOrJoined(const YAML::Node& node) {
     return joinYamlStringList(node);
 }
@@ -723,6 +758,67 @@ ProxyNode fromUri(const std::string& line, const std::string& sourceId, const Ap
             p.tls = true;
             applyCommonUriFields(p, query);
         }
+    } else if (line.rfind("hy2://", 0) == 0 || line.rfind("hysteria2://", 0) == 0) {
+        p.type = "hysteria2";
+        std::string body;
+        std::map<std::string, std::string> query;
+        splitUriParts(line.substr(line.rfind("hy2://", 0) == 0 ? 6 : 12), body, query, p.name);
+        const auto atPos = body.rfind('@');
+        if (atPos != std::string::npos) {
+            p.password = urlDecode(body.substr(0, atPos));
+            parseHostPort(body.substr(atPos + 1), p.server, p.port);
+        }
+        p.tls = true;
+        p.sni = firstQueryValue(query, {"sni", "peer", "servername"});
+        p.allowInsecure = parseBoolish(firstQueryValue(query, {"insecure", "allowInsecure", "skip-cert-verify"}));
+        setIfPresent(p.protocol.values, "obfs_type", firstQueryValue(query, {"obfs", "obfs_type"}));
+        setIfPresent(p.protocol.values, "obfs_password", firstQueryValue(query, {"obfs-password", "obfs_password"}));
+        setIfPresent(p.protocol.values, "ports", queryValue(query, "mport"));
+        setIfPresent(p.protocol.values, "up", queryValue(query, "up"));
+        setIfPresent(p.protocol.values, "down", queryValue(query, "down"));
+    } else if (line.rfind("tuic://", 0) == 0) {
+        p.type = "tuic";
+        std::string body;
+        std::map<std::string, std::string> query;
+        splitUriParts(line.substr(7), body, query, p.name);
+        const auto atPos = body.rfind('@');
+        if (atPos != std::string::npos) {
+            const auto userInfo = body.substr(0, atPos);
+            const auto passwordPos = userInfo.find(':');
+            if (passwordPos != std::string::npos) {
+                p.uuid = urlDecode(userInfo.substr(0, passwordPos));
+                p.password = urlDecode(userInfo.substr(passwordPos + 1));
+            } else {
+                p.uuid = urlDecode(userInfo);
+            }
+            parseHostPort(body.substr(atPos + 1), p.server, p.port);
+        }
+        p.tls = true;
+        p.sni = firstQueryValue(query, {"sni", "servername"});
+        p.allowInsecure = parseBoolish(firstQueryValue(query, {"insecure", "allowInsecure", "skip-cert-verify"}));
+        setIfPresent(p.protocol.values, "congestion_control", firstQueryValue(query, {"congestion_control", "congestion-controller"}));
+        setIfPresent(p.protocol.values, "udp_relay_mode", firstQueryValue(query, {"udp_relay_mode", "udp-relay-mode"}));
+        setIfPresent(p.protocol.values, "heartbeat", firstQueryValue(query, {"heartbeat", "heartbeat_interval", "heartbeat-interval"}));
+        const auto zeroRtt = firstQueryValue(query, {"zero_rtt_handshake", "zero-rtt-handshake", "reduce-rtt"});
+        if (!zeroRtt.empty()) {
+            p.protocol.values["zero_rtt_handshake"] = parseBoolish(zeroRtt) ? "true" : "false";
+        }
+    } else if (line.rfind("wireguard://", 0) == 0) {
+        p.type = "wireguard";
+        std::string body;
+        std::map<std::string, std::string> query;
+        splitUriParts(line.substr(12), body, query, p.name);
+        const auto atPos = body.rfind('@');
+        if (atPos != std::string::npos) {
+            p.protocol.values["private_key"] = urlDecode(body.substr(0, atPos));
+            parseHostPort(body.substr(atPos + 1), p.server, p.port);
+        }
+        setIfPresent(p.protocol.values, "peer_public_key", firstQueryValue(query, {"publickey", "public_key", "peer_public_key"}));
+        setIfPresent(p.protocol.values, "pre_shared_key", firstQueryValue(query, {"presharedkey", "pre_shared_key", "psk"}));
+        setIfPresent(p.protocol.values, "local_address", firstQueryValue(query, {"address", "local_address", "ip"}));
+        setIfPresent(p.protocol.values, "peer_allowed_ips", firstQueryValue(query, {"allowedips", "allowed_ips", "peer_allowed_ips"}));
+        setIfPresent(p.protocol.values, "reserved", queryValue(query, "reserved"));
+        setIfPresent(p.protocol.values, "mtu", queryValue(query, "mtu"));
     } else if (line.rfind("ss://", 0) == 0) {
         p.type = "ss";
         auto payload = trim(line.substr(5));

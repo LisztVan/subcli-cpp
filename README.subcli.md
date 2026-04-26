@@ -90,6 +90,8 @@ subcli completion bash
 
 Subscriptions support normal CRUD through `sub add`, `sub list`, `sub edit`, and `sub remove`. Subscription ids and names must be unique; `sub add` will not overwrite an existing subscription. Use `sub edit <id|name>` for changes.
 
+Supported content includes Mihomo YAML, sing-box JSON, Xray JSON, plain URI lists, and base64 URI lists. URI lists currently support `vmess://`, `vless://`, `trojan://`, `ss://`, `hy2://`, `hysteria2://`, `tuic://`, and `wireguard://` nodes.
+
 Useful fields:
 
 - `--name NAME`: display name and default id source.

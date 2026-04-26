@@ -25,6 +25,16 @@ std::vector<AssetRecord> configuredAssets(const AppConfig& config) {
     return out;
 }
 
+std::vector<AssetRecord> missingAssets(const AppConfig& config) {
+    std::vector<AssetRecord> out;
+    for (const auto& asset : configuredAssets(config)) {
+        if (!asset.exists) {
+            out.push_back(asset);
+        }
+    }
+    return out;
+}
+
 bool updateAsset(const AssetRecord& asset, int timeoutSec, long maxBytes, std::string& error) {
     if (asset.url.empty()) {
         error = "asset has no download URL: " + asset.key;

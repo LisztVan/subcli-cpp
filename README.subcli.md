@@ -81,6 +81,7 @@ subcli export all
 subcli export all --check
 subcli export sing-box --output-dir ./outputs --check --check-timeout 30
 subcli export mihomo --strict-network
+subcli export mihomo --download-assets
 
 subcli check sing-box --file ./outputs/sing-box.json --timeout 30
 subcli completion bash
@@ -194,6 +195,7 @@ The default profile is `bypass-cn`: LAN/private traffic and mainland China domai
 - `--output-dir DIR` overrides the configured output directory.
 - `--check` runs the corresponding external core check after export.
 - `--strict-network` disables cache fallback.
+- `--download-assets` downloads missing configured rule assets before export.
 
 Export fails when no enabled subscription is selected, selected subscriptions parse into zero nodes, the target has no supported nodes after filtering, or the required template is missing.
 
@@ -216,7 +218,7 @@ Default asset keys include:
 - `xray.geosite`
 - `xray.geoip`
 
-`asset update` downloads the configured URLs into `asset_dir`. `asset validate` returns non-zero if a configured asset file is missing. Generated configs can be written before assets exist, but direct core runs need the referenced geo/rule files available at the configured paths.
+`asset update` downloads the configured URLs into `asset_dir`. `asset validate` returns non-zero if a configured asset file is missing. Generated configs can be written before assets exist, but direct core runs need the referenced geo/rule files available at the configured paths. `export` warns when assets are missing; use `--download-assets` to download missing configured assets before export.
 
 ## Running Cores
 

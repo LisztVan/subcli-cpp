@@ -15,6 +15,7 @@ struct AssetRecord {
 };
 
 std::vector<AssetRecord> configuredAssets(const AppConfig& config);
+std::vector<AssetRecord> missingAssets(const AppConfig& config);
 bool updateAsset(const AssetRecord& asset, int timeoutSec, long maxBytes, std::string& error);
 
 } // namespace subcli

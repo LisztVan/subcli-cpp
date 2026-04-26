@@ -2131,7 +2131,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     if (!validateOptions(
             args,
             2,
-            {"--tun", "--check", "--check-timeout", "--output-dir", "--sub", "--tag", "--strict-network"},
+            {"--tun", "--check", "--check-timeout", "--output-dir", "--sub", "--tag", "--strict-network", "--download-assets"},
             {"--check-timeout", "--output-dir", "--sub", "--tag"}
         )) {
         return ExitUsage;
@@ -2145,6 +2145,30 @@ int doExportCommand(const std::vector<std::string>& args) {
     applyConfigDefaults(cfg);
     const bool tun = hasFlag(args, "--tun") ? true : cfg.tun;
     const bool strictNetwork = hasFlag(args, "--strict-network");
+    const bool downloadAssets = hasFlag(args, "--download-assets");
+    const auto missing = missingAssets(cfg);
+    if (!missing.empty()) {
+        if (!downloadAssets) {
+            for (const auto& asset : missing) {
+                std::cerr << "warning: missing asset: " << asset.key << " at " << asset.path << "\n";
+            }
+            std::cerr << "warning: run 'subcli asset update' or export with --download-assets before direct core use\n";
+        } else {
+            int failedAssets = 0;
+            for (const auto& asset : missing) {
+                std::string assetError;
+                if (!updateAsset(asset, cfg.timeout, cfg.fetchMaxBytes, assetError)) {
+                    ++failedAssets;
+                    std::cerr << "asset update failed: " << asset.key << ": " << assetError << "\n";
+                    continue;
+                }
+                std::cout << "updated asset: " << asset.key << " -> " << asset.path << "\n";
+            }
+            if (failedAssets > 0) {
+                return ExitError;
+            }
+        }
+    }
     int checkTimeoutSec = 30;
     if (hasOption(args, "--check-timeout") && !parseBoundedIntValue(argValue(args, "--check-timeout", "30"), "--check-timeout", 1, checkTimeoutSec)) {
         return 1;

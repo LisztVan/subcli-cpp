@@ -1304,6 +1304,28 @@ void testAssetRecordsExposeConfiguredFiles() {
     require(found, "configuredAssets should expose configured xray geoip asset");
 }
 
+void testMissingAssetsReturnsOnlyMissingRecords() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-missing-assets-tests";
+    fs::create_directories(dir);
+    const auto present = dir / "present.dat";
+    {
+        std::ofstream out(present);
+        out << "asset";
+    }
+
+    subcli::AppConfig config;
+    config.assetPaths["present"] = present.string();
+    config.assetPaths["missing"] = (dir / "missing.dat").string();
+    config.assetUrls["present"] = "file:///present";
+    config.assetUrls["missing"] = "file:///missing";
+
+    const auto missing = subcli::missingAssets(config);
+    require(missing.size() == 1, "missingAssets should return only missing assets");
+    require(missing[0].key == "missing", "missingAssets should keep missing asset key");
+
+    fs::remove_all(dir);
+}
+
 void testFetchRejectsUnsupportedScheme() {
     subcli::Subscription sub;
     sub.id = "bad";
@@ -1519,6 +1541,7 @@ int main() {
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testAssetRecordsExposeConfiguredFiles();
+    testMissingAssetsReturnsOnlyMissingRecords();
     testFetchRejectsUnsupportedScheme();
     testFetchFileHonorsMaxBytes();
     return 0;

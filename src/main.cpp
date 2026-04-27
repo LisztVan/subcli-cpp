@@ -495,7 +495,7 @@ void printProfileUsage() {
 
 void printExportUsage() {
     std::cout << "usage: subcli export <all|mihomo|sing-box|xray> [--tun] [--check] [--check-timeout SEC]\n"
-              << "       [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network]\n";
+              << "       [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network] [--download-assets]\n";
 }
 
 void printDaemonUsage() {

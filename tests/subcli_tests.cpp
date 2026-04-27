@@ -414,6 +414,8 @@ void testBashCompletionContainsCommands() {
     require(script.find("init doctor sub config template asset profile export daemon run stop status restart check completion") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
     require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
+    require(script.find("--profile") != std::string::npos, "completion should include export profile option");
+    require(script.find("--download-assets") != std::string::npos, "completion should include export download-assets option");
 }
 
 void testDaemonBuildsExpectedArgs() {

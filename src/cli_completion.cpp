@@ -53,7 +53,7 @@ std::string generateBashCompletion() {
                 COMPREPLY=( $(compgen -W "all mihomo sing-box xray" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "--tun --check --check-timeout --output-dir --profile --sub --tag --strict-network" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--tun --check --check-timeout --output-dir --profile --sub --tag --strict-network --download-assets" -- "$cur") )
             ;;
         daemon)
             if [[ $COMP_CWORD -eq 2 ]]; then

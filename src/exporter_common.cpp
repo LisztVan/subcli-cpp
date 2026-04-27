@@ -254,6 +254,8 @@ std::vector<std::string> expandProfileMembers(
             const auto region = member.substr(std::string("REGION:").size());
             if (std::find(groups.regionOrder.begin(), groups.regionOrder.end(), region) != groups.regionOrder.end()) {
                 appendUnique(region);
+            } else {
+                appendUnique(member);
             }
             continue;
         }

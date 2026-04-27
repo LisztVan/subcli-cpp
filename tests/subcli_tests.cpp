@@ -2507,8 +2507,9 @@ void testExpandProfileMembersExpandsSingleRegionOnlyWhenPresent() {
     const std::vector<subcli::ProxyNode> exportNodes;
     const auto expanded = subcli::expandProfileMembers({"REGION:HK", "REGION:US"}, groups, exportNodes);
 
-    require(expanded.size() == 1, "REGION:<name> should expand only existing regions");
+    require(expanded.size() == 2, "REGION:<name> should keep unmatched tokens as literals");
     require(expanded[0] == "HK", "REGION:<name> should include the matched region");
+    require(expanded[1] == "REGION:US", "REGION:<name> should preserve unmatched literal tokens");
 }
 
 void testExpandProfileMembersExpandsNodeWildcard() {

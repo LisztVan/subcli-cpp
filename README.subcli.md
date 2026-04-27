@@ -25,7 +25,6 @@ subcli config set core_paths.xray /path/to/xray
 subcli config set core_paths.mihomo /path/to/mihomo
 subcli config set fetch_max_bytes 10485760
 subcli config get profile
-subcli config set profile_path ./profiles/work.json
 subcli template list
 subcli asset update
 subcli sub add --name airport-a --url https://example/sub
@@ -200,7 +199,7 @@ Reload your shell after installing the generated script.
 
 ## Export Behavior
 
-`export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, applies the configured profile, and optionally validates with external cores.
+`export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, applies the legacy configured `profile` name, and optionally validates with external cores.
 
 `profile_path` stores the external profile file selected for profile-driven export migration. Relative `profile_path` values are resolved from the config directory.
 

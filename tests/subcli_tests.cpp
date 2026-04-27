@@ -2607,6 +2607,114 @@ void testSingBoxProfileGroupAliasSpellings() {
     require(balanceAlias->value("type", "") == "selector", "sing-box loadbalance alias should degrade to selector");
 }
 
+void testSingBoxProfileRegionMemberRendersRegionSelector() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "sing-region-member";
+    subcli::ProfileGroup group;
+    group.tag = "MANUAL";
+    group.type = "select";
+    group.members = {"REGION:HK"};
+    profile.groups.push_back(group);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-sing-region-member";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "sing-region-member.json").string(),
+        error
+    );
+    require(result.ok, "sing-box profile region member export should succeed: " + error);
+
+    std::ifstream in(outDir / "sing-region-member.json");
+    const auto json = nlohmann::json::parse(in);
+    const auto* manual = static_cast<const nlohmann::json*>(nullptr);
+    const auto* hk = static_cast<const nlohmann::json*>(nullptr);
+    for (const auto& outbound : json["outbounds"]) {
+        if (outbound.value("tag", "") == "MANUAL") {
+            manual = &outbound;
+        }
+        if (outbound.value("tag", "") == "HK") {
+            hk = &outbound;
+        }
+    }
+    require(manual != nullptr, "sing-box profile group should be rendered");
+    require((*manual)["outbounds"].size() == 1, "sing-box profile group should reference one expanded region");
+    require((*manual)["outbounds"][0].get<std::string>() == "HK", "sing-box profile group should reference HK region tag");
+    require(hk != nullptr, "sing-box profile region reference should render HK selector outbound");
+    require(hk->value("type", "") == "selector", "sing-box generated region outbound should be selector");
+    require((*hk)["outbounds"][0].get<std::string>() == "HK Node", "sing-box generated HK selector should contain HK node");
+}
+
+void testSingBoxProfileRegionWildcardRendersReferencedRegionSelectors() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "sing-region-wildcard";
+    subcli::ProfileGroup group;
+    group.tag = "BALANCE";
+    group.type = "select";
+    group.members = {"REGION:*"};
+    profile.groups.push_back(group);
+
+    auto hk = makeExportReadyShadowsocksNode("HK Node");
+    auto jp = makeExportReadyShadowsocksNode("JP Node");
+    jp.region = "JP";
+    jp.normalize();
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-sing-region-wildcard";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {hk, jp},
+        config,
+        false,
+        &profile,
+        (outDir / "sing-region-wildcard.json").string(),
+        error
+    );
+    require(result.ok, "sing-box profile region wildcard export should succeed: " + error);
+
+    std::ifstream in(outDir / "sing-region-wildcard.json");
+    const auto json = nlohmann::json::parse(in);
+    const auto* balance = static_cast<const nlohmann::json*>(nullptr);
+    const auto* hkGroup = static_cast<const nlohmann::json*>(nullptr);
+    const auto* jpGroup = static_cast<const nlohmann::json*>(nullptr);
+    const auto* otherGroup = static_cast<const nlohmann::json*>(nullptr);
+    for (const auto& outbound : json["outbounds"]) {
+        const auto tag = outbound.value("tag", "");
+        if (tag == "BALANCE") {
+            balance = &outbound;
+        }
+        if (tag == "HK") {
+            hkGroup = &outbound;
+        }
+        if (tag == "JP") {
+            jpGroup = &outbound;
+        }
+        if (tag == "OTHER") {
+            otherGroup = &outbound;
+        }
+    }
+    require(balance != nullptr, "sing-box profile wildcard group should be rendered");
+    require((*balance)["outbounds"].size() == 3, "sing-box REGION:* should reference generated regions");
+    require((*balance)["outbounds"][0].get<std::string>() == "HK", "sing-box REGION:* should reference HK first");
+    require((*balance)["outbounds"][1].get<std::string>() == "JP", "sing-box REGION:* should reference JP second");
+    require((*balance)["outbounds"][2].get<std::string>() == "OTHER", "sing-box REGION:* should reference OTHER third");
+    require(hkGroup != nullptr, "sing-box REGION:* should render HK selector outbound");
+    require(jpGroup != nullptr, "sing-box REGION:* should render JP selector outbound");
+    require(otherGroup != nullptr, "sing-box REGION:* should render OTHER selector outbound");
+}
+
 void testMihomoProfileDnsAndRulesRenderFromProfile() {
     auto config = makeConfig();
     config.profile = "bypass-cn";
@@ -3483,6 +3591,8 @@ int main() {
     testSingBoxWithEmptyProfileGroupsKeepsLegacyGroupBehavior();
     testSingBoxProfileEmptyMembersDefaultToDirect();
     testSingBoxProfileGroupAliasSpellings();
+    testSingBoxProfileRegionMemberRendersRegionSelector();
+    testSingBoxProfileRegionWildcardRendersReferencedRegionSelectors();
     testMihomoProfileDnsAndRulesRenderFromProfile();
     testMihomoProfileEmptyRulesFallbackToDefaultOutbound();
     testMihomoProfileListValuedRulesRenderAllEntries();

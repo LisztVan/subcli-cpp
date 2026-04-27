@@ -326,6 +326,7 @@ ExportResult exportSingBoxImpl(
 
     if (useProfileGroups) {
         std::set<std::string> renderedProfileGroups;
+        std::set<std::string> referencedGeneratedRegions;
         bool proxyReferencesAuto = false;
 
         for (const auto& configured : profile->groups) {
@@ -336,6 +337,11 @@ ExportResult exportSingBoxImpl(
                 result.warnings.push_back({"profile_group_degraded", configured.tag + ": " + configured.type + " rendered as " + normalizeSingBoxGroupType(configured.type)});
             }
             const auto members = expandProfileMembers(configured.members, groups, supported);
+            for (const auto& member : members) {
+                if (groups.groups.count(member) > 0) {
+                    referencedGeneratedRegions.insert(member);
+                }
+            }
             if (configured.tag == "PROXY") {
                 for (const auto& member : members) {
                     if (member == "AUTO") {
@@ -370,6 +376,21 @@ ExportResult exportSingBoxImpl(
                 addMember(nodeName);
             }
             addProfileGroup("PROXY", "select", members, "", 300, "AUTO");
+        }
+        for (const auto& region : groups.regionOrder) {
+            if (renderedProfileGroups.count(region) > 0 || referencedGeneratedRegions.count(region) == 0) {
+                continue;
+            }
+            nlohmann::json members = nlohmann::json::array();
+            for (const auto& member : groups.groups.at(region)) {
+                members.push_back(member);
+            }
+            if (members.empty()) {
+                members.push_back("DIRECT");
+            }
+            root["outbounds"].push_back(
+                {{"type", "selector"}, {"tag", region}, {"outbounds", members}, {"default", members.front()}}
+            );
         }
     } else if (!config.strategyGroups.empty()) {
         for (const auto& configured : config.strategyGroups) {

@@ -2057,6 +2057,122 @@ void testFallbackAndLoadBalanceGroupsRenderForMihomoAndSingBox() {
     }
 }
 
+void testMihomoProfileGroupsRenderAndExpandMembers() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "custom";
+
+    subcli::ProfileGroup proxy;
+    proxy.tag = "PROXY";
+    proxy.type = "select";
+    proxy.members = {"AUTO", "DIRECT", "REGION:*"};
+    profile.groups.push_back(proxy);
+
+    subcli::ProfileGroup autoGroup;
+    autoGroup.tag = "AUTO";
+    autoGroup.type = "url-test";
+    autoGroup.members = {"NODE:*"};
+    autoGroup.url = "https://example.com/generate_204";
+    autoGroup.interval = 180;
+    profile.groups.push_back(autoGroup);
+
+    subcli::ProfileGroup fallback;
+    fallback.tag = "FAILOVER";
+    fallback.type = "fallback";
+    fallback.members = {"REGION:HK", "REGION:JP"};
+    fallback.url = "https://example.com/health";
+    fallback.interval = 90;
+    profile.groups.push_back(fallback);
+
+    subcli::ProfileGroup balance;
+    balance.tag = "BALANCE";
+    balance.type = "load-balance";
+    balance.members = {"REGION:*"};
+    balance.strategy = "consistent-hashing";
+    profile.groups.push_back(balance);
+
+    subcli::ProfileGroup empty;
+    empty.tag = "EMPTY";
+    empty.type = "select";
+    profile.groups.push_back(empty);
+
+    auto hk = makeExportReadyShadowsocksNode("HK Node");
+    auto jp = makeExportReadyShadowsocksNode("JP Node");
+    jp.region = "JP";
+    jp.normalize();
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-mihomo";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {hk, jp},
+        config,
+        false,
+        &profile,
+        (outDir / "mihomo-profile-groups.yaml").string(),
+        error
+    );
+    require(result.ok, "mihomo profile groups export should succeed: " + error);
+
+    std::ifstream in(outDir / "mihomo-profile-groups.yaml");
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    require(content.find("name: PROXY") != std::string::npos, "mihomo profile groups should include PROXY");
+    require(content.find("type: select") != std::string::npos, "mihomo profile select group should render as select");
+    require(content.find("name: AUTO") != std::string::npos, "mihomo profile groups should include AUTO");
+    require(content.find("type: url-test") != std::string::npos, "mihomo profile url-test group should render");
+    require(content.find("https://example.com/generate_204") != std::string::npos, "mihomo profile url-test should keep custom URL");
+    require(content.find("interval: 180") != std::string::npos, "mihomo profile url-test should keep custom interval");
+    require(content.find("name: FAILOVER") != std::string::npos, "mihomo profile groups should include FAILOVER");
+    require(content.find("type: fallback") != std::string::npos, "mihomo profile fallback group should render");
+    require(content.find("https://example.com/health") != std::string::npos, "mihomo profile fallback should keep custom URL");
+    require(content.find("interval: 90") != std::string::npos, "mihomo profile fallback should keep custom interval");
+    require(content.find("name: BALANCE") != std::string::npos, "mihomo profile groups should include BALANCE");
+    require(content.find("type: load-balance") != std::string::npos, "mihomo profile load-balance group should render");
+    require(content.find("strategy: consistent-hashing") != std::string::npos, "mihomo profile load-balance should keep strategy");
+    require(content.find("name: EMPTY") != std::string::npos, "mihomo profile groups should include EMPTY");
+    require(content.find("- DIRECT") != std::string::npos, "mihomo profile empty expanded members should fall back to DIRECT");
+    require(content.find("REGION:*") == std::string::npos, "mihomo profile groups should expand REGION:* tokens");
+    require(content.find("- HK") != std::string::npos, "mihomo profile groups should include concrete HK region tag");
+    require(content.find("- JP") != std::string::npos, "mihomo profile groups should include concrete JP region tag");
+}
+
+void testMihomoWithEmptyProfileGroupsKeepsLegacyGroupBehavior() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::AppConfig::StrategyGroup fallback;
+    fallback.name = "FAILOVER";
+    fallback.type = "fallback";
+    fallback.members = {"DIRECT", "HK"};
+    config.strategyGroups.push_back(fallback);
+
+    subcli::ResolvedProfile profile;
+    profile.name = "empty-groups";
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-empty-profile-groups-mihomo";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "mihomo-empty-profile-groups.yaml").string(),
+        error
+    );
+    require(result.ok, "mihomo export with empty profile groups should succeed: " + error);
+
+    std::ifstream in(outDir / "mihomo-empty-profile-groups.yaml");
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    require(content.find("name: FAILOVER") != std::string::npos, "mihomo should keep legacy strategy groups when profile groups are empty");
+    require(content.find("type: fallback") != std::string::npos, "mihomo should keep legacy fallback type when profile groups are empty");
+}
+
 void testCustomRoutingRulesMapToAllTargets() {
     auto config = makeConfig();
     config.profile = "custom";
@@ -2743,6 +2859,8 @@ int main() {
     testPrivateRoutingRulesMapToAllTargets();
     testCustomStrategyGroupsRenderForMihomoAndSingBox();
     testFallbackAndLoadBalanceGroupsRenderForMihomoAndSingBox();
+    testMihomoProfileGroupsRenderAndExpandMembers();
+    testMihomoWithEmptyProfileGroupsKeepsLegacyGroupBehavior();
     testAssetRecordsExposeConfiguredFiles();
     testMissingAssetsReturnsOnlyMissingRecords();
     testUpdateAssetPersistsMetadata();

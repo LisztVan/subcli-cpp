@@ -101,7 +101,6 @@ ExportResult exportMihomoImpl(
     const std::string& outPath,
     std::string& error
 ) {
-    (void)profile;
     ExportResult result;
     std::vector<ProxyNode> supported;
     auto prepared = preprocessNodes(nodes, config, result.warnings);
@@ -149,9 +148,17 @@ ExportResult exportMihomoImpl(
     }
     root["proxies"] = proxies;
 
+    const bool useProfileGroups = profile != nullptr && !profile->groups.empty();
+
     YAML::Node proxyGroups(YAML::NodeType::Sequence);
     std::set<std::string> managedGroups = {"PROXY", "AUTO"};
-    if (!config.strategyGroups.empty()) {
+    if (useProfileGroups) {
+        for (const auto& group : profile->groups) {
+            if (!group.tag.empty()) {
+                managedGroups.insert(group.tag);
+            }
+        }
+    } else if (!config.strategyGroups.empty()) {
         for (const auto& group : config.strategyGroups) {
             managedGroups.insert(group.name);
         }
@@ -192,7 +199,33 @@ ExportResult exportMihomoImpl(
         proxyGroups.push_back(group);
     };
 
-    if (!config.strategyGroups.empty()) {
+    if (useProfileGroups) {
+        for (const auto& configured : profile->groups) {
+            if (configured.tag.empty()) {
+                continue;
+            }
+            YAML::Node group;
+            group["name"] = configured.tag;
+            const auto groupType = normalizeMihomoGroupType(configured.type);
+            group["type"] = groupType;
+            if (groupType == "url-test" || groupType == "fallback") {
+                group["url"] = configured.url.empty() ? "http://www.gstatic.com/generate_204" : configured.url;
+                group["interval"] = configured.interval > 0 ? configured.interval : 300;
+            }
+            if (groupType == "load-balance") {
+                group["strategy"] = configured.strategy.empty() ? "round-robin" : configured.strategy;
+            }
+            const auto members = expandProfileMembers(configured.members, groups, supported);
+            group["proxies"] = YAML::Node(YAML::NodeType::Sequence);
+            for (const auto& member : members) {
+                group["proxies"].push_back(member);
+            }
+            if (group["proxies"].size() == 0) {
+                group["proxies"].push_back("DIRECT");
+            }
+            proxyGroups.push_back(group);
+        }
+    } else if (!config.strategyGroups.empty()) {
         for (const auto& configured : config.strategyGroups) {
             YAML::Node group;
             group["name"] = configured.name;

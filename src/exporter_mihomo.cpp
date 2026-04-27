@@ -72,6 +72,74 @@ void ensureMihomoCustomRoutingRules(YAML::Node& root, const AppConfig& config) {
     }
 }
 
+void setMihomoStringSequence(YAML::Node& parent, const std::string& key, const std::vector<std::string>& values) {
+    YAML::Node sequence(YAML::NodeType::Sequence);
+    for (const auto& value : values) {
+        if (!value.empty()) {
+            sequence.push_back(value);
+        }
+    }
+    parent[key] = sequence;
+}
+
+void addMihomoRule(YAML::Node& rules, std::set<std::string>& seen, const std::string& rendered) {
+    if (rendered.empty() || seen.count(rendered)) {
+        return;
+    }
+    seen.insert(rendered);
+    rules.push_back(rendered);
+}
+
+void applyMihomoProfileDns(YAML::Node& root, const ResolvedProfile& profile) {
+    if (!root["dns"] || !root["dns"].IsMap()) {
+        root["dns"] = YAML::Node(YAML::NodeType::Map);
+    }
+    YAML::Node dns = root["dns"];
+    dns["enable"] = true;
+    if (!profile.dns.mode.empty()) {
+        dns["enhanced-mode"] = profile.dns.mode;
+    }
+    if (!profile.dns.directServers.empty()) {
+        setMihomoStringSequence(dns, "nameserver", profile.dns.directServers);
+    }
+    if (!profile.dns.remoteServers.empty()) {
+        setMihomoStringSequence(dns, "fallback", profile.dns.remoteServers);
+    }
+}
+
+void applyMihomoProfileRules(YAML::Node& root, const ResolvedProfile& profile) {
+    YAML::Node rules(YAML::NodeType::Sequence);
+    std::set<std::string> seen;
+    for (const auto& rule : profile.rules) {
+        const std::string type = toLower(rule.type);
+        const auto outbound = rule.outbound.empty() && type == "final" ? profile.defaultOutbound : rule.outbound;
+        if (type == "geosite" && !rule.value.empty()) {
+            addMihomoRule(rules, seen, "GEOSITE," + rule.value + "," + rule.outbound);
+        } else if (type == "geoip" && !rule.value.empty()) {
+            addMihomoRule(rules, seen, "GEOIP," + rule.value + "," + rule.outbound);
+        } else if (type == "domain" && !rule.value.empty()) {
+            addMihomoRule(rules, seen, "DOMAIN," + rule.value + "," + rule.outbound);
+        } else if (type == "domain_suffix" && !rule.value.empty()) {
+            addMihomoRule(rules, seen, "DOMAIN-SUFFIX," + rule.value + "," + rule.outbound);
+        } else if (type == "domain_keyword" && !rule.value.empty()) {
+            addMihomoRule(rules, seen, "DOMAIN-KEYWORD," + rule.value + "," + rule.outbound);
+        } else if (type == "ip_cidr" && !rule.value.empty()) {
+            addMihomoRule(rules, seen, "IP-CIDR," + rule.value + "," + rule.outbound);
+        } else if (type == "port") {
+            for (const auto& port : rule.ports) {
+                addMihomoRule(rules, seen, "DST-PORT," + port + "," + rule.outbound);
+            }
+        } else if (type == "network") {
+            for (const auto& network : rule.networks) {
+                addMihomoRule(rules, seen, "NETWORK," + network + "," + rule.outbound);
+            }
+        } else if (type == "final" && !outbound.empty()) {
+            addMihomoRule(rules, seen, "MATCH," + outbound);
+        }
+    }
+    root["rules"] = rules;
+}
+
 void ensureMihomoProfileRules(YAML::Node& root, const std::string& finalTarget) {
     if (!root["rules"] || !root["rules"].IsSequence()) {
         root["rules"] = YAML::Node(YAML::NodeType::Sequence);
@@ -301,7 +369,10 @@ ExportResult exportMihomoImpl(
     }
     root["proxy-groups"] = proxyGroups;
 
-    if (!config.routingRules.empty()) {
+    if (profile != nullptr) {
+        applyMihomoProfileDns(root, *profile);
+        applyMihomoProfileRules(root, *profile);
+    } else if (!config.routingRules.empty()) {
         ensureMihomoCustomRoutingRules(root, config);
     } else if (config.profile == "bypass-cn") {
         ensureMihomoBypassCnProfile(root);

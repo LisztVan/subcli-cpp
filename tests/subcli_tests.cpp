@@ -2244,6 +2244,81 @@ void testMihomoProfileGroupsSynthesizeMissingProxyAndAuto() {
     require(autoGroup["proxies"].size() > 0, "synthesized AUTO group should include usable members");
 }
 
+void testMihomoProfileDnsAndRulesRenderFromProfile() {
+    auto config = makeConfig();
+    config.profile = "bypass-cn";
+
+    subcli::ResolvedProfile profile;
+    profile.name = "custom-routing";
+    profile.defaultOutbound = "PROXY";
+    profile.dns.mode = "fake-ip";
+    profile.dns.directServers = {"223.5.5.5", "119.29.29.29"};
+    profile.dns.remoteServers = {"1.1.1.1", "8.8.8.8"};
+    profile.rules.push_back({"geosite", "private", "DIRECT"});
+    profile.rules.push_back({"geoip", "private", "DIRECT"});
+    profile.rules.push_back({"domain", "example.com", "DIRECT"});
+    profile.rules.push_back({"domain_suffix", "example.org", "PROXY"});
+    profile.rules.push_back({"domain_keyword", "video", "PROXY"});
+    profile.rules.push_back({"ip_cidr", "10.0.0.0/8", "DIRECT"});
+    subcli::ProfileRule portRule;
+    portRule.type = "port";
+    portRule.outbound = "DIRECT";
+    portRule.ports = {"53", "123"};
+    profile.rules.push_back(portRule);
+    subcli::ProfileRule networkRule;
+    networkRule.type = "network";
+    networkRule.outbound = "PROXY";
+    networkRule.networks = {"tcp", "udp"};
+    profile.rules.push_back(networkRule);
+    profile.rules.push_back({"final", "", "DIRECT"});
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-routing-mihomo";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "mihomo-profile-routing.yaml").string(),
+        error
+    );
+    require(result.ok, "mihomo profile routing export should succeed: " + error);
+
+    std::ifstream in(outDir / "mihomo-profile-routing.yaml");
+    const auto yaml = YAML::Load(in);
+    require(yaml["dns"] && yaml["dns"].IsMap(), "mihomo profile should render dns map");
+    require(yaml["dns"]["enable"].as<bool>(false), "mihomo profile dns should be enabled");
+    require(yaml["dns"]["enhanced-mode"].as<std::string>("") == "fake-ip", "mihomo profile dns should use profile mode");
+    require(yaml["dns"]["nameserver"] && yaml["dns"]["nameserver"].IsSequence(), "mihomo profile dns should render direct nameservers");
+    require(yaml["dns"]["nameserver"][0].as<std::string>("") == "223.5.5.5", "mihomo profile dns should keep direct server order");
+    require(yaml["dns"]["fallback"] && yaml["dns"]["fallback"].IsSequence(), "mihomo profile dns should render remote fallback servers");
+    require(yaml["dns"]["fallback"][1].as<std::string>("") == "8.8.8.8", "mihomo profile dns should keep remote server order");
+
+    std::vector<std::string> rules;
+    for (const auto& rule : yaml["rules"]) {
+        rules.push_back(rule.as<std::string>(""));
+    }
+    const std::vector<std::string> expected = {
+        "GEOSITE,private,DIRECT",
+        "GEOIP,private,DIRECT",
+        "DOMAIN,example.com,DIRECT",
+        "DOMAIN-SUFFIX,example.org,PROXY",
+        "DOMAIN-KEYWORD,video,PROXY",
+        "IP-CIDR,10.0.0.0/8,DIRECT",
+        "DST-PORT,53,DIRECT",
+        "DST-PORT,123,DIRECT",
+        "NETWORK,tcp,PROXY",
+        "NETWORK,udp,PROXY",
+        "MATCH,DIRECT",
+    };
+    require(rules.size() == expected.size(), "mihomo profile rules should replace template and legacy rules");
+    for (size_t i = 0; i < expected.size(); ++i) {
+        require(rules[i] == expected[i], "mihomo profile rule order and mapping should match profile");
+    }
+}
+
 void testCustomRoutingRulesMapToAllTargets() {
     auto config = makeConfig();
     config.profile = "custom";
@@ -2933,6 +3008,7 @@ int main() {
     testMihomoProfileGroupsRenderAndExpandMembers();
     testMihomoWithEmptyProfileGroupsKeepsLegacyGroupBehavior();
     testMihomoProfileGroupsSynthesizeMissingProxyAndAuto();
+    testMihomoProfileDnsAndRulesRenderFromProfile();
     testAssetRecordsExposeConfiguredFiles();
     testMissingAssetsReturnsOnlyMissingRecords();
     testUpdateAssetPersistsMetadata();

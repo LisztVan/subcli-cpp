@@ -1703,6 +1703,9 @@ void testSingBoxExportIncludesBypassCnProfileRules() {
     bool hasGeositeCnRule = false;
     bool hasGeoipCnRule = false;
     for (const auto& rule : json["route"]["rules"]) {
+        if (rule.contains("outbound")) {
+            require(rule.value("action", "") == "route", "sing-box bypass-cn route rules with outbound should use route action");
+        }
         if (rule.value("outbound", "") != "DIRECT") {
             continue;
         }
@@ -3113,6 +3116,9 @@ void testCustomRoutingRulesMapToAllTargets() {
         bool hasGeositeProxy = false;
         bool hasGeoipProxy = false;
         for (const auto& rule : json["route"]["rules"]) {
+            if (rule.contains("outbound")) {
+                require(rule.value("action", "") == "route", "sing-box custom route rules with outbound should use route action");
+            }
             if (rule.value("outbound", "") != "PROXY" || !rule.contains("rule_set")) {
                 continue;
             }
@@ -3215,13 +3221,23 @@ void testPrivateRoutingRulesMapToAllTargets() {
     {
         std::ifstream in(outDir / "sing-private.json");
         const auto json = nlohmann::json::parse(in);
-        bool hasPrivateDirect = false;
+        bool hasPrivateDomainDirect = false;
+        bool hasPrivateIpDirect = false;
         for (const auto& rule : json["route"]["rules"]) {
+            if (rule.contains("outbound")) {
+                require(rule.value("action", "") == "route", "sing-box private route rules with outbound should use route action");
+            }
             const auto domainText = rule.contains("domain") ? rule["domain"].dump() : "";
-            const auto ipText = rule.contains("ip_cidr") ? rule["ip_cidr"].dump() : "";
-            hasPrivateDirect = hasPrivateDirect || (rule.value("outbound", "") == "DIRECT" && (domainText.find("private") != std::string::npos || ipText.find("private") != std::string::npos));
+            if (rule.value("outbound", "") == "DIRECT" && rule.contains("ip_cidr")) {
+                for (const auto& cidr : rule["ip_cidr"]) {
+                    require(cidr.get<std::string>() != "private", "sing-box custom geoip private must not render invalid ip_cidr private token");
+                }
+            }
+            hasPrivateDomainDirect = hasPrivateDomainDirect || (rule.value("outbound", "") == "DIRECT" && domainText.find("private") != std::string::npos);
+            hasPrivateIpDirect = hasPrivateIpDirect || (rule.value("outbound", "") == "DIRECT" && rule.value("ip_is_private", false));
         }
-        require(hasPrivateDirect, "sing-box should map private direct rule");
+        require(hasPrivateDomainDirect, "sing-box should map private domain direct rule");
+        require(hasPrivateIpDirect, "sing-box should map private IP direct rule with valid schema");
     }
 
     auto xray = subcli::exportForTarget(subcli::ExportTarget::Xray, {node}, config, false, (outDir / "xray-private.json").string(), error);

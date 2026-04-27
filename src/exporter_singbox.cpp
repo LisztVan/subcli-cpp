@@ -265,10 +265,14 @@ void ensureSingBoxBypassCnProfile(nlohmann::json& root, const AppConfig& config)
         );
     }
     if (!hasRuleSetOutboundRule(root["route"]["rules"], "geosite-cn", "DIRECT")) {
-        root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geosite-cn"})}, {"outbound", "DIRECT"}});
+        auto rule = singBoxRouteRule("DIRECT");
+        rule["rule_set"] = nlohmann::json::array({"geosite-cn"});
+        root["route"]["rules"].push_back(rule);
     }
     if (!hasRuleSetOutboundRule(root["route"]["rules"], "geoip-cn", "DIRECT")) {
-        root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geoip-cn"})}, {"outbound", "DIRECT"}});
+        auto rule = singBoxRouteRule("DIRECT");
+        rule["rule_set"] = nlohmann::json::array({"geoip-cn"});
+        root["route"]["rules"].push_back(rule);
     }
 }
 
@@ -316,22 +320,30 @@ void ensureSingBoxCustomRoutingRules(nlohmann::json& root, const AppConfig& conf
             continue;
         }
         if (type == "geosite" && value == "private" && !item.outbound.empty()) {
-            root["route"]["rules"].push_back({{"domain", nlohmann::json::array({"private"})}, {"outbound", item.outbound}});
+            auto rule = singBoxRouteRule(item.outbound);
+            rule["domain"] = nlohmann::json::array({"private"});
+            root["route"]["rules"].push_back(rule);
             continue;
         }
         if (type == "geoip" && value == "private" && !item.outbound.empty()) {
-            root["route"]["rules"].push_back({{"ip_cidr", nlohmann::json::array({"private"})}, {"outbound", item.outbound}});
+            auto rule = singBoxRouteRule(item.outbound);
+            rule["ip_is_private"] = true;
+            root["route"]["rules"].push_back(rule);
             continue;
         }
         if (type == "geosite" && value == "cn" && !item.outbound.empty()) {
             if (!hasRuleSetOutboundRule(root["route"]["rules"], "geosite-cn", item.outbound)) {
-                root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geosite-cn"})}, {"outbound", item.outbound}});
+                auto rule = singBoxRouteRule(item.outbound);
+                rule["rule_set"] = nlohmann::json::array({"geosite-cn"});
+                root["route"]["rules"].push_back(rule);
             }
             continue;
         }
         if (type == "geoip" && value == "cn" && !item.outbound.empty()) {
             if (!hasRuleSetOutboundRule(root["route"]["rules"], "geoip-cn", item.outbound)) {
-                root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geoip-cn"})}, {"outbound", item.outbound}});
+                auto rule = singBoxRouteRule(item.outbound);
+                rule["rule_set"] = nlohmann::json::array({"geoip-cn"});
+                root["route"]["rules"].push_back(rule);
             }
             continue;
         }

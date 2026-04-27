@@ -199,31 +199,76 @@ ExportResult exportMihomoImpl(
         proxyGroups.push_back(group);
     };
 
+    auto addProfileGroup = [&](const std::string& name,
+                               const std::string& type,
+                               const std::vector<std::string>& members,
+                               const std::string& url,
+                               int interval,
+                               const std::string& strategy) {
+        YAML::Node group;
+        group["name"] = name;
+        const auto groupType = normalizeMihomoGroupType(type);
+        group["type"] = groupType;
+        if (groupType == "url-test" || groupType == "fallback") {
+            group["url"] = url.empty() ? "http://www.gstatic.com/generate_204" : url;
+            group["interval"] = interval > 0 ? interval : 300;
+        }
+        if (groupType == "load-balance") {
+            group["strategy"] = strategy.empty() ? "round-robin" : strategy;
+        }
+        group["proxies"] = YAML::Node(YAML::NodeType::Sequence);
+        for (const auto& member : members) {
+            group["proxies"].push_back(member);
+        }
+        if (group["proxies"].size() == 0) {
+            group["proxies"].push_back("DIRECT");
+        }
+        proxyGroups.push_back(group);
+    };
+
     if (useProfileGroups) {
+        std::set<std::string> renderedProfileGroups;
+        bool proxyReferencesAuto = false;
+
         for (const auto& configured : profile->groups) {
             if (configured.tag.empty()) {
                 continue;
             }
-            YAML::Node group;
-            group["name"] = configured.tag;
-            const auto groupType = normalizeMihomoGroupType(configured.type);
-            group["type"] = groupType;
-            if (groupType == "url-test" || groupType == "fallback") {
-                group["url"] = configured.url.empty() ? "http://www.gstatic.com/generate_204" : configured.url;
-                group["interval"] = configured.interval > 0 ? configured.interval : 300;
-            }
-            if (groupType == "load-balance") {
-                group["strategy"] = configured.strategy.empty() ? "round-robin" : configured.strategy;
-            }
             const auto members = expandProfileMembers(configured.members, groups, supported);
-            group["proxies"] = YAML::Node(YAML::NodeType::Sequence);
-            for (const auto& member : members) {
-                group["proxies"].push_back(member);
+            if (configured.tag == "PROXY") {
+                for (const auto& member : members) {
+                    if (member == "AUTO") {
+                        proxyReferencesAuto = true;
+                        break;
+                    }
+                }
             }
-            if (group["proxies"].size() == 0) {
-                group["proxies"].push_back("DIRECT");
+            addProfileGroup(configured.tag, configured.type, members, configured.url, configured.interval, configured.strategy);
+            renderedProfileGroups.insert(configured.tag);
+        }
+
+        const bool hasProxy = renderedProfileGroups.count("PROXY") > 0;
+        const bool hasAuto = renderedProfileGroups.count("AUTO") > 0;
+        if (!hasAuto && (!hasProxy || proxyReferencesAuto)) {
+            addProfileGroup("AUTO", "url-test", groups.groups.at("AUTO"), "http://www.gstatic.com/generate_204", 300, "");
+            renderedProfileGroups.insert("AUTO");
+        }
+        if (!hasProxy) {
+            std::vector<std::string> members;
+            std::set<std::string> seen;
+            auto addMember = [&](const std::string& value) {
+                if (value.empty() || seen.count(value)) {
+                    return;
+                }
+                seen.insert(value);
+                members.push_back(value);
+            };
+            addMember("AUTO");
+            addMember("DIRECT");
+            for (const auto& nodeName : groups.groups.at("PROXY")) {
+                addMember(nodeName);
             }
-            proxyGroups.push_back(group);
+            addProfileGroup("PROXY", "select", members, "", 300, "");
         }
     } else if (!config.strategyGroups.empty()) {
         for (const auto& configured : config.strategyGroups) {

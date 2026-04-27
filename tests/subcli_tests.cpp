@@ -2119,6 +2119,22 @@ void testMihomoProfileGroupsRenderAndExpandMembers() {
 
     std::ifstream in(outDir / "mihomo-profile-groups.yaml");
     std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const auto yaml = YAML::Load(content);
+
+    auto findGroup = [&](const std::string& name) -> YAML::Node {
+        YAML::Node found;
+        if (!yaml["proxy-groups"] || !yaml["proxy-groups"].IsSequence()) {
+            return found;
+        }
+        for (const auto& group : yaml["proxy-groups"]) {
+            if (group["name"].as<std::string>("") == name) {
+                return YAML::Node(group);
+            }
+        }
+        return found;
+    };
+
+    const auto balanceGroup = findGroup("BALANCE");
 
     require(content.find("name: PROXY") != std::string::npos, "mihomo profile groups should include PROXY");
     require(content.find("type: select") != std::string::npos, "mihomo profile select group should render as select");
@@ -2136,8 +2152,11 @@ void testMihomoProfileGroupsRenderAndExpandMembers() {
     require(content.find("name: EMPTY") != std::string::npos, "mihomo profile groups should include EMPTY");
     require(content.find("- DIRECT") != std::string::npos, "mihomo profile empty expanded members should fall back to DIRECT");
     require(content.find("REGION:*") == std::string::npos, "mihomo profile groups should expand REGION:* tokens");
-    require(content.find("- HK") != std::string::npos, "mihomo profile groups should include concrete HK region tag");
-    require(content.find("- JP") != std::string::npos, "mihomo profile groups should include concrete JP region tag");
+    require(balanceGroup && balanceGroup["proxies"] && balanceGroup["proxies"].IsSequence(), "mihomo BALANCE group should include proxies list");
+    require(balanceGroup["proxies"].size() == 3, "mihomo BALANCE REGION:* should expand to all generated regions");
+    require(balanceGroup["proxies"][0].as<std::string>("") == "HK", "mihomo BALANCE REGION:* should include HK region tag first");
+    require(balanceGroup["proxies"][1].as<std::string>("") == "JP", "mihomo BALANCE REGION:* should include JP region tag second");
+    require(balanceGroup["proxies"][2].as<std::string>("") == "OTHER", "mihomo BALANCE REGION:* should include OTHER region tag third");
 }
 
 void testMihomoWithEmptyProfileGroupsKeepsLegacyGroupBehavior() {
@@ -2171,6 +2190,58 @@ void testMihomoWithEmptyProfileGroupsKeepsLegacyGroupBehavior() {
     std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     require(content.find("name: FAILOVER") != std::string::npos, "mihomo should keep legacy strategy groups when profile groups are empty");
     require(content.find("type: fallback") != std::string::npos, "mihomo should keep legacy fallback type when profile groups are empty");
+}
+
+void testMihomoProfileGroupsSynthesizeMissingProxyAndAuto() {
+    auto config = makeConfig();
+    config.profile = "global";
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "missing-proxy-auto";
+    subcli::ProfileGroup failover;
+    failover.tag = "FAILOVER";
+    failover.type = "fallback";
+    failover.members = {"REGION:*"};
+    profile.groups.push_back(failover);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-fallbacks-mihomo";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "mihomo-profile-missing-groups.yaml").string(),
+        error
+    );
+    require(result.ok, "mihomo export should synthesize missing PROXY/AUTO groups: " + error);
+
+    std::ifstream in(outDir / "mihomo-profile-missing-groups.yaml");
+    const auto yaml = YAML::Load(in);
+
+    YAML::Node proxyGroup;
+    YAML::Node autoGroup;
+    for (const auto& group : yaml["proxy-groups"]) {
+        const auto name = group["name"].as<std::string>("");
+        if (name == "PROXY") {
+            proxyGroup = YAML::Node(group);
+        }
+        if (name == "AUTO") {
+            autoGroup = YAML::Node(group);
+        }
+    }
+
+    require(proxyGroup && proxyGroup["proxies"] && proxyGroup["proxies"].IsSequence(), "mihomo should synthesize PROXY group proxies list");
+    require(proxyGroup["type"].as<std::string>("") == "select", "synthesized PROXY group should be select type");
+    require(proxyGroup["proxies"][0].as<std::string>("") == "AUTO", "synthesized PROXY group should reference AUTO first");
+    require(proxyGroup["proxies"][1].as<std::string>("") == "DIRECT", "synthesized PROXY group should reference DIRECT second");
+
+    require(autoGroup && autoGroup["proxies"] && autoGroup["proxies"].IsSequence(), "mihomo should synthesize AUTO group proxies list");
+    require(autoGroup["type"].as<std::string>("") == "url-test", "synthesized AUTO group should be url-test type");
+    require(autoGroup["proxies"].size() > 0, "synthesized AUTO group should include usable members");
 }
 
 void testCustomRoutingRulesMapToAllTargets() {
@@ -2861,6 +2932,7 @@ int main() {
     testFallbackAndLoadBalanceGroupsRenderForMihomoAndSingBox();
     testMihomoProfileGroupsRenderAndExpandMembers();
     testMihomoWithEmptyProfileGroupsKeepsLegacyGroupBehavior();
+    testMihomoProfileGroupsSynthesizeMissingProxyAndAuto();
     testAssetRecordsExposeConfiguredFiles();
     testMissingAssetsReturnsOnlyMissingRecords();
     testUpdateAssetPersistsMetadata();

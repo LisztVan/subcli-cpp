@@ -137,6 +137,7 @@ AppConfig loadConfig(const std::string& path) {
     c.templateDir = root["template_dir"].as<std::string>("./templates");
     c.outputDir = root["output_dir"].as<std::string>("./outputs");
     c.profile = root["profile"].as<std::string>("bypass-cn");
+    c.profilePath = root["profile_path"].as<std::string>("");
     if (root["routing"] && root["routing"]["rules"] && root["routing"]["rules"].IsSequence()) {
         for (const auto& n : root["routing"]["rules"]) {
             AppConfig::RoutingRule rule;
@@ -230,6 +231,7 @@ void saveConfig(const std::string& path, const AppConfig& c) {
     root["template_dir"] = c.templateDir;
     root["output_dir"] = c.outputDir;
     root["profile"] = c.profile;
+    root["profile_path"] = c.profilePath;
     root["routing"]["rules"] = YAML::Node(YAML::NodeType::Sequence);
     for (const auto& rule : c.routingRules) {
         YAML::Node node;

@@ -25,6 +25,7 @@ subcli config set core_paths.xray /path/to/xray
 subcli config set core_paths.mihomo /path/to/mihomo
 subcli config set fetch_max_bytes 10485760
 subcli config get profile
+subcli config set profile_path ./profiles/work.json
 subcli template list
 subcli asset update
 subcli sub add --name airport-a --url https://example/sub
@@ -140,6 +141,7 @@ Common keys:
 - `fetch_max_bytes`
 - `log_level`
 - `profile`
+- `profile_path`
 - `asset_dir`
 - `core_paths.mihomo`
 - `core_paths.sing_box`
@@ -200,6 +202,8 @@ Reload your shell after installing the generated script.
 
 `export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, applies the configured profile, and optionally validates with external cores.
 
+Use `profile_path` to select an external profile file. Relative `profile_path` values are resolved from the config directory.
+
 Supported profiles:
 
 - `bypass-cn` (default): private/LAN and mainland China rules go to `DIRECT`; unmatched traffic goes to `PROXY`.
@@ -207,7 +211,7 @@ Supported profiles:
 - `direct`: unmatched traffic goes to `DIRECT`.
 - `custom`: uses `routing.rules` from config for explicit routing control.
 
-Advanced routing/strategy behavior:
+Advanced routing/strategy behavior should move to profile files. Legacy config fields remain available for now:
 
 - `routing.rules` currently supports `geosite`, `geoip`, `final`, and `match` types.
 - `grouping.strategy_groups` custom groups are exported to Mihomo and sing-box.

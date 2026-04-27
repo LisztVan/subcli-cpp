@@ -240,6 +240,9 @@ void applyConfigDefaults(AppConfig& c) {
     if (c.profile.empty()) {
         c.profile = "bypass-cn";
     }
+    if (!c.profilePath.empty()) {
+        c.profilePath = resolveFromConfigDir(c.profilePath);
+    }
     if (c.assetDir.empty() || c.assetDir == "./assets" || c.assetDir == "assets") {
         c.assetDir = (gPaths.dataDir / "assets").string();
     } else {
@@ -730,6 +733,7 @@ nlohmann::json configToJson(const AppConfig& cfg) {
     return {
         {"tun", cfg.tun},
         {"profile", cfg.profile},
+        {"profile_path", cfg.profilePath},
         {"output_dir", cfg.outputDir},
         {"template_dir", cfg.templateDir},
         {"asset_dir", cfg.assetDir},
@@ -1781,6 +1785,7 @@ int doConfigCommand(const std::vector<std::string>& args) {
         }
         std::cout << "tun=" << (cfg.tun ? "true" : "false") << "\n";
         std::cout << "profile=" << cfg.profile << "\n";
+        std::cout << "profile_path=" << cfg.profilePath << "\n";
         std::cout << "output_dir=" << cfg.outputDir << "\n";
         std::cout << "template_dir=" << cfg.templateDir << "\n";
         std::cout << "asset_dir=" << cfg.assetDir << "\n";
@@ -1830,6 +1835,10 @@ int doConfigCommand(const std::vector<std::string>& args) {
         }
         if (key == "profile") {
             std::cout << cfg.profile << "\n";
+            return 0;
+        }
+        if (key == "profile_path") {
+            std::cout << cfg.profilePath << "\n";
             return 0;
         }
         if (key == "asset_dir") {
@@ -1955,6 +1964,8 @@ int doConfigCommand(const std::vector<std::string>& args) {
                 return 1;
             }
             cfg.profile = value;
+        } else if (key == "profile_path") {
+            cfg.profilePath = resolveFromConfigDir(value);
         } else if (key == "asset_dir") {
             cfg.assetDir = resolveFromConfigDir(value);
         } else if (key == "template_dir") {
@@ -2066,6 +2077,8 @@ int doConfigCommand(const std::vector<std::string>& args) {
             cfg.outputDir = gPaths.outputDir.string();
         } else if (key == "profile") {
             cfg.profile = "bypass-cn";
+        } else if (key == "profile_path") {
+            cfg.profilePath.clear();
         } else if (key == "asset_dir") {
             cfg.assetDir = (gPaths.dataDir / "assets").string();
         } else if (key == "template_dir") {

@@ -1820,6 +1820,20 @@ void testStorePersistsProfileAndAssets() {
     fs::remove(path);
 }
 
+void testStorePersistsProfilePath() {
+    const fs::path path = fs::temp_directory_path() / "subcli-tests-profile-path-config.yaml";
+    subcli::AppConfig config;
+    config.profile = "global";
+    config.profilePath = "/tmp/subcli-profiles/work.json";
+
+    subcli::saveConfig(path.string(), config);
+    auto loaded = subcli::loadConfig(path.string());
+    require(loaded.profile == "global", "built-in profile should remain supported");
+    require(loaded.profilePath == "/tmp/subcli-profiles/work.json", "profile_path should persist");
+
+    fs::remove(path);
+}
+
 void testStorePersistsRoutingRules() {
     const fs::path path = fs::temp_directory_path() / "subcli-tests-routing-config.yaml";
     subcli::AppConfig config;
@@ -2235,6 +2249,10 @@ void testReadmeDeclaresConfigGenerationAsPrimaryGoal() {
             "README should declare config generation as the primary workflow");
     require(content.find("runtime and daemon commands are optional") != std::string::npos,
             "README should declare runtime and daemon as optional capabilities");
+    require(content.find("profile_path") != std::string::npos,
+            "README should document profile_path as the external profile selector");
+    require(content.find("routing/strategy") != std::string::npos && content.find("profile files") != std::string::npos,
+            "README should direct advanced routing and strategy policy to profile files");
 }
 
 void testFetchRejectsUnsupportedScheme() {
@@ -2563,6 +2581,7 @@ int main() {
     testStorePersistsOverrideFlags();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
+    testStorePersistsProfilePath();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();

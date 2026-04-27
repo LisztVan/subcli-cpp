@@ -60,6 +60,7 @@ struct AppConfig {
     std::map<std::string, std::string> regionRules;
     std::vector<StrategyGroup> strategyGroups;
     std::string profile = "bypass-cn";
+    std::string profilePath;
     struct RoutingRule {
         std::string type;
         std::string value;

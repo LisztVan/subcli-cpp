@@ -19,6 +19,20 @@ if [[ "$config_json" != *'"output_dir"'* ]]; then
     exit 1
 fi
 
+profile_path="$tmp/profile.json"
+"$bin" config set profile_path "$profile_path" >/dev/null
+actual_profile_path="$($bin config get profile_path)"
+if [[ "$actual_profile_path" != *"$profile_path"* ]]; then
+    printf 'expected profile_path to contain %s, got %s\n' "$profile_path" "$actual_profile_path"
+    exit 1
+fi
+"$bin" config remove profile_path >/dev/null
+removed_profile_path="$($bin config get profile_path)"
+if [[ -n "$removed_profile_path" ]]; then
+    printf 'expected removed profile_path to be empty, got %s\n' "$removed_profile_path"
+    exit 1
+fi
+
 sub_json="$($bin sub list --json)"
 if [[ "$sub_json" != *'"subscriptions"'* ]]; then
     printf '%s\n' "$sub_json"

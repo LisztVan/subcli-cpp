@@ -1834,6 +1834,21 @@ void testStorePersistsProfilePath() {
     fs::remove(path);
 }
 
+void testStoreDefaultsMissingProfilePathToEmpty() {
+    const fs::path path = fs::temp_directory_path() / "subcli-tests-missing-profile-path-config.yaml";
+    {
+        std::ofstream out(path);
+        out << "version: 1\n";
+        out << "profile: global\n";
+    }
+
+    auto loaded = subcli::loadConfig(path.string());
+    require(loaded.profile == "global", "profile should load when profile_path is absent");
+    require(loaded.profilePath.empty(), "missing profile_path should default to empty");
+
+    fs::remove(path);
+}
+
 void testStorePersistsRoutingRules() {
     const fs::path path = fs::temp_directory_path() / "subcli-tests-routing-config.yaml";
     subcli::AppConfig config;
@@ -2582,6 +2597,7 @@ int main() {
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();
+    testStoreDefaultsMissingProfilePathToEmpty();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();

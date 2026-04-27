@@ -1753,6 +1753,255 @@ void testXrayExportIncludesBypassCnProfileRules() {
     require(hasProxyFallback, "xray should proxy unmatched traffic through PROXY balancer");
 }
 
+void testXrayProfileDnsAndRulesRenderFromProfile() {
+    auto config = makeConfig();
+    config.profile = "bypass-cn";
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-routing";
+    profile.defaultOutbound = "DIRECT";
+    profile.dns.strategy = "prefer_ipv6";
+    profile.dns.directServers = {"223.5.5.5", "119.29.29.29"};
+    profile.dns.remoteServers = {"1.1.1.1", "8.8.8.8"};
+    profile.rules.push_back({"geosite", "cn", "DIRECT"});
+    profile.rules.push_back({"geoip", "private", "DIRECT"});
+    profile.rules.push_back({"domain", "example.com", "DIRECT"});
+    subcli::ProfileRule domainList;
+    domainList.type = "domain";
+    domainList.outbound = "PROXY";
+    domainList.domains = {"one.example", "two.example"};
+    profile.rules.push_back(domainList);
+    profile.rules.push_back({"domain_suffix", "example.org", "PROXY"});
+    subcli::ProfileRule suffixList;
+    suffixList.type = "domain_suffix";
+    suffixList.outbound = "DIRECT";
+    suffixList.domains = {"lan", "local"};
+    profile.rules.push_back(suffixList);
+    profile.rules.push_back({"domain_keyword", "video", "PROXY"});
+    subcli::ProfileRule keywordList;
+    keywordList.type = "domain_keyword";
+    keywordList.outbound = "DIRECT";
+    keywordList.domains = {"music", "game"};
+    profile.rules.push_back(keywordList);
+    profile.rules.push_back({"ip_cidr", "10.0.0.0/8", "DIRECT"});
+    subcli::ProfileRule ipList;
+    ipList.type = "ip_cidr";
+    ipList.outbound = "PROXY";
+    ipList.ipCidrs = {"172.16.0.0/12", "192.168.0.0/16"};
+    profile.rules.push_back(ipList);
+    subcli::ProfileRule port;
+    port.type = "port";
+    port.value = "443";
+    port.outbound = "PROXY";
+    port.ports = {"53", "123"};
+    profile.rules.push_back(port);
+    subcli::ProfileRule network;
+    network.type = "network";
+    network.value = "tcp";
+    network.outbound = "DIRECT";
+    network.networks = {"udp"};
+    profile.rules.push_back(network);
+    profile.rules.push_back({"final", "", "REJECT"});
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-routing-xray";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Xray,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "xray-profile-routing.json").string(),
+        error
+    );
+    require(result.ok, "xray profile routing export should succeed: " + error);
+
+    std::ifstream in(outDir / "xray-profile-routing.json");
+    const auto json = nlohmann::json::parse(in);
+    require(json["dns"].value("queryStrategy", "") == "UseIPv6", "xray profile dns should map profile strategy");
+
+    std::vector<std::string> dnsServers;
+    for (const auto& server : json["dns"]["servers"]) {
+        dnsServers.push_back(server.get<std::string>());
+    }
+    require(std::find(dnsServers.begin(), dnsServers.end(), "223.5.5.5") != dnsServers.end(), "xray profile dns should render direct server");
+    require(std::find(dnsServers.begin(), dnsServers.end(), "8.8.8.8") != dnsServers.end(), "xray profile dns should render remote server");
+
+    bool hasGeosite = false;
+    bool hasGeoip = false;
+    bool hasScalarDomain = false;
+    bool hasListDomain = false;
+    bool hasScalarSuffix = false;
+    bool hasListSuffix = false;
+    bool hasScalarKeyword = false;
+    bool hasListKeyword = false;
+    bool hasScalarIp = false;
+    bool hasListIp = false;
+    bool hasPorts = false;
+    bool hasNetworks = false;
+    bool hasFinalReject = false;
+    for (const auto& rule : json["routing"]["rules"]) {
+        hasGeosite = hasGeosite || (rule.value("outboundTag", "") == "DIRECT" && rule.contains("domain") && rule["domain"][0].get<std::string>() == "geosite:cn");
+        hasGeoip = hasGeoip || (rule.value("outboundTag", "") == "DIRECT" && rule.contains("ip") && rule["ip"][0].get<std::string>() == "geoip:private");
+        hasScalarDomain = hasScalarDomain || (rule.value("outboundTag", "") == "DIRECT" && rule.contains("domain") && rule["domain"][0].get<std::string>() == "full:example.com");
+        hasListDomain = hasListDomain || (rule.value("balancerTag", "") == "PROXY" && rule.contains("domain") && rule["domain"].size() == 2 && rule["domain"][1].get<std::string>() == "full:two.example");
+        hasScalarSuffix = hasScalarSuffix || (rule.value("balancerTag", "") == "PROXY" && rule.contains("domain") && rule["domain"][0].get<std::string>() == "domain:example.org");
+        hasListSuffix = hasListSuffix || (rule.value("outboundTag", "") == "DIRECT" && rule.contains("domain") && rule["domain"].size() == 2 && rule["domain"][1].get<std::string>() == "domain:local");
+        hasScalarKeyword = hasScalarKeyword || (rule.value("balancerTag", "") == "PROXY" && rule.contains("domain") && rule["domain"][0].get<std::string>() == "keyword:video");
+        hasListKeyword = hasListKeyword || (rule.value("outboundTag", "") == "DIRECT" && rule.contains("domain") && rule["domain"].size() == 2 && rule["domain"][1].get<std::string>() == "keyword:game");
+        hasScalarIp = hasScalarIp || (rule.value("outboundTag", "") == "DIRECT" && rule.contains("ip") && rule["ip"][0].get<std::string>() == "10.0.0.0/8");
+        hasListIp = hasListIp || (rule.value("balancerTag", "") == "PROXY" && rule.contains("ip") && rule["ip"].size() == 2 && rule["ip"][1].get<std::string>() == "192.168.0.0/16");
+        hasPorts = hasPorts || (rule.value("balancerTag", "") == "PROXY" && rule.contains("port") && rule["port"] == "443,53,123");
+        hasNetworks = hasNetworks || (rule.value("outboundTag", "") == "DIRECT" && rule.contains("network") && rule["network"] == "tcp,udp");
+        hasFinalReject = hasFinalReject || (rule.value("outboundTag", "") == "REJECT" && rule.value("network", "") == "tcp,udp");
+    }
+    require(hasGeosite && hasGeoip, "xray profile geosite and geoip rules should render");
+    require(hasScalarDomain && hasListDomain, "xray profile domain rules should support scalar and list values");
+    require(hasScalarSuffix && hasListSuffix, "xray profile domain_suffix rules should support scalar and list values");
+    require(hasScalarKeyword && hasListKeyword, "xray profile domain_keyword rules should support scalar and list values");
+    require(hasScalarIp && hasListIp, "xray profile ip_cidr rules should support scalar and list values");
+    require(hasPorts, "xray profile port rules should support scalar and list values");
+    require(hasNetworks, "xray profile network rules should support scalar and list values");
+    require(hasFinalReject, "xray profile final rule should render catch-all outbound");
+}
+
+void testXrayProfileGroupsRenderBalancersWithManagedTags() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-groups";
+    profile.defaultOutbound = "AUTO";
+    subcli::ProfileGroup autoGroup;
+    autoGroup.tag = "AUTO";
+    autoGroup.type = "url-test";
+    autoGroup.members = {"NODE:*"};
+    profile.groups.push_back(autoGroup);
+    subcli::ProfileGroup balance;
+    balance.tag = "BALANCE";
+    balance.type = "load-balance";
+    balance.members = {"REGION:HK"};
+    profile.groups.push_back(balance);
+    subcli::ProfileGroup proxy;
+    proxy.tag = "PROXY";
+    proxy.type = "select";
+    proxy.members = {"AUTO", "BALANCE", "DIRECT"};
+    profile.groups.push_back(proxy);
+
+    auto hk = makeExportReadyShadowsocksNode("HK Node");
+    auto jp = makeExportReadyShadowsocksNode("JP Node");
+    jp.server = "5.6.7.8";
+    jp.region = "JP";
+    jp.normalize();
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-xray";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {hk, jp}, config, false, &profile, (outDir / "xray-groups.json").string(), error);
+    require(result.ok, "xray profile groups export should succeed: " + error);
+
+    std::ifstream in(outDir / "xray-groups.json");
+    const auto json = nlohmann::json::parse(in);
+    const auto* autoBalancer = static_cast<const nlohmann::json*>(nullptr);
+    const auto* balanceBalancer = static_cast<const nlohmann::json*>(nullptr);
+    const auto* proxyBalancer = static_cast<const nlohmann::json*>(nullptr);
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        if (balancer.value("tag", "") == "AUTO") {
+            autoBalancer = &balancer;
+        } else if (balancer.value("tag", "") == "BALANCE") {
+            balanceBalancer = &balancer;
+        } else if (balancer.value("tag", "") == "PROXY") {
+            proxyBalancer = &balancer;
+        }
+    }
+    require(autoBalancer != nullptr, "xray profile url-test group should render as balancer");
+    require((*autoBalancer)["strategy"].value("type", "") == "leastPing", "xray profile url-test should use leastPing");
+    require((*autoBalancer)["selector"].size() == 2, "xray NODE:* should expand to managed node tags");
+    require((*autoBalancer)["selector"][0].get<std::string>() == "SUBCLI_00001", "xray should use first managed node tag");
+    require((*autoBalancer)["selector"][1].get<std::string>() == "SUBCLI_00002", "xray should use second managed node tag");
+    require(balanceBalancer != nullptr, "xray profile load-balance group should render as balancer");
+    require((*balanceBalancer)["strategy"].value("type", "") == "leastLoad", "xray profile load-balance should use leastLoad");
+    require((*balanceBalancer)["selector"].size() == 1 && (*balanceBalancer)["selector"][0].get<std::string>() == "SUBCLI_00001", "xray REGION members should expand to managed node tags");
+    require(proxyBalancer != nullptr, "xray profile select group should render as balancer");
+    require((*proxyBalancer)["selector"][0].get<std::string>() == "SUBCLI_00001", "xray select group should expand nested group members to usable outbound tags");
+
+    bool hasFinalAuto = false;
+    for (const auto& rule : json["routing"]["rules"]) {
+        hasFinalAuto = hasFinalAuto || (rule.value("balancerTag", "") == "AUTO" && rule.value("network", "") == "tcp,udp");
+    }
+    require(hasFinalAuto, "xray profile default outbound should render catch-all balancer rule");
+}
+
+void testXrayProfileFallbackWarnsWhenLossy() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-fallback";
+    subcli::ProfileGroup group;
+    group.tag = "FAILOVER";
+    group.type = "fallback";
+    group.members = {"REGION:HK"};
+    profile.groups.push_back(group);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-xray-fallback";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, (outDir / "xray-fallback.json").string(), error);
+    require(result.ok, "xray profile fallback export should succeed: " + error);
+
+    bool warned = false;
+    for (const auto& warning : result.warnings) {
+        warned = warned || warning.code == "profile_group_degraded";
+    }
+    require(warned, "xray fallback profile group without fallbackTag should emit degradation warning");
+
+    std::ifstream in(outDir / "xray-fallback.json");
+    const auto json = nlohmann::json::parse(in);
+    bool hasFailover = false;
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        hasFailover = hasFailover || (balancer.value("tag", "") == "FAILOVER" && balancer["strategy"].value("type", "") == "leastPing");
+    }
+    require(hasFailover, "xray fallback profile group should render safe leastPing balancer");
+}
+
+void testXrayProfileGroupsSynthesizeMissingProxyAndAuto() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-missing-proxy-auto";
+    profile.defaultOutbound = "PROXY";
+    subcli::ProfileGroup group;
+    group.tag = "FAILOVER";
+    group.type = "url-test";
+    group.members = {"REGION:HK"};
+    profile.groups.push_back(group);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-xray-fallbacks";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, (outDir / "xray-missing-proxy-auto.json").string(), error);
+    require(result.ok, "xray export should synthesize missing PROXY/AUTO balancers: " + error);
+
+    std::ifstream in(outDir / "xray-missing-proxy-auto.json");
+    const auto json = nlohmann::json::parse(in);
+    bool hasProxy = false;
+    bool hasAuto = false;
+    bool hasFinalProxy = false;
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        hasProxy = hasProxy || balancer.value("tag", "") == "PROXY";
+        hasAuto = hasAuto || balancer.value("tag", "") == "AUTO";
+    }
+    for (const auto& rule : json["routing"]["rules"]) {
+        hasFinalProxy = hasFinalProxy || (rule.value("balancerTag", "") == "PROXY" && rule.value("network", "") == "tcp,udp");
+    }
+    require(hasProxy, "xray should synthesize PROXY balancer when profile final references it");
+    require(hasAuto, "xray should synthesize AUTO balancer for synthesized PROXY selector");
+    require(hasFinalProxy, "xray profile final should not reference missing PROXY balancer");
+}
+
 void testMihomoExportSupportsGlobalAndDirectProfiles() {
     auto config = makeConfig();
     const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-mihomo";
@@ -3760,6 +4009,10 @@ int main() {
     testSingBoxExportIncludesBypassCnProfileRules();
     testSingBoxAndXrayExportSupportDirectProfile();
     testXrayExportIncludesBypassCnProfileRules();
+    testXrayProfileDnsAndRulesRenderFromProfile();
+    testXrayProfileGroupsRenderBalancersWithManagedTags();
+    testXrayProfileFallbackWarnsWhenLossy();
+    testXrayProfileGroupsSynthesizeMissingProxyAndAuto();
     testStructuredFieldsSurviveExportNormalization();
     testNodeManagementPreprocess();
     testExpandProfileMembersExpandsRegionWildcardInOrder();

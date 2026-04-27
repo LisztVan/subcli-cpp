@@ -24,6 +24,11 @@ std::vector<std::string> splitCommaValues(const std::string& input);
 std::vector<ProxyNode> preprocessNodes(const std::vector<ProxyNode>& nodes, const AppConfig& config, std::vector<DiagnosticMessage>& warnings);
 std::vector<ProxyNode> makeExportNodes(const std::vector<ProxyNode>& nodes);
 GroupData buildGroups(const std::vector<ProxyNode>& nodes, const AppConfig& config);
+std::vector<std::string> expandProfileMembers(
+    const std::vector<std::string>& rawMembers,
+    const GroupData& groups,
+    const std::vector<ProxyNode>& exportNodes
+);
 std::set<std::string> generatedSingBoxTags(const std::vector<ProxyNode>& nodes, const GroupData& groups);
 std::set<std::string> generatedXrayTags(const std::vector<ProxyNode>& nodes);
 void removeJsonArrayObjectsByTag(nlohmann::json& array, const std::set<std::string>& tags);

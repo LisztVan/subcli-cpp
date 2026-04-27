@@ -2487,6 +2487,70 @@ void testNodeManagementPreprocess() {
     require(warnings.size() == 2, "preprocess should emit filter and dedupe warnings");
 }
 
+void testExpandProfileMembersExpandsRegionWildcardInOrder() {
+    subcli::GroupData groups;
+    groups.regionOrder = {"HK", "JP", "OTHER"};
+
+    const std::vector<subcli::ProxyNode> exportNodes;
+    const auto expanded = subcli::expandProfileMembers({"REGION:*"}, groups, exportNodes);
+
+    require(expanded.size() == 3, "REGION:* should expand every generated region");
+    require(expanded[0] == "HK", "REGION:* should keep generated region order");
+    require(expanded[1] == "JP", "REGION:* should keep generated region order");
+    require(expanded[2] == "OTHER", "REGION:* should keep generated region order");
+}
+
+void testExpandProfileMembersExpandsSingleRegionOnlyWhenPresent() {
+    subcli::GroupData groups;
+    groups.regionOrder = {"HK", "JP", "OTHER"};
+
+    const std::vector<subcli::ProxyNode> exportNodes;
+    const auto expanded = subcli::expandProfileMembers({"REGION:HK", "REGION:US"}, groups, exportNodes);
+
+    require(expanded.size() == 1, "REGION:<name> should expand only existing regions");
+    require(expanded[0] == "HK", "REGION:<name> should include the matched region");
+}
+
+void testExpandProfileMembersExpandsNodeWildcard() {
+    subcli::GroupData groups;
+    groups.regionOrder = {"HK", "OTHER"};
+
+    subcli::ProxyNode a;
+    a.name = "HK Node";
+    subcli::ProxyNode b;
+    b.name = "JP Node";
+    const std::vector<subcli::ProxyNode> exportNodes = {a, b};
+
+    const auto expanded = subcli::expandProfileMembers({"NODE:*"}, groups, exportNodes);
+    require(expanded.size() == 2, "NODE:* should expand all export node names");
+    require(expanded[0] == "HK Node", "NODE:* should preserve export node order");
+    require(expanded[1] == "JP Node", "NODE:* should preserve export node order");
+}
+
+void testExpandProfileMembersKeepsLiteralMembersAndDedupes() {
+    subcli::GroupData groups;
+    groups.regionOrder = {"HK", "JP", "OTHER"};
+
+    subcli::ProxyNode a;
+    a.name = "HK Node";
+    const std::vector<subcli::ProxyNode> exportNodes = {a};
+
+    const auto expanded = subcli::expandProfileMembers(
+        {"DIRECT", "PROXY", "REGION:HK", "NODE:*", "REGION:*", "DIRECT", "HK", "HK Node", "CUSTOM"},
+        groups,
+        exportNodes
+    );
+
+    require(expanded.size() == 7, "expanded members should dedupe while preserving first-seen order");
+    require(expanded[0] == "DIRECT", "literal DIRECT should be preserved");
+    require(expanded[1] == "PROXY", "literal PROXY should be preserved");
+    require(expanded[2] == "HK", "expanded region should be deduped with later duplicates");
+    require(expanded[3] == "HK Node", "expanded node should be deduped with later duplicates");
+    require(expanded[4] == "JP", "REGION:* should add missing regions in order");
+    require(expanded[5] == "OTHER", "REGION:* should include OTHER when generated");
+    require(expanded[6] == "CUSTOM", "custom literal should be preserved");
+}
+
 void testInvalidRegexIsIgnored() {
     auto config = makeConfig();
     config.includeRegex = "(";
@@ -2658,6 +2722,10 @@ int main() {
     testXrayExportIncludesBypassCnProfileRules();
     testStructuredFieldsSurviveExportNormalization();
     testNodeManagementPreprocess();
+    testExpandProfileMembersExpandsRegionWildcardInOrder();
+    testExpandProfileMembersExpandsSingleRegionOnlyWhenPresent();
+    testExpandProfileMembersExpandsNodeWildcard();
+    testExpandProfileMembersKeepsLiteralMembersAndDedupes();
     testInvalidRegexIsIgnored();
     testWriteFileCreatesParentDirectories();
     testLoadConfigMalformedYamlThrows();

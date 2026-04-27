@@ -227,6 +227,48 @@ GroupData buildGroups(const std::vector<ProxyNode>& nodes, const AppConfig& conf
     return data;
 }
 
+std::vector<std::string> expandProfileMembers(
+    const std::vector<std::string>& rawMembers,
+    const GroupData& groups,
+    const std::vector<ProxyNode>& exportNodes
+) {
+    std::vector<std::string> expanded;
+    std::set<std::string> seen;
+
+    auto appendUnique = [&](const std::string& value) {
+        if (value.empty() || seen.count(value)) {
+            return;
+        }
+        seen.insert(value);
+        expanded.push_back(value);
+    };
+
+    for (const auto& member : rawMembers) {
+        if (member == "REGION:*") {
+            for (const auto& region : groups.regionOrder) {
+                appendUnique(region);
+            }
+            continue;
+        }
+        if (member.rfind("REGION:", 0) == 0) {
+            const auto region = member.substr(std::string("REGION:").size());
+            if (std::find(groups.regionOrder.begin(), groups.regionOrder.end(), region) != groups.regionOrder.end()) {
+                appendUnique(region);
+            }
+            continue;
+        }
+        if (member == "NODE:*") {
+            for (const auto& node : exportNodes) {
+                appendUnique(node.name);
+            }
+            continue;
+        }
+        appendUnique(member);
+    }
+
+    return expanded;
+}
+
 std::set<std::string> generatedSingBoxTags(const std::vector<ProxyNode>& nodes, const GroupData& groups) {
     std::set<std::string> tags = {"PROXY", "AUTO", "dns-remote"};
     for (const auto& n : nodes) {

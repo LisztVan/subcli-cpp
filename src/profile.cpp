@@ -111,7 +111,7 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
                 return false;
             }
             group.members = readStringArray(item, "members");
-            group.defaultMember = readString(item, "default_member");
+            group.defaultMember = readString(item, "default");
             group.url = readString(item, "url");
             if (item.contains("interval") && item["interval"].is_number_integer()) {
                 group.interval = item["interval"].get<int>();
@@ -140,7 +140,7 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
             rule.ipCidrs = readStringArray(item, "ip_cidrs");
             rule.ports = readStringArray(item, "ports");
             rule.networks = readStringArray(item, "networks");
-            if (rule.type.empty() || rule.outbound.empty()) {
+            if (rule.type.empty() || (rule.type != "final" && rule.outbound.empty())) {
                 error = "profile rule requires type and outbound";
                 return false;
             }

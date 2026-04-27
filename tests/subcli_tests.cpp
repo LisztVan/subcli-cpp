@@ -83,7 +83,7 @@ void testLoadProfileReadsGroupsRulesAndDns() {
       "tag": "AUTO",
       "type": "url-test",
       "members": ["HK", "JP"],
-      "default_member": "HK",
+      "default": "HK",
       "url": "https://example.com/generate_204",
       "strategy": "latency"
     }
@@ -186,6 +186,32 @@ void testLoadProfileAcceptsRuleWithoutValueOrLists() {
     require(profile.rules[0].type == "domain", "minimal profile rule type should be read");
     require(profile.rules[0].outbound == "DIRECT", "minimal profile rule outbound should be read");
     require(profile.rules[0].value.empty(), "minimal profile rule value should remain empty");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileAcceptsFinalRuleWithoutOutbound() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-final-rule-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "work",
+  "rules": [
+    {"type": "final"}
+  ]
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(subcli::loadProfile(path.string(), profile, error), "loadProfile should accept final rule without outbound: " + error);
+    require(profile.rules.size() == 1, "final profile rule should be read");
+    require(profile.rules[0].type == "final", "final profile rule type should be read");
+    require(profile.rules[0].outbound.empty(), "final profile rule outbound should remain empty");
 
     fs::remove_all(dir);
 }
@@ -2426,6 +2452,7 @@ int main() {
     testLoadProfileRejectsInvalidJson();
     testLoadProfileRejectsRuleWithoutOutbound();
     testLoadProfileAcceptsRuleWithoutValueOrLists();
+    testLoadProfileAcceptsFinalRuleWithoutOutbound();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();

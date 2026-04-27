@@ -26,6 +26,12 @@ if [[ "$profile_json" != *'"name"'* || "$profile_json" != *'"bypass-cn"'* ]]; th
 fi
 "$bin" profile get unknown >/dev/null 2>&1 && exit 1 || true
 
+export_help="$($bin export --help)"
+if [[ "$export_help" != *"--profile"* || "$export_help" != *"--download-assets"* ]]; then
+    printf '%s\n' "$export_help"
+    exit 1
+fi
+
 config_json="$($bin config list --json)"
 if [[ "$config_json" != *'"output_dir"'* ]]; then
     printf '%s\n' "$config_json"

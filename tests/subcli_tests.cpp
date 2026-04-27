@@ -2002,6 +2002,105 @@ void testXrayProfileGroupsSynthesizeMissingProxyAndAuto() {
     require(hasFinalProxy, "xray profile final should not reference missing PROXY balancer");
 }
 
+void testXrayProfileBalancerReferencesAreResolvedAndWarnWhenLossy() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-safe-refs";
+    subcli::ProfileGroup fallback;
+    fallback.tag = "FAILOVER";
+    fallback.type = "fallback";
+    fallback.members = {"HK Node", "MISSING"};
+    fallback.defaultMember = "HK Node";
+    profile.groups.push_back(fallback);
+    subcli::ProfileGroup select;
+    select.tag = "PICK";
+    select.type = "select";
+    select.members = {"FAILOVER", "UNKNOWN"};
+    profile.groups.push_back(select);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-xray-safe-refs";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, (outDir / "xray-safe-refs.json").string(), error);
+    require(result.ok, "xray profile safe refs export should succeed: " + error);
+
+    size_t degradedWarnings = 0;
+    for (const auto& warning : result.warnings) {
+        degradedWarnings += warning.code == "profile_group_degraded" ? 1 : 0;
+    }
+    require(degradedWarnings >= 2, "xray select and unknown profile members should emit degradation warnings");
+
+    std::ifstream in(outDir / "xray-safe-refs.json");
+    const auto json = nlohmann::json::parse(in);
+    std::set<std::string> validTags;
+    for (const auto& outbound : json["outbounds"]) {
+        validTags.insert(outbound.value("tag", ""));
+    }
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        validTags.insert(balancer.value("tag", ""));
+    }
+
+    const auto* failover = static_cast<const nlohmann::json*>(nullptr);
+    const auto* pick = static_cast<const nlohmann::json*>(nullptr);
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        if (balancer.value("tag", "") == "FAILOVER") {
+            failover = &balancer;
+        }
+        if (balancer.value("tag", "") == "PICK") {
+            pick = &balancer;
+        }
+        for (const auto& member : balancer["selector"]) {
+            const auto tag = member.get<std::string>();
+            require(validTags.count(tag) > 0, "xray profile balancer selector must not contain broken references");
+            require(tag != "MISSING" && tag != "UNKNOWN" && tag != "HK Node", "xray profile balancer selector should not emit unresolved raw members");
+        }
+        if (balancer.contains("fallbackTag")) {
+            const auto tag = balancer.value("fallbackTag", "");
+            require(validTags.count(tag) > 0, "xray profile fallbackTag must reference an existing tag");
+            require(tag == "SUBCLI_00001", "xray profile fallback default node should resolve to managed tag");
+        }
+    }
+    require(failover != nullptr, "xray fallback group should render");
+    require(failover->value("fallbackTag", "") == "SUBCLI_00001", "xray fallback defaultMember should resolve to managed tag");
+    require(pick != nullptr, "xray select group should render");
+}
+
+void testXrayProfileInvalidFallbackDefaultIsOmittedWithWarning() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-invalid-fallback";
+    subcli::ProfileGroup fallback;
+    fallback.tag = "FAILOVER";
+    fallback.type = "fallback";
+    fallback.members = {"REGION:HK"};
+    fallback.defaultMember = "MISSING";
+    profile.groups.push_back(fallback);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-xray-invalid-fallback";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, (outDir / "xray-invalid-fallback.json").string(), error);
+    require(result.ok, "xray invalid fallback default export should succeed: " + error);
+
+    bool warned = false;
+    for (const auto& warning : result.warnings) {
+        warned = warned || warning.code == "profile_group_degraded";
+    }
+    require(warned, "xray invalid fallback default should emit degradation warning");
+
+    std::ifstream in(outDir / "xray-invalid-fallback.json");
+    const auto json = nlohmann::json::parse(in);
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        if (balancer.value("tag", "") == "FAILOVER") {
+            require(!balancer.contains("fallbackTag"), "xray invalid fallback default should not emit broken fallbackTag");
+        }
+    }
+}
+
 void testMihomoExportSupportsGlobalAndDirectProfiles() {
     auto config = makeConfig();
     const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-mihomo";
@@ -4013,6 +4112,8 @@ int main() {
     testXrayProfileGroupsRenderBalancersWithManagedTags();
     testXrayProfileFallbackWarnsWhenLossy();
     testXrayProfileGroupsSynthesizeMissingProxyAndAuto();
+    testXrayProfileBalancerReferencesAreResolvedAndWarnWhenLossy();
+    testXrayProfileInvalidFallbackDefaultIsOmittedWithWarning();
     testStructuredFieldsSurviveExportNormalization();
     testNodeManagementPreprocess();
     testExpandProfileMembersExpandsRegionWildcardInOrder();

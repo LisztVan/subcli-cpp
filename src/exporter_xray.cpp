@@ -159,6 +159,16 @@ std::string xrayGroupStrategy(std::string type) {
     return "leastPing";
 }
 
+bool isXrayFallbackGroup(std::string type) {
+    type = toLower(type);
+    return type == "fallback";
+}
+
+bool isXraySelectGroup(std::string type) {
+    type = toLower(type);
+    return type == "select" || type.empty();
+}
+
 void appendUniqueString(std::vector<std::string>& values, std::set<std::string>& seen, const std::string& value) {
     if (!value.empty() && seen.insert(value).second) {
         values.push_back(value);
@@ -172,6 +182,8 @@ std::vector<std::string> expandXrayProfileMembers(
     const std::vector<ProxyNode>& exportNodes,
     const std::map<std::string, std::string>& managedTagByName,
     const std::map<std::string, std::vector<std::string>>& profileMemberMap,
+    const std::set<std::string>& validLiteralTags,
+    std::vector<std::string>& unresolvedMembers,
     std::set<std::string>& visiting
 ) {
     const auto expanded = expandProfileMembers(rawMembers, profileGroups, exportNodes);
@@ -193,14 +205,60 @@ std::vector<std::string> expandXrayProfileMembers(
         const auto profileIt = profileMemberMap.find(member);
         if (profileIt != profileMemberMap.end() && !visiting.count(member)) {
             visiting.insert(member);
-            const auto nested = expandXrayProfileMembers(profileIt->second, profileGroups, managedGroups, exportNodes, managedTagByName, profileMemberMap, visiting);
+            const auto nested = expandXrayProfileMembers(profileIt->second, profileGroups, managedGroups, exportNodes, managedTagByName, profileMemberMap, validLiteralTags, unresolvedMembers, visiting);
             visiting.erase(member);
             for (const auto& tag : nested) {
                 appendUniqueString(out, seen, tag);
             }
             continue;
         }
-        appendUniqueString(out, seen, member);
+        if (validLiteralTags.count(member)) {
+            appendUniqueString(out, seen, member);
+            continue;
+        }
+        unresolvedMembers.push_back(member);
+    }
+    return out;
+}
+
+std::vector<std::string> resolveXrayFallbackMember(
+    const std::string& member,
+    const GroupData& profileGroups,
+    const GroupData& managedGroups,
+    const std::vector<ProxyNode>& exportNodes,
+    const std::map<std::string, std::string>& managedTagByName,
+    const std::set<std::string>& validLiteralTags,
+    std::vector<std::string>& unresolvedMembers
+) {
+    std::vector<std::string> out;
+    std::set<std::string> seen;
+    if (member.empty()) {
+        return out;
+    }
+    const auto nodeIt = managedTagByName.find(member);
+    if (nodeIt != managedTagByName.end()) {
+        appendUniqueString(out, seen, nodeIt->second);
+        return out;
+    }
+    const auto expanded = expandProfileMembers({member}, profileGroups, exportNodes);
+    for (const auto& item : expanded) {
+        const auto expandedNodeIt = managedTagByName.find(item);
+        if (expandedNodeIt != managedTagByName.end()) {
+            appendUniqueString(out, seen, expandedNodeIt->second);
+            continue;
+        }
+        const auto managedIt = managedGroups.groups.find(item);
+        if (managedIt != managedGroups.groups.end()) {
+            for (const auto& tag : managedIt->second) {
+                appendUniqueString(out, seen, tag);
+            }
+            continue;
+        }
+        if (validLiteralTags.count(item)) {
+            appendUniqueString(out, seen, item);
+            continue;
+        }
+        unresolvedMembers.push_back(item);
     }
     return out;
 }
@@ -454,14 +512,30 @@ ExportResult exportXrayImpl(
 
         std::set<std::string> renderedProfileGroups;
         bool proxyReferencesAuto = false;
+        std::set<std::string> validLiteralTags = {"DIRECT", "REJECT"};
+        for (const auto& group : profile->groups) {
+            if (!group.tag.empty()) {
+                validLiteralTags.insert(group.tag);
+            }
+        }
         for (const auto& group : profile->groups) {
             if (group.tag.empty()) {
                 continue;
             }
             std::set<std::string> visiting = {group.tag};
-            auto members = expandXrayProfileMembers(group.members, profileGroups, managedGroups, supported, managedTagByName, profileMemberMap, visiting);
+            std::vector<std::string> unresolvedMembers;
+            auto members = expandXrayProfileMembers(group.members, profileGroups, managedGroups, supported, managedTagByName, profileMemberMap, validLiteralTags, unresolvedMembers, visiting);
+            for (const auto& member : unresolvedMembers) {
+                result.warnings.push_back({"profile_group_degraded", group.tag + ": unresolved member " + member + " omitted"});
+            }
             if (members.empty()) {
-                members.push_back("DIRECT");
+                for (const auto& tag : managedGroups.groups.at("PROXY")) {
+                    members.push_back(tag);
+                }
+                if (members.empty()) {
+                    members.push_back("DIRECT");
+                }
+                result.warnings.push_back({"profile_group_degraded", group.tag + ": no resolvable members, using safe fallback selector"});
             }
             nlohmann::json selector = nlohmann::json::array();
             for (const auto& member : members) {
@@ -472,9 +546,21 @@ ExportResult exportXrayImpl(
             }
             nlohmann::json balancer = {{"tag", group.tag}, {"selector", selector}, {"strategy", {{"type", xrayGroupStrategy(group.type)}}}};
             const std::string type = toLower(group.type);
-            if (type == "fallback") {
+            if (isXraySelectGroup(type)) {
+                result.warnings.push_back({"profile_group_degraded", group.tag + ": select rendered as leastPing balancer"});
+            }
+            if (isXrayFallbackGroup(type)) {
                 if (!group.defaultMember.empty()) {
-                    balancer["fallbackTag"] = group.defaultMember;
+                    std::vector<std::string> unresolvedFallback;
+                    const auto fallbackTags = resolveXrayFallbackMember(group.defaultMember, profileGroups, managedGroups, supported, managedTagByName, validLiteralTags, unresolvedFallback);
+                    for (const auto& member : unresolvedFallback) {
+                        result.warnings.push_back({"profile_group_degraded", group.tag + ": unresolved fallback default " + member + " omitted"});
+                    }
+                    if (!fallbackTags.empty()) {
+                        balancer["fallbackTag"] = fallbackTags.front();
+                    } else {
+                        result.warnings.push_back({"profile_group_degraded", group.tag + ": fallback rendered as leastPing without fallbackTag"});
+                    }
                 } else {
                     result.warnings.push_back({"profile_group_degraded", group.tag + ": fallback rendered as leastPing without fallbackTag"});
                 }

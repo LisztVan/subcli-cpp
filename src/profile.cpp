@@ -34,10 +34,6 @@ std::vector<std::string> readStringArray(const json& object, const char* key) {
     return values;
 }
 
-bool hasListFields(const ProfileRule& rule) {
-    return !rule.domains.empty() || !rule.ipCidrs.empty() || !rule.ports.empty() || !rule.networks.empty();
-}
-
 } // namespace
 
 bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string& error) {
@@ -146,10 +142,6 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
             rule.networks = readStringArray(item, "networks");
             if (rule.type.empty() || rule.outbound.empty()) {
                 error = "profile rule requires type and outbound";
-                return false;
-            }
-            if (rule.type != "final" && rule.value.empty() && !hasListFields(rule)) {
-                error = "profile rule requires value or list fields";
                 return false;
             }
             parsed.rules.push_back(rule);

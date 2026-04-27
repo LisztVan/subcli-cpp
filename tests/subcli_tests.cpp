@@ -163,6 +163,33 @@ void testLoadProfileRejectsRuleWithoutOutbound() {
     fs::remove_all(dir);
 }
 
+void testLoadProfileAcceptsRuleWithoutValueOrLists() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-rule-minimal-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "work",
+  "rules": [
+    {"type": "domain", "outbound": "DIRECT"}
+  ]
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(subcli::loadProfile(path.string(), profile, error), "loadProfile should accept rule with type and outbound only: " + error);
+    require(profile.rules.size() == 1, "minimal profile rule should be read");
+    require(profile.rules[0].type == "domain", "minimal profile rule type should be read");
+    require(profile.rules[0].outbound == "DIRECT", "minimal profile rule outbound should be read");
+    require(profile.rules[0].value.empty(), "minimal profile rule value should remain empty");
+
+    fs::remove_all(dir);
+}
+
 void testProtocolRegistryCoversOfficialTargets() {
     require(subcli::canonicalProtocolName("ss") == "shadowsocks", "ss should normalize to shadowsocks");
     require(subcli::canonicalProtocolName("hy2") == "hysteria2", "hy2 should normalize to hysteria2");
@@ -2398,6 +2425,7 @@ int main() {
     testLoadProfileReadsGroupsRulesAndDns();
     testLoadProfileRejectsInvalidJson();
     testLoadProfileRejectsRuleWithoutOutbound();
+    testLoadProfileAcceptsRuleWithoutValueOrLists();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();

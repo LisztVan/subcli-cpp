@@ -26,6 +26,11 @@ std::string normalizeSingBoxGroupType(std::string type) {
     return "selector";
 }
 
+bool isDegradedSingBoxProfileGroupType(std::string type) {
+    type = toLower(type);
+    return type == "fallback" || type == "load-balance" || type == "loadbalance";
+}
+
 std::string assetPathOrEmpty(const AppConfig& config, const std::string& key) {
     const auto it = config.assetPaths.find(key);
     return it == config.assetPaths.end() ? "" : it->second;
@@ -219,7 +224,6 @@ ExportResult exportSingBoxImpl(
     const std::string& outPath,
     std::string& error
 ) {
-    (void)profile;
     ExportResult result;
     std::vector<ProxyNode> supported;
     auto prepared = preprocessNodes(nodes, config, result.warnings);
@@ -256,9 +260,21 @@ ExportResult exportSingBoxImpl(
     if (!root.contains("outbounds") || !root["outbounds"].is_array()) {
         root["outbounds"] = nlohmann::json::array();
     }
+    const bool useProfileGroups = profile != nullptr && !profile->groups.empty();
+
     auto managedSingBoxTags = generatedSingBoxTags(supported, groups);
-    for (const auto& configured : config.strategyGroups) {
-        managedSingBoxTags.insert(configured.name);
+    if (useProfileGroups) {
+        managedSingBoxTags.insert("PROXY");
+        managedSingBoxTags.insert("AUTO");
+        for (const auto& configured : profile->groups) {
+            if (!configured.tag.empty()) {
+                managedSingBoxTags.insert(configured.tag);
+            }
+        }
+    } else {
+        for (const auto& configured : config.strategyGroups) {
+            managedSingBoxTags.insert(configured.name);
+        }
     }
     removeJsonArrayObjectsByTag(root["outbounds"], managedSingBoxTags);
     for (const auto& n : supported) {
@@ -277,7 +293,85 @@ ExportResult exportSingBoxImpl(
         }
     }
 
-    if (!config.strategyGroups.empty()) {
+    auto addProfileGroup = [&](const std::string& tag,
+                               const std::string& type,
+                               const std::vector<std::string>& expandedMembers,
+                               const std::string& url,
+                               int interval,
+                               const std::string& defaultMember) {
+        const auto groupType = normalizeSingBoxGroupType(type);
+        nlohmann::json members = nlohmann::json::array();
+        for (const auto& member : expandedMembers) {
+            members.push_back(member);
+        }
+        if (members.empty()) {
+            members.push_back("DIRECT");
+        }
+        if (groupType == "urltest") {
+            root["outbounds"].push_back(
+                {{"type", "urltest"},
+                 {"tag", tag},
+                 {"url", url.empty() ? "http://www.gstatic.com/generate_204" : url},
+                 {"interval", singBoxIntervalString(interval)},
+                 {"outbounds", members}}
+            );
+        } else {
+            nlohmann::json selector = {{"type", "selector"}, {"tag", tag}, {"outbounds", members}};
+            if (!defaultMember.empty()) {
+                selector["default"] = defaultMember;
+            }
+            root["outbounds"].push_back(selector);
+        }
+    };
+
+    if (useProfileGroups) {
+        std::set<std::string> renderedProfileGroups;
+        bool proxyReferencesAuto = false;
+
+        for (const auto& configured : profile->groups) {
+            if (configured.tag.empty()) {
+                continue;
+            }
+            if (isDegradedSingBoxProfileGroupType(configured.type)) {
+                result.warnings.push_back({"profile_group_degraded", configured.tag + ": " + configured.type + " rendered as " + normalizeSingBoxGroupType(configured.type)});
+            }
+            const auto members = expandProfileMembers(configured.members, groups, supported);
+            if (configured.tag == "PROXY") {
+                for (const auto& member : members) {
+                    if (member == "AUTO") {
+                        proxyReferencesAuto = true;
+                        break;
+                    }
+                }
+            }
+            addProfileGroup(configured.tag, configured.type, members, configured.url, configured.interval, configured.defaultMember);
+            renderedProfileGroups.insert(configured.tag);
+        }
+
+        const bool hasProxy = renderedProfileGroups.count("PROXY") > 0;
+        const bool hasAuto = renderedProfileGroups.count("AUTO") > 0;
+        if (!hasAuto && (!hasProxy || proxyReferencesAuto)) {
+            addProfileGroup("AUTO", "url-test", groups.groups.at("AUTO"), "http://www.gstatic.com/generate_204", 300, "");
+            renderedProfileGroups.insert("AUTO");
+        }
+        if (!hasProxy) {
+            std::vector<std::string> members;
+            std::set<std::string> seen;
+            auto addMember = [&](const std::string& value) {
+                if (value.empty() || seen.count(value)) {
+                    return;
+                }
+                seen.insert(value);
+                members.push_back(value);
+            };
+            addMember("AUTO");
+            addMember("DIRECT");
+            for (const auto& nodeName : groups.groups.at("PROXY")) {
+                addMember(nodeName);
+            }
+            addProfileGroup("PROXY", "select", members, "", 300, "AUTO");
+        }
+    } else if (!config.strategyGroups.empty()) {
         for (const auto& configured : config.strategyGroups) {
             const auto type = normalizeSingBoxGroupType(configured.type);
             nlohmann::json members = nlohmann::json::array();

@@ -9,6 +9,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include "subcli/models.hpp"
+#include "subcli/profile.hpp"
 
 namespace subcli {
 
@@ -36,8 +37,8 @@ nlohmann::json makeSingBoxOutbound(const ProxyNode& n);
 nlohmann::json makeSingBoxWireGuardEndpoint(const ProxyNode& n);
 nlohmann::json makeXrayOutbound(const ProxyNode& n);
 
-ExportResult exportMihomoImpl(const std::vector<ProxyNode>& nodes, const AppConfig& config, bool tun, const std::string& outPath, std::string& error);
-ExportResult exportSingBoxImpl(const std::vector<ProxyNode>& nodes, const AppConfig& config, bool tun, const std::string& outPath, std::string& error);
-ExportResult exportXrayImpl(const std::vector<ProxyNode>& nodes, const AppConfig& config, bool tun, const std::string& outPath, std::string& error);
+ExportResult exportMihomoImpl(const std::vector<ProxyNode>& nodes, const AppConfig& config, bool tun, const ResolvedProfile* profile, const std::string& outPath, std::string& error);
+ExportResult exportSingBoxImpl(const std::vector<ProxyNode>& nodes, const AppConfig& config, bool tun, const ResolvedProfile* profile, const std::string& outPath, std::string& error);
+ExportResult exportXrayImpl(const std::vector<ProxyNode>& nodes, const AppConfig& config, bool tun, const ResolvedProfile* profile, const std::string& outPath, std::string& error);
 
 } // namespace subcli

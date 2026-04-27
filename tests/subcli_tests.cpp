@@ -60,6 +60,8 @@ bool containsProtocol(const std::vector<std::string>& protocols, const std::stri
     return false;
 }
 
+subcli::ProxyNode makeExportReadyShadowsocksNode(const std::string& name);
+
 void testLoadProfileReadsGroupsRulesAndDns() {
     const fs::path dir = fs::temp_directory_path() / "subcli-profile-loader-tests";
     fs::remove_all(dir);
@@ -240,6 +242,70 @@ void testBuiltInProfilesExistAndLoad() {
     require(global.defaultOutbound == "PROXY", "global default outbound should be PROXY");
     require(direct.defaultOutbound == "DIRECT", "direct default outbound should be DIRECT");
     require(direct.groups.empty(), "direct profile should not define groups");
+}
+
+void testExportProfileResolverLoadsBuiltInProfile() {
+    auto config = makeConfig();
+    config.profile = "global";
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(
+        subcli::loadExportProfile(config, (fs::path(SUBCLI_SOURCE_DIR) / "profiles").string(), profile, error),
+        "export profile resolver should load built-in profile: " + error
+    );
+    require(profile.name == "global", "export profile resolver should load profile selected by config name");
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-profile-export-tests";
+    fs::create_directories(outDir);
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "mihomo-global.yaml").string(),
+        error
+    );
+    require(result.ok, "export should accept a loaded resolved profile: " + error);
+
+    fs::remove_all(outDir);
+}
+
+void testExportProfileResolverFailsForMissingProfilePath() {
+    auto config = makeConfig();
+    config.profilePath = (fs::temp_directory_path() / "subcli-missing-profile.json").string();
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(
+        !subcli::loadExportProfile(config, (fs::path(SUBCLI_SOURCE_DIR) / "profiles").string(), profile, error),
+        "export profile resolver should fail missing explicit profile path"
+    );
+    require(error.find("failed to load export profile") != std::string::npos, "missing profile error should identify export profile load failure");
+}
+
+void testExportProfileResolverFailsForInvalidProfileJson() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-export-invalid-profile-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << "{ invalid json";
+    }
+
+    auto config = makeConfig();
+    config.profilePath = path.string();
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(
+        !subcli::loadExportProfile(config, (fs::path(SUBCLI_SOURCE_DIR) / "profiles").string(), profile, error),
+        "export profile resolver should fail invalid explicit profile JSON"
+    );
+    require(error.find("invalid profile JSON") != std::string::npos, "invalid profile error should include JSON parse failure");
+
+    fs::remove_all(dir);
 }
 
 void testBuiltInAutoGroupsDoNotReferenceProxy() {
@@ -2536,6 +2602,9 @@ int main() {
     testLoadProfileAcceptsRuleWithoutValueOrLists();
     testLoadProfileAcceptsFinalRuleWithoutOutbound();
     testBuiltInProfilesExistAndLoad();
+    testExportProfileResolverLoadsBuiltInProfile();
+    testExportProfileResolverFailsForMissingProfilePath();
+    testExportProfileResolverFailsForInvalidProfileJson();
     testBuiltInAutoGroupsDoNotReferenceProxy();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();

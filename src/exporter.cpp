@@ -9,18 +9,41 @@ ExportResult exportForTarget(
     const std::vector<ProxyNode>& nodes,
     const AppConfig& config,
     bool tun,
+    const ResolvedProfile* profile,
     const std::string& outPath,
     std::string& error
 ) {
     switch (target) {
         case ExportTarget::Mihomo:
-            return exportMihomoImpl(nodes, config, tun, outPath, error);
+            return exportMihomoImpl(nodes, config, tun, profile, outPath, error);
         case ExportTarget::SingBox:
-            return exportSingBoxImpl(nodes, config, tun, outPath, error);
+            return exportSingBoxImpl(nodes, config, tun, profile, outPath, error);
         case ExportTarget::Xray:
-            return exportXrayImpl(nodes, config, tun, outPath, error);
+            return exportXrayImpl(nodes, config, tun, profile, outPath, error);
     }
     return {};
+}
+
+ExportResult exportForTarget(
+    ExportTarget target,
+    const std::vector<ProxyNode>& nodes,
+    const AppConfig& config,
+    bool tun,
+    const std::string& outPath,
+    std::string& error
+) {
+    return exportForTarget(target, nodes, config, tun, nullptr, outPath, error);
+}
+
+bool exportMihomo(
+    const std::vector<ProxyNode>& nodes,
+    const AppConfig& config,
+    bool tun,
+    const ResolvedProfile* profile,
+    const std::string& outPath,
+    std::string& error
+) {
+    return exportForTarget(ExportTarget::Mihomo, nodes, config, tun, profile, outPath, error).ok;
 }
 
 bool exportMihomo(
@@ -30,7 +53,18 @@ bool exportMihomo(
     const std::string& outPath,
     std::string& error
 ) {
-    return exportForTarget(ExportTarget::Mihomo, nodes, config, tun, outPath, error).ok;
+    return exportMihomo(nodes, config, tun, nullptr, outPath, error);
+}
+
+bool exportSingBox(
+    const std::vector<ProxyNode>& nodes,
+    const AppConfig& config,
+    bool tun,
+    const ResolvedProfile* profile,
+    const std::string& outPath,
+    std::string& error
+) {
+    return exportForTarget(ExportTarget::SingBox, nodes, config, tun, profile, outPath, error).ok;
 }
 
 bool exportSingBox(
@@ -40,7 +74,18 @@ bool exportSingBox(
     const std::string& outPath,
     std::string& error
 ) {
-    return exportForTarget(ExportTarget::SingBox, nodes, config, tun, outPath, error).ok;
+    return exportSingBox(nodes, config, tun, nullptr, outPath, error);
+}
+
+bool exportXray(
+    const std::vector<ProxyNode>& nodes,
+    const AppConfig& config,
+    bool tun,
+    const ResolvedProfile* profile,
+    const std::string& outPath,
+    std::string& error
+) {
+    return exportForTarget(ExportTarget::Xray, nodes, config, tun, profile, outPath, error).ok;
 }
 
 bool exportXray(
@@ -50,7 +95,7 @@ bool exportXray(
     const std::string& outPath,
     std::string& error
 ) {
-    return exportForTarget(ExportTarget::Xray, nodes, config, tun, outPath, error).ok;
+    return exportXray(nodes, config, tun, nullptr, outPath, error);
 }
 
 } // namespace subcli

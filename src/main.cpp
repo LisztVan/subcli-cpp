@@ -27,6 +27,7 @@
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
 #include "subcli/parser.hpp"
+#include "subcli/profile.hpp"
 #include "subcli/store.hpp"
 #include "subcli/util.hpp"
 
@@ -47,6 +48,7 @@ struct RuntimePaths {
     std::filesystem::path subPath;
     std::filesystem::path configPath;
     std::filesystem::path templateDir;
+    std::filesystem::path profileDir;
     std::filesystem::path outputDir;
 };
 
@@ -117,6 +119,25 @@ std::filesystem::path resolveInstalledTemplateDir(const std::filesystem::path& e
     return normalizeAbsolutePath(candidates.front());
 }
 
+std::filesystem::path resolveInstalledProfileDir(const std::filesystem::path& exePath, const std::filesystem::path& fallbackRoot) {
+    const auto exeDir = exePath.parent_path();
+    const std::vector<std::filesystem::path> candidates = {
+        exeDir / "../share/subcli/profiles",
+        exeDir / "../profiles",
+        fallbackRoot / "profiles",
+    };
+
+    std::error_code ec;
+    for (const auto& candidateRaw : candidates) {
+        const auto candidate = normalizeAbsolutePath(candidateRaw);
+        if (std::filesystem::exists(candidate, ec) && !ec) {
+            return candidate;
+        }
+        ec.clear();
+    }
+    return normalizeAbsolutePath(candidates.front());
+}
+
 RuntimePaths buildRuntimePaths(const std::string& argv0) {
     std::vector<std::filesystem::path> candidates;
     if (!argv0.empty()) {
@@ -147,6 +168,7 @@ RuntimePaths buildRuntimePaths(const std::string& argv0) {
     paths.subPath = paths.dataDir / "sub.yaml";
     paths.configPath = paths.configDir / "config.yaml";
     paths.templateDir = resolveInstalledTemplateDir(exePath, root);
+    paths.profileDir = resolveInstalledProfileDir(exePath, root);
     paths.outputDir = paths.dataDir / "outputs";
     return paths;
 }
@@ -2550,9 +2572,16 @@ int doExportCommand(const std::vector<std::string>& args) {
     bool mihomoOk = false;
     bool singOk = false;
     bool xrayOk = false;
+    ResolvedProfile resolvedProfile;
+    bool profileLoaded = false;
+    if (!loadExportProfile(cfg, gPaths.profileDir.string(), resolvedProfile, profileLoaded, error)) {
+        std::cerr << error << "\n";
+        return 1;
+    }
+    const ResolvedProfile* exportProfile = profileLoaded ? &resolvedProfile : nullptr;
 
     auto runMihomo = [&]() {
-        auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, outputDir + "/mihomo.yaml", error);
+        auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, exportProfile, outputDir + "/mihomo.yaml", error);
         if (result.ok) {
             std::cout << "exported mihomo: " << outputDir << "/mihomo.yaml\n";
             if (result.skipped > 0) {
@@ -2567,7 +2596,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     };
 
     auto runSing = [&]() {
-        auto result = exportForTarget(ExportTarget::SingBox, allNodes, cfg, tun, outputDir + "/sing-box.json", error);
+        auto result = exportForTarget(ExportTarget::SingBox, allNodes, cfg, tun, exportProfile, outputDir + "/sing-box.json", error);
         if (result.ok) {
             std::cout << "exported sing-box: " << outputDir << "/sing-box.json\n";
             if (result.skipped > 0) {
@@ -2582,7 +2611,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     };
 
     auto runXray = [&]() {
-        auto result = exportForTarget(ExportTarget::Xray, allNodes, cfg, tun, outputDir + "/xray.json", error);
+        auto result = exportForTarget(ExportTarget::Xray, allNodes, cfg, tun, exportProfile, outputDir + "/xray.json", error);
         if (result.ok) {
             std::cout << "exported xray: " << outputDir << "/xray.json\n";
             if (result.skipped > 0) {

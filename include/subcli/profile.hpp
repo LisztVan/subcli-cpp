@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "subcli/models.hpp"
+
 namespace subcli {
 
 struct ProfileDns {
@@ -43,5 +45,8 @@ struct ResolvedProfile {
 };
 
 bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string& error);
+bool resolveExportProfilePath(const AppConfig& config, const std::string& profilesDir, const std::string& requestedProfile, std::string& path);
+bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, ResolvedProfile& profile, bool& loaded, std::string& error);
+bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, ResolvedProfile& profile, std::string& error);
 
 } // namespace subcli

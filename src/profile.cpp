@@ -1,5 +1,6 @@
 #include "subcli/profile.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -9,6 +10,10 @@ namespace subcli {
 namespace {
 
 using json = nlohmann::json;
+
+bool isBuiltInProfileName(const std::string& name) {
+    return name == "bypass-cn" || name == "global" || name == "direct";
+}
 
 std::string readString(const json& object, const char* key, const std::string& fallback = "") {
     const auto it = object.find(key);
@@ -35,6 +40,45 @@ std::vector<std::string> readStringArray(const json& object, const char* key) {
 }
 
 } // namespace
+
+bool resolveExportProfilePath(const AppConfig& config, const std::string& profilesDir, const std::string& requestedProfile, std::string& path) {
+    path.clear();
+    if (!config.profilePath.empty() && requestedProfile.empty()) {
+        path = config.profilePath;
+        return true;
+    }
+
+    const std::string profileName = requestedProfile.empty() ? config.profile : requestedProfile;
+    if (isBuiltInProfileName(profileName)) {
+        path = (std::filesystem::path(profilesDir) / (profileName + ".json")).string();
+        return true;
+    }
+    return false;
+}
+
+bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, ResolvedProfile& profile, bool& loaded, std::string& error) {
+    loaded = false;
+    error.clear();
+
+    std::string path;
+    if (!resolveExportProfilePath(config, profilesDir, "", path)) {
+        return true;
+    }
+
+    std::string loadError;
+    if (!loadProfile(path, profile, loadError)) {
+        error = "failed to load export profile " + path + ": " + loadError;
+        return false;
+    }
+
+    loaded = true;
+    return true;
+}
+
+bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, ResolvedProfile& profile, std::string& error) {
+    bool loaded = false;
+    return loadExportProfile(config, profilesDir, profile, loaded, error);
+}
 
 bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string& error) {
     error.clear();

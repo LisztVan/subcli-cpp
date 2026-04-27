@@ -97,9 +97,11 @@ ExportResult exportMihomoImpl(
     const std::vector<ProxyNode>& nodes,
     const AppConfig& config,
     bool tun,
+    const ResolvedProfile* profile,
     const std::string& outPath,
     std::string& error
 ) {
+    (void)profile;
     ExportResult result;
     std::vector<ProxyNode> supported;
     auto prepared = preprocessNodes(nodes, config, result.warnings);

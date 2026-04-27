@@ -2715,6 +2715,147 @@ void testSingBoxProfileRegionWildcardRendersReferencedRegionSelectors() {
     require(otherGroup != nullptr, "sing-box REGION:* should render OTHER selector outbound");
 }
 
+void testSingBoxProfileDnsAndRulesRenderFromProfile() {
+    auto config = makeConfig();
+    config.profile = "bypass-cn";
+    config.assetPaths["sing-box.geosite-cn"] = "/tmp/subcli-assets/geosite-cn.srs";
+    config.assetPaths["sing-box.geoip-cn"] = "/tmp/subcli-assets/geoip-cn.srs";
+
+    subcli::ResolvedProfile profile;
+    profile.name = "sing-routing";
+    profile.defaultOutbound = "DIRECT";
+    profile.dns.strategy = "prefer_ipv6";
+    profile.dns.directServers = {"223.5.5.5", "119.29.29.29"};
+    profile.dns.remoteServers = {"1.1.1.1", "8.8.8.8"};
+    profile.rules.push_back({"geosite", "cn", "DIRECT"});
+    profile.rules.push_back({"geoip", "cn", "DIRECT"});
+    profile.rules.push_back({"geosite", "private", "DIRECT"});
+    profile.rules.push_back({"geoip", "private", "DIRECT"});
+    profile.rules.push_back({"domain", "example.com", "DIRECT"});
+    subcli::ProfileRule domainList;
+    domainList.type = "domain";
+    domainList.outbound = "PROXY";
+    domainList.domains = {"one.example", "two.example"};
+    profile.rules.push_back(domainList);
+    profile.rules.push_back({"domain_suffix", "example.org", "PROXY"});
+    subcli::ProfileRule suffixList;
+    suffixList.type = "domain_suffix";
+    suffixList.outbound = "DIRECT";
+    suffixList.domains = {"lan", "local"};
+    profile.rules.push_back(suffixList);
+    profile.rules.push_back({"domain_keyword", "video", "PROXY"});
+    subcli::ProfileRule keywordList;
+    keywordList.type = "domain_keyword";
+    keywordList.outbound = "DIRECT";
+    keywordList.domains = {"music", "game"};
+    profile.rules.push_back(keywordList);
+    profile.rules.push_back({"ip_cidr", "10.0.0.0/8", "DIRECT"});
+    subcli::ProfileRule ipList;
+    ipList.type = "ip_cidr";
+    ipList.outbound = "PROXY";
+    ipList.ipCidrs = {"172.16.0.0/12", "192.168.0.0/16"};
+    profile.rules.push_back(ipList);
+    subcli::ProfileRule port;
+    port.type = "port";
+    port.value = "443";
+    port.outbound = "PROXY";
+    port.ports = {"53", "123"};
+    profile.rules.push_back(port);
+    subcli::ProfileRule network;
+    network.type = "network";
+    network.value = "tcp";
+    network.outbound = "DIRECT";
+    network.networks = {"udp"};
+    profile.rules.push_back(network);
+    profile.rules.push_back({"final", "", "REJECT"});
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-routing-singbox";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "sing-profile-routing.json").string(),
+        error
+    );
+    require(result.ok, "sing-box profile routing export should succeed: " + error);
+
+    std::ifstream in(outDir / "sing-profile-routing.json");
+    const auto json = nlohmann::json::parse(in);
+    require(json["dns"].value("strategy", "") == "prefer_ipv6", "sing-box profile dns should use profile strategy");
+    require(json["dns"].value("final", "") == "dns-remote", "sing-box profile dns should default to remote dns");
+
+    std::vector<std::string> dnsServers;
+    for (const auto& server : json["dns"]["servers"]) {
+        dnsServers.push_back(server.value("server", ""));
+    }
+    require(std::find(dnsServers.begin(), dnsServers.end(), "223.5.5.5") != dnsServers.end(), "sing-box profile dns should render direct server");
+    require(std::find(dnsServers.begin(), dnsServers.end(), "119.29.29.29") != dnsServers.end(), "sing-box profile dns should render second direct server");
+    require(std::find(dnsServers.begin(), dnsServers.end(), "1.1.1.1") != dnsServers.end(), "sing-box profile dns should render remote server");
+    require(std::find(dnsServers.begin(), dnsServers.end(), "8.8.8.8") != dnsServers.end(), "sing-box profile dns should render second remote server");
+    require(json["route"].value("final", "") == "REJECT", "sing-box profile final rule should set route final");
+
+    bool hasGeositeRuleSet = false;
+    bool hasGeoipRuleSet = false;
+    for (const auto& item : json["route"]["rule_set"]) {
+        hasGeositeRuleSet = hasGeositeRuleSet || (item.value("tag", "") == "geosite-cn" && item.value("path", "") == "/tmp/subcli-assets/geosite-cn.srs");
+        hasGeoipRuleSet = hasGeoipRuleSet || (item.value("tag", "") == "geoip-cn" && item.value("path", "") == "/tmp/subcli-assets/geoip-cn.srs");
+    }
+    require(hasGeositeRuleSet, "sing-box profile geosite cn should declare local rule_set asset");
+    require(hasGeoipRuleSet, "sing-box profile geoip cn should declare local rule_set asset");
+
+    bool hasBypassCnDuplicate = false;
+    size_t geositeCnRules = 0;
+    size_t geoipCnRules = 0;
+    bool hasPrivateDomain = false;
+    bool hasPrivateIp = false;
+    bool hasScalarDomain = false;
+    bool hasListDomain = false;
+    bool hasScalarSuffix = false;
+    bool hasListSuffix = false;
+    bool hasScalarKeyword = false;
+    bool hasListKeyword = false;
+    bool hasScalarIp = false;
+    bool hasListIp = false;
+    bool hasPorts = false;
+    bool hasNetworks = false;
+    for (const auto& rule : json["route"]["rules"]) {
+        if (rule.value("outbound", "") == "DIRECT" && rule.contains("rule_set")) {
+            for (const auto& name : rule["rule_set"]) {
+                geositeCnRules += name.get<std::string>() == "geosite-cn" ? 1 : 0;
+                geoipCnRules += name.get<std::string>() == "geoip-cn" ? 1 : 0;
+            }
+        }
+        hasBypassCnDuplicate = hasBypassCnDuplicate || (rule.value("outbound", "") == "DIRECT" && rule.contains("rule_set") && rule["rule_set"].size() == 2);
+        hasPrivateDomain = hasPrivateDomain || (rule.value("outbound", "") == "DIRECT" && rule.contains("domain") && rule["domain"][0].get<std::string>() == "private");
+        hasPrivateIp = hasPrivateIp || (rule.value("outbound", "") == "DIRECT" && rule.contains("ip_cidr") && rule["ip_cidr"][0].get<std::string>() == "private");
+        hasScalarDomain = hasScalarDomain || (rule.value("outbound", "") == "DIRECT" && rule.contains("domain") && rule["domain"][0].get<std::string>() == "example.com");
+        hasListDomain = hasListDomain || (rule.value("outbound", "") == "PROXY" && rule.contains("domain") && rule["domain"].size() == 2 && rule["domain"][1].get<std::string>() == "two.example");
+        hasScalarSuffix = hasScalarSuffix || (rule.value("outbound", "") == "PROXY" && rule.contains("domain_suffix") && rule["domain_suffix"][0].get<std::string>() == "example.org");
+        hasListSuffix = hasListSuffix || (rule.value("outbound", "") == "DIRECT" && rule.contains("domain_suffix") && rule["domain_suffix"].size() == 2 && rule["domain_suffix"][1].get<std::string>() == "local");
+        hasScalarKeyword = hasScalarKeyword || (rule.value("outbound", "") == "PROXY" && rule.contains("domain_keyword") && rule["domain_keyword"][0].get<std::string>() == "video");
+        hasListKeyword = hasListKeyword || (rule.value("outbound", "") == "DIRECT" && rule.contains("domain_keyword") && rule["domain_keyword"].size() == 2 && rule["domain_keyword"][1].get<std::string>() == "game");
+        hasScalarIp = hasScalarIp || (rule.value("outbound", "") == "DIRECT" && rule.contains("ip_cidr") && rule["ip_cidr"][0].get<std::string>() == "10.0.0.0/8");
+        hasListIp = hasListIp || (rule.value("outbound", "") == "PROXY" && rule.contains("ip_cidr") && rule["ip_cidr"].size() == 2 && rule["ip_cidr"][1].get<std::string>() == "192.168.0.0/16");
+        hasPorts = hasPorts || (rule.value("outbound", "") == "PROXY" && rule.contains("port") && rule["port"].size() == 3 && rule["port"][0].get<std::string>() == "443" && rule["port"][2].get<std::string>() == "123");
+        hasNetworks = hasNetworks || (rule.value("outbound", "") == "DIRECT" && rule.contains("network") && rule["network"].size() == 2 && rule["network"][0].get<std::string>() == "tcp" && rule["network"][1].get<std::string>() == "udp");
+    }
+    require(geositeCnRules == 1, "sing-box profile geosite cn should render one profile rule only");
+    require(geoipCnRules == 1, "sing-box profile geoip cn should render one profile rule only");
+    require(!hasBypassCnDuplicate, "sing-box profile mode should not inject legacy bypass-cn combined rules");
+    require(hasPrivateDomain, "sing-box profile geosite private should render private domain rule");
+    require(hasPrivateIp, "sing-box profile geoip private should render private ip_cidr rule");
+    require(hasScalarDomain && hasListDomain, "sing-box profile domain rules should support scalar and list values");
+    require(hasScalarSuffix && hasListSuffix, "sing-box profile domain_suffix rules should support scalar and list values");
+    require(hasScalarKeyword && hasListKeyword, "sing-box profile domain_keyword rules should support scalar and list values");
+    require(hasScalarIp && hasListIp, "sing-box profile ip_cidr rules should support scalar and list values");
+    require(hasPorts, "sing-box profile port rules should support scalar and list values");
+    require(hasNetworks, "sing-box profile network rules should support scalar and list values");
+}
+
 void testMihomoProfileDnsAndRulesRenderFromProfile() {
     auto config = makeConfig();
     config.profile = "bypass-cn";
@@ -3593,6 +3734,7 @@ int main() {
     testSingBoxProfileGroupAliasSpellings();
     testSingBoxProfileRegionMemberRendersRegionSelector();
     testSingBoxProfileRegionWildcardRendersReferencedRegionSelectors();
+    testSingBoxProfileDnsAndRulesRenderFromProfile();
     testMihomoProfileDnsAndRulesRenderFromProfile();
     testMihomoProfileEmptyRulesFallbackToDefaultOutbound();
     testMihomoProfileListValuedRulesRenderAllEntries();

@@ -69,6 +69,129 @@ bool hasRuleSetOutboundRule(const nlohmann::json& rules, const std::string& tag,
     return false;
 }
 
+nlohmann::json valuesWithScalar(const std::string& value, const std::vector<std::string>& values) {
+    nlohmann::json result = nlohmann::json::array();
+    if (!value.empty()) {
+        result.push_back(value);
+    }
+    for (const auto& item : values) {
+        if (!item.empty()) {
+            result.push_back(item);
+        }
+    }
+    return result;
+}
+
+void appendSingBoxDnsServers(nlohmann::json& servers, const std::vector<std::string>& configured, const std::string& tagPrefix) {
+    for (size_t i = 0; i < configured.size(); ++i) {
+        if (configured[i].empty()) {
+            continue;
+        }
+        const std::string tag = i == 0 ? tagPrefix : tagPrefix + "-" + std::to_string(i + 1);
+        servers.push_back(
+            {{"type", "udp"}, {"tag", tag}, {"server", configured[i]}, {"server_port", 53}}
+        );
+    }
+}
+
+void ensureSingBoxRuleSet(nlohmann::json& ruleSets, const AppConfig& config, const std::string& tag, const std::string& assetKey) {
+    for (const auto& item : ruleSets) {
+        if (item.is_object() && item.value("tag", "") == tag) {
+            return;
+        }
+    }
+    ruleSets.push_back({{"type", "local"}, {"tag", tag}, {"format", "binary"}, {"path", assetPathOrEmpty(config, assetKey)}});
+}
+
+void ensureSingBoxProfileRouting(nlohmann::json& root, const AppConfig& config, const ResolvedProfile& profile) {
+    if (!root.contains("dns") || !root["dns"].is_object()) {
+        root["dns"] = nlohmann::json::object();
+    }
+    root["dns"]["strategy"] = profile.dns.strategy.empty() ? "prefer_ipv4" : profile.dns.strategy;
+    root["dns"]["servers"] = nlohmann::json::array();
+    appendSingBoxDnsServers(root["dns"]["servers"], profile.dns.directServers, "dns-direct");
+    appendSingBoxDnsServers(root["dns"]["servers"], profile.dns.remoteServers, "dns-remote");
+    if (root["dns"]["servers"].empty()) {
+        root["dns"]["servers"].push_back({{"type", "udp"}, {"tag", "dns-remote"}, {"server", "1.1.1.1"}, {"server_port", 53}});
+    }
+    root["dns"]["final"] = profile.dns.remoteServers.empty() ? "dns-direct" : "dns-remote";
+    root["dns"]["rules"] = nlohmann::json::array();
+    if (!profile.dns.directServers.empty()) {
+        root["dns"]["rules"].push_back({{"domain", nlohmann::json::array({"private"})}, {"server", "dns-direct"}});
+    }
+
+    if (!root.contains("route") || !root["route"].is_object()) {
+        root["route"] = nlohmann::json::object();
+    }
+    root["route"]["auto_detect_interface"] = true;
+    root["route"]["default_domain_resolver"] = root["dns"]["final"];
+    root["route"]["rules"] = nlohmann::json::array();
+    root["route"]["rule_set"] = nlohmann::json::array();
+
+    if (!hasSingBoxDnsDirectRule(root["route"]["rules"])) {
+        root["route"]["rules"].push_back(
+            {{"port", 53}, {"network", nlohmann::json::array({"udp"})}, {"action", "route"}, {"outbound", "DIRECT"}}
+        );
+    }
+
+    std::string finalTarget;
+    for (const auto& item : profile.rules) {
+        const std::string type = toLower(item.type);
+        const std::string value = toLower(item.value);
+        if (type == "final" || type == "match") {
+            finalTarget = !item.outbound.empty() ? item.outbound : item.value;
+            continue;
+        }
+        if (item.outbound.empty()) {
+            continue;
+        }
+
+        if (type == "geosite" && value == "cn") {
+            ensureSingBoxRuleSet(root["route"]["rule_set"], config, "geosite-cn", "sing-box.geosite-cn");
+            root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geosite-cn"})}, {"outbound", item.outbound}});
+            continue;
+        }
+        if (type == "geoip" && value == "cn") {
+            ensureSingBoxRuleSet(root["route"]["rule_set"], config, "geoip-cn", "sing-box.geoip-cn");
+            root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geoip-cn"})}, {"outbound", item.outbound}});
+            continue;
+        }
+        if (type == "geosite" && value == "private") {
+            root["route"]["rules"].push_back({{"domain", nlohmann::json::array({"private"})}, {"outbound", item.outbound}});
+            continue;
+        }
+        if (type == "geoip" && value == "private") {
+            root["route"]["rules"].push_back({{"ip_cidr", nlohmann::json::array({"private"})}, {"outbound", item.outbound}});
+            continue;
+        }
+
+        nlohmann::json rule = {{"outbound", item.outbound}};
+        if (type == "domain") {
+            rule["domain"] = valuesWithScalar(item.value, item.domains);
+        } else if (type == "domain_suffix") {
+            rule["domain_suffix"] = valuesWithScalar(item.value, item.domains);
+        } else if (type == "domain_keyword") {
+            rule["domain_keyword"] = valuesWithScalar(item.value, item.domains);
+        } else if (type == "ip_cidr") {
+            rule["ip_cidr"] = valuesWithScalar(item.value, item.ipCidrs);
+        } else if (type == "port") {
+            rule["port"] = valuesWithScalar(item.value, item.ports);
+        } else if (type == "network") {
+            rule["network"] = valuesWithScalar(item.value, item.networks);
+        } else {
+            continue;
+        }
+        if (rule.size() > 1) {
+            root["route"]["rules"].push_back(rule);
+        }
+    }
+
+    if (finalTarget.empty()) {
+        finalTarget = profile.defaultOutbound.empty() ? "PROXY" : profile.defaultOutbound;
+    }
+    root["route"]["final"] = finalTarget;
+}
+
 void ensureSingBoxBypassCnProfile(nlohmann::json& root, const AppConfig& config) {
     if (!root.contains("dns") || !root["dns"].is_object()) {
         root["dns"] = nlohmann::json::object();
@@ -449,7 +572,9 @@ ExportResult exportSingBoxImpl(
         }
     }
 
-    if (!config.routingRules.empty()) {
+    if (profile != nullptr) {
+        ensureSingBoxProfileRouting(root, config, *profile);
+    } else if (!config.routingRules.empty()) {
         ensureSingBoxCustomRoutingRules(root, config);
     } else if (config.profile == "bypass-cn") {
         ensureSingBoxBypassCnProfile(root, config);

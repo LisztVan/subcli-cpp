@@ -4,7 +4,7 @@
 >
 > This project was primarily designed, implemented, tested, and documented with AI assistance. Human direction, review, and validation were used throughout the process.
 
-`subcli` is a C++17 command-line tool for managing proxy subscriptions and exporting validated configuration files for Mihomo, sing-box, and Xray.
+`subcli` is a C++17 command-line tool for managing proxy subscriptions and exporting validated, profile-driven configuration files for Mihomo, sing-box, and Xray. It has no GUI; profile JSON files are the policy interface for generated configs.
 
 ## Features
 
@@ -13,7 +13,8 @@
 - URI lists support `vmess`, `vless`, `trojan`, `ss`, `hy2`/`hysteria2`, `tuic`, and `wireguard` links.
 - Mihomo YAML supports inline `proxies`, local `proxy-providers` with `type: file`, and remote `proxy-providers` with `type: http`/`url` plus optional `user-agent` and `header` fields.
 - Export non-`tun` and `tun` templates for Mihomo, sing-box, and Xray.
-- Support `bypass-cn`, `global`, `direct`, and `custom` export profiles.
+- Generate configs from profile JSON policy files that define DNS, strategy groups, routing, and default outbound behavior.
+- Support built-in `bypass-cn`, `global`, and `direct` profiles plus custom profile files.
 - Render custom strategy groups for Mihomo/sing-box, including `fallback` and `load-balance` types.
 - Manage geo/rule assets with `subcli asset list|validate|update`.
 - Validate exported configs with external cores via `--check`.
@@ -46,12 +47,15 @@ subcli config set core_paths.xray /path/to/xray
 subcli config set fetch_max_bytes 10485760
 subcli template list
 subcli asset update
+subcli profile list
+subcli profile get bypass-cn
+subcli config set profile_path /path/to/profile.json
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
-subcli export all --check
+subcli export all --profile bypass-cn --check
 ```
 
-Primary workflow: subscriptions -> assets -> exported native configs. Optional runtime helpers such as `run` and `daemon` exist, but cross-platform config generation is the main guarantee.
+Primary workflow: subscriptions + assets + profile JSON + templates -> exported native configs. Optional runtime helpers such as `run` and `daemon` exist, but cross-platform config generation is the main guarantee.
 
 Proxy cores are not bundled. Configure core paths explicitly or make them available on `PATH`.
 
@@ -92,4 +96,4 @@ Xray does not provide a native TUN device. The Xray TUN template is a transparen
 
 ## Documentation
 
-See [`README.subcli.md`](README.subcli.md) for detailed command examples, cache behavior, troubleshooting, and deployment notes.
+See [`README.subcli.md`](README.subcli.md) for detailed command examples, cache behavior, troubleshooting, and deployment notes. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes.

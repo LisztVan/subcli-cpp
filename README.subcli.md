@@ -1,8 +1,10 @@
 # subcli
 
-`subcli` is a CLI application for proxy subscription management and native config export. Its primary workflow is subscription + asset management + native config export for Mihomo, sing-box, and Xray across Linux, macOS, and Windows. Proxy cores are not bundled.
+`subcli` is a CLI application for proxy subscription management and profile-driven native config export. Its primary workflow is subscription + asset management + native config export for Mihomo, sing-box, and Xray across Linux, macOS, and Windows; profile JSON supplies the generation policy for those exports. Proxy cores are not bundled, and there is no GUI.
 
 Runtime and daemon commands are optional capabilities. The main product guarantee is cross-platform configuration generation and management, not cross-platform core process hosting. In short, runtime and daemon commands are optional.
+
+Profile files are the policy interface. `config.yaml` stores subcli application settings, `profile.json` stores DNS/strategy/routing/default-outbound policy, templates store target skeletons, subscriptions provide nodes, and assets provide rule data files.
 
 ## Package Build
 
@@ -25,11 +27,15 @@ subcli config set core_paths.xray /path/to/xray
 subcli config set core_paths.mihomo /path/to/mihomo
 subcli config set fetch_max_bytes 10485760
 subcli config get profile
+subcli profile list
+subcli profile get bypass-cn
+subcli profile validate ./profiles/bypass-cn.json
+subcli config set profile_path /path/to/profile.json
 subcli template list
 subcli asset update
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
-subcli export all --check
+subcli export all --profile bypass-cn --check
 ```
 
 The primary workflow ends at exported config files. If you have a local core installed, `check`, `run`, and `daemon` can be used as optional helpers.
@@ -68,7 +74,15 @@ subcli config list
 subcli config list --json
 subcli config get core_paths.sing_box
 subcli config set core_paths.sing_box /usr/local/bin/sing-box
+subcli config set profile_path /path/to/profile.json
+subcli config get profile_path
+subcli config remove profile_path
 subcli config remove core_paths.sing_box
+
+subcli profile list
+subcli profile get bypass-cn
+subcli profile validate ./profiles/bypass-cn.json
+subcli profile validate /path/to/custom-profile.json
 
 subcli template list
 subcli template list --json
@@ -88,6 +102,8 @@ subcli export all --check
 subcli export sing-box --output-dir ./outputs --check --check-timeout 30
 subcli export mihomo --strict-network
 subcli export mihomo --download-assets
+subcli export all --profile bypass-cn
+subcli export xray --profile /path/to/custom-profile.json --output-dir ./outputs
 
 subcli daemon once --target all --strict-network   # optional helper
 
@@ -158,6 +174,30 @@ Template paths can still be edited with `config set templates.<target>.<normal|t
 
 Persisted paths are resolved relative to the config directory. Use absolute paths for `core_paths.*` to avoid ambiguity.
 
+`profile` selects a built-in profile name such as `bypass-cn`, `global`, or `direct`. `profile_path` selects a custom profile JSON file. `export --profile <path-or-name>` overrides both for the current export only and does not mutate `config.yaml`.
+
+## Profile Management
+
+Profiles define config-generation policy: DNS, strategy groups, routing rules, and default outbound behavior. They are JSON files and are the main interface for advanced routing policy.
+
+```bash
+subcli profile list
+subcli profile get bypass-cn
+subcli profile validate ./profiles/bypass-cn.json
+subcli profile validate /path/to/custom-profile.json
+subcli config set profile_path /path/to/custom-profile.json
+subcli export all --profile /path/to/custom-profile.json
+subcli export sing-box --profile global --check
+```
+
+Built-in profiles:
+
+- `bypass-cn`: direct private/LAN and China traffic, proxy everything else.
+- `global`: proxy traffic by default.
+- `direct`: direct traffic by default.
+
+For custom authoring, see [`docs/profile-schema.md`](docs/profile-schema.md). Advanced routing and strategy behavior should now live in profile JSON, not in `config.yaml`. Keep `config.yaml` focused on subcli software settings such as paths, timeouts, core locations, assets, templates, and selected profile path/name.
+
 ## Template Management
 
 Templates define the base config around generated proxies and groups. Supported targets are `mihomo`, `sing-box`, and `xray`; supported kinds are `normal` and `tun`.
@@ -199,18 +239,18 @@ Reload your shell after installing the generated script.
 
 ## Export Behavior
 
-`export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, applies the legacy configured `profile` name, and optionally validates with external cores.
+`export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, loads the selected profile, renders templates, applies profile-driven DNS/groups/routing/default outbound policy, and optionally validates with external cores.
 
-`profile_path` stores the external profile file selected for profile-driven export migration. Relative `profile_path` values are resolved from the config directory.
+`profile_path` stores the external profile file selected for profile-driven export. Relative `profile_path` values are resolved from the config directory. `export --profile <path-or-name>` can point to a custom JSON file or one of the built-in names.
 
 Supported profiles:
 
 - `bypass-cn` (default): private/LAN and mainland China rules go to `DIRECT`; unmatched traffic goes to `PROXY`.
 - `global`: unmatched traffic goes to `PROXY` without injecting bypass-cn direct rules.
 - `direct`: unmatched traffic goes to `DIRECT`.
-- `custom`: uses `routing.rules` from config for explicit routing control.
+- Custom file path: uses profile JSON for DNS, strategy groups, routing rules, and default outbound.
 
-Advanced routing/strategy behavior should move to profile files. Legacy config fields remain available for now:
+Advanced routing/strategy behavior should move to profile files. Legacy config fields remain available during migration but are no longer the primary policy surface:
 
 - `routing.rules` currently supports `geosite`, `geoip`, `final`, and `match` types.
 - `grouping.strategy_groups` custom groups are exported to Mihomo and sing-box.
@@ -221,6 +261,7 @@ Advanced routing/strategy behavior should move to profile files. Legacy config f
 - `--tag TAG` can be repeated to export subscriptions with matching tags.
 - `--tun` selects tun templates for this export.
 - `--output-dir DIR` overrides the configured output directory.
+- `--profile PATH_OR_NAME` overrides the configured profile for this export only.
 - `--check` runs the corresponding external core check after export.
 - `--strict-network` disables cache fallback.
 - `--download-assets` downloads missing configured rule assets before export.
@@ -304,7 +345,7 @@ sing-box run -c ~/.local/share/subcli/outputs/sing-box.json
 xray run -config ~/.local/share/subcli/outputs/xray.json
 ```
 
-You can also let `subcli` manage runtime lifecycle directly:
+You can also let `subcli` manage runtime lifecycle directly, but this remains an optional helper outside the primary profile-driven export scope:
 
 ```bash
 subcli run sing-box

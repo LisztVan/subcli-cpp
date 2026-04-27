@@ -202,7 +202,7 @@ Reload your shell after installing the generated script.
 
 `export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, applies the configured profile, and optionally validates with external cores.
 
-Use `profile_path` to select an external profile file. Relative `profile_path` values are resolved from the config directory.
+`profile_path` stores the external profile file selected for profile-driven export migration. Relative `profile_path` values are resolved from the config directory.
 
 Supported profiles:
 

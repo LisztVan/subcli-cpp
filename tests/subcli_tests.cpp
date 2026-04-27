@@ -2469,6 +2469,144 @@ void testSingBoxProfileGroupsSynthesizeMissingProxyAndAuto() {
     require(!(*autoGroup)["outbounds"].empty(), "sing-box synthesized AUTO should include usable members");
 }
 
+void testSingBoxWithEmptyProfileGroupsKeepsLegacyGroupBehavior() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::AppConfig::StrategyGroup fallback;
+    fallback.name = "FAILOVER";
+    fallback.type = "fallback";
+    fallback.members = {"DIRECT", "HK"};
+    fallback.url = "https://example.com/health";
+    fallback.interval = 120;
+    config.strategyGroups.push_back(fallback);
+
+    subcli::ResolvedProfile profile;
+    profile.name = "empty-sing-groups";
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-empty-profile-groups-sing";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "sing-empty-profile-groups.json").string(),
+        error
+    );
+    require(result.ok, "sing-box export with empty profile groups should succeed: " + error);
+
+    std::ifstream in(outDir / "sing-empty-profile-groups.json");
+    const auto json = nlohmann::json::parse(in);
+    const auto* failover = static_cast<const nlohmann::json*>(nullptr);
+    for (const auto& outbound : json["outbounds"]) {
+        if (outbound.value("tag", "") == "FAILOVER") {
+            failover = &outbound;
+        }
+    }
+    require(failover != nullptr, "sing-box should keep legacy strategy groups when profile groups are empty");
+    require(failover->value("type", "") == "urltest", "sing-box should keep legacy fallback mapping when profile groups are empty");
+    require(failover->value("url", "") == "https://example.com/health", "sing-box should keep legacy strategy group URL");
+    require(failover->value("interval", "") == "120s", "sing-box should keep legacy strategy group interval");
+}
+
+void testSingBoxProfileEmptyMembersDefaultToDirect() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "sing-empty-members";
+    subcli::ProfileGroup group;
+    group.tag = "EMPTY";
+    group.type = "select";
+    profile.groups.push_back(group);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-sing-empty-members";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "sing-empty-members.json").string(),
+        error
+    );
+    require(result.ok, "sing-box profile group with empty members should export: " + error);
+
+    std::ifstream in(outDir / "sing-empty-members.json");
+    const auto json = nlohmann::json::parse(in);
+    const auto* empty = static_cast<const nlohmann::json*>(nullptr);
+    for (const auto& outbound : json["outbounds"]) {
+        if (outbound.value("tag", "") == "EMPTY") {
+            empty = &outbound;
+        }
+    }
+    require(empty != nullptr, "sing-box profile empty-members group should be rendered");
+    require((*empty)["outbounds"].size() == 1, "sing-box profile empty-members group should have one fallback member");
+    require((*empty)["outbounds"][0].get<std::string>() == "DIRECT", "sing-box profile empty-members group should default to DIRECT");
+}
+
+void testSingBoxProfileGroupAliasSpellings() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "sing-alias-groups";
+
+    subcli::ProfileGroup urltest;
+    urltest.tag = "AUTO-ALIAS";
+    urltest.type = "urltest";
+    urltest.members = {"REGION:HK"};
+    profile.groups.push_back(urltest);
+
+    subcli::ProfileGroup loadbalance;
+    loadbalance.tag = "BALANCE-ALIAS";
+    loadbalance.type = "loadbalance";
+    loadbalance.members = {"REGION:HK"};
+    profile.groups.push_back(loadbalance);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-sing-aliases";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "sing-alias-groups.json").string(),
+        error
+    );
+    require(result.ok, "sing-box profile alias groups should export: " + error);
+
+    bool warned = false;
+    for (const auto& warning : result.warnings) {
+        warned = warned || warning.code == "profile_group_degraded";
+    }
+    require(warned, "sing-box loadbalance alias should emit degradation warning");
+
+    std::ifstream in(outDir / "sing-alias-groups.json");
+    const auto json = nlohmann::json::parse(in);
+    const auto* autoAlias = static_cast<const nlohmann::json*>(nullptr);
+    const auto* balanceAlias = static_cast<const nlohmann::json*>(nullptr);
+    for (const auto& outbound : json["outbounds"]) {
+        if (outbound.value("tag", "") == "AUTO-ALIAS") {
+            autoAlias = &outbound;
+        }
+        if (outbound.value("tag", "") == "BALANCE-ALIAS") {
+            balanceAlias = &outbound;
+        }
+    }
+    require(autoAlias != nullptr, "sing-box urltest alias group should be rendered");
+    require(autoAlias->value("type", "") == "urltest", "sing-box urltest alias should render as urltest");
+    require(balanceAlias != nullptr, "sing-box loadbalance alias group should be rendered");
+    require(balanceAlias->value("type", "") == "selector", "sing-box loadbalance alias should degrade to selector");
+}
+
 void testMihomoProfileDnsAndRulesRenderFromProfile() {
     auto config = makeConfig();
     config.profile = "bypass-cn";
@@ -3342,6 +3480,9 @@ int main() {
     testSingBoxProfileFallbackDegradesToUrltestWithWarning();
     testSingBoxProfileLoadBalanceDegradesToSelectorWithWarning();
     testSingBoxProfileGroupsSynthesizeMissingProxyAndAuto();
+    testSingBoxWithEmptyProfileGroupsKeepsLegacyGroupBehavior();
+    testSingBoxProfileEmptyMembersDefaultToDirect();
+    testSingBoxProfileGroupAliasSpellings();
     testMihomoProfileDnsAndRulesRenderFromProfile();
     testMihomoProfileEmptyRulesFallbackToDefaultOutbound();
     testMihomoProfileListValuedRulesRenderAllEntries();

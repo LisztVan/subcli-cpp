@@ -242,6 +242,29 @@ void testBuiltInProfilesExistAndLoad() {
     require(direct.groups.empty(), "direct profile should not define groups");
 }
 
+void testBuiltInAutoGroupsDoNotReferenceProxy() {
+    const fs::path profilesDir = fs::path(SUBCLI_SOURCE_DIR) / "profiles";
+    const std::vector<fs::path> profilePaths = {
+        profilesDir / "bypass-cn.json",
+        profilesDir / "global.json",
+        profilesDir / "direct.json",
+    };
+
+    for (const auto& path : profilePaths) {
+        subcli::ResolvedProfile profile;
+        std::string error;
+        require(subcli::loadProfile(path.string(), profile, error), "built-in profile should load: " + path.string() + ": " + error);
+        for (const auto& group : profile.groups) {
+            if (group.tag != "AUTO") {
+                continue;
+            }
+            for (const auto& member : group.members) {
+                require(member != "PROXY", "built-in AUTO group must not reference PROXY: " + profile.name);
+            }
+        }
+    }
+}
+
 void testProtocolRegistryCoversOfficialTargets() {
     require(subcli::canonicalProtocolName("ss") == "shadowsocks", "ss should normalize to shadowsocks");
     require(subcli::canonicalProtocolName("hy2") == "hysteria2", "hy2 should normalize to hysteria2");
@@ -2480,6 +2503,7 @@ int main() {
     testLoadProfileAcceptsRuleWithoutValueOrLists();
     testLoadProfileAcceptsFinalRuleWithoutOutbound();
     testBuiltInProfilesExistAndLoad();
+    testBuiltInAutoGroupsDoNotReferenceProxy();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();

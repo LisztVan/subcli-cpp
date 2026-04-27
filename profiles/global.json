@@ -9,7 +9,8 @@
       "type": "select",
       "members": [
         "AUTO",
-        "DIRECT"
+        "DIRECT",
+        "REGION:*"
       ],
       "default": "AUTO"
     },
@@ -17,7 +18,7 @@
       "tag": "AUTO",
       "type": "url-test",
       "members": [
-        "PROXY"
+        "REGION:*"
       ],
       "url": "https://www.gstatic.com/generate_204",
       "interval": 300,

@@ -13,7 +13,8 @@
 - URI lists support `vmess`, `vless`, `trojan`, `ss`, `hy2`/`hysteria2`, `tuic`, and `wireguard` links.
 - Mihomo YAML supports inline `proxies`, local `proxy-providers` with `type: file`, and remote `proxy-providers` with `type: http`/`url` plus optional `user-agent` and `header` fields.
 - Export non-`tun` and `tun` templates for Mihomo, sing-box, and Xray.
-- Generate the default `bypass-cn` profile with mainland/LAN direct rules and proxy fallback.
+- Support `bypass-cn`, `global`, `direct`, and `custom` export profiles.
+- Render custom strategy groups for Mihomo/sing-box, including `fallback` and `load-balance` types.
 - Manage geo/rule assets with `subcli asset list|validate|update`.
 - Validate exported configs with external cores via `--check`.
 - Use XDG runtime directories for config, data, cache, state, and outputs.
@@ -48,11 +49,9 @@ subcli asset update
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --check
-subcli daemon once --target all --strict-network
-subcli run sing-box
-subcli status sing-box
-subcli stop sing-box
 ```
+
+Primary workflow: subscriptions -> assets -> exported native configs. Optional runtime helpers such as `run` and `daemon` exist, but cross-platform config generation is the main guarantee.
 
 Proxy cores are not bundled. Configure core paths explicitly or make them available on `PATH`.
 

@@ -1,6 +1,8 @@
 # subcli
 
-`subcli` is a CLI application for proxy subscription management and config export. You add one or more subscriptions, update or validate them, then export complete Mihomo, sing-box, or Xray configuration files from editable templates. Proxy cores are not bundled.
+`subcli` is a CLI application for proxy subscription management and native config export. Its primary workflow is subscription + asset management + native config export for Mihomo, sing-box, and Xray across Linux, macOS, and Windows. Proxy cores are not bundled.
+
+Runtime and daemon commands are optional capabilities. The main product guarantee is cross-platform configuration generation and management, not cross-platform core process hosting. In short, runtime and daemon commands are optional.
 
 ## Package Build
 
@@ -29,6 +31,8 @@ subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --check
 ```
+
+The primary workflow ends at exported config files. If you have a local core installed, `check`, `run`, and `daemon` can be used as optional helpers.
 
 ## Runtime Directories
 
@@ -85,13 +89,12 @@ subcli export sing-box --output-dir ./outputs --check --check-timeout 30
 subcli export mihomo --strict-network
 subcli export mihomo --download-assets
 
-subcli daemon once --target all --strict-network
-subcli daemon run --interval 1800 --target sing-box --update-assets
+subcli daemon once --target all --strict-network   # optional helper
 
-subcli run sing-box
-subcli status
-subcli stop sing-box
-subcli restart sing-box
+subcli run sing-box                                # optional helper
+subcli status                                      # optional helper
+subcli stop sing-box                               # optional helper
+subcli restart sing-box                            # optional helper
 
 subcli check sing-box --file ./outputs/sing-box.json --timeout 30
 subcli completion bash
@@ -197,7 +200,19 @@ Reload your shell after installing the generated script.
 
 `export` fetches selected enabled subscriptions, parses nodes, filters unsupported protocols per target, renders templates, applies the configured profile, and optionally validates with external cores.
 
-The default profile is `bypass-cn`: LAN/private traffic and mainland China domain/IP rules go to `DIRECT`, and unmatched traffic goes to `PROXY`. The first implementation intentionally supports this one profile well instead of adding half-complete profile names; custom template rules remain available for advanced cases.
+Supported profiles:
+
+- `bypass-cn` (default): private/LAN and mainland China rules go to `DIRECT`; unmatched traffic goes to `PROXY`.
+- `global`: unmatched traffic goes to `PROXY` without injecting bypass-cn direct rules.
+- `direct`: unmatched traffic goes to `DIRECT`.
+- `custom`: uses `routing.rules` from config for explicit routing control.
+
+Advanced routing/strategy behavior:
+
+- `routing.rules` currently supports `geosite`, `geoip`, `final`, and `match` types.
+- `grouping.strategy_groups` custom groups are exported to Mihomo and sing-box.
+- Mihomo keeps `select`, `url-test`, `fallback`, and `load-balance` group types.
+- sing-box maps `fallback` -> `urltest` and `load-balance` -> `selector`.
 
 - `--sub ID_OR_NAME` can be repeated to export only selected subscriptions.
 - `--tag TAG` can be repeated to export subscriptions with matching tags.
@@ -211,12 +226,13 @@ Export fails when no enabled subscription is selected, selected subscriptions pa
 
 ## Daemon Automation
 
-Use daemon mode to run update/export cycles automatically:
+Daemon mode is an optional helper for environments where local process hosting is desired. It is not part of the cross-platform core product guarantee.
 
 ```bash
 subcli daemon once --target all --strict-network
 subcli daemon run --interval 1800 --target sing-box --update-assets
 subcli daemon start --interval 1800 --target sing-box --update-assets
+subcli daemon start --target sing-box --pid-file /tmp/subcli-daemon.pid --log-file /tmp/subcli-daemon.log
 subcli daemon status
 subcli daemon stop
 ```
@@ -231,8 +247,26 @@ subcli daemon stop
 - `--strict-network`: disable cache fallback in both update and export.
 - `--check`: validate exported config with core checks after export.
 - `--no-restart`: skip auto restart of currently running cores managed by `subcli run`.
+- `--pid-file`: override the default daemon pid file path.
+- `--log-file`: override the default daemon log file path.
 
 `daemon status` may also surface the last cycle summary as `last=ok` or `last=failed(...)`, which reflects the most recent `sub update -> export -> restart-running-cores` result, not just whether the process is still alive.
+
+### systemd user service example
+
+An example `systemd --user` unit is installed to `share/subcli/systemd/subcli-daemon.service` in packaged installs, and the source template lives at `packaging/systemd/subcli-daemon.service`.
+
+Typical setup:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp /usr/local/share/subcli/systemd/subcli-daemon.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now subcli-daemon.service
+systemctl --user status subcli-daemon.service
+```
+
+Adjust `ExecStart=` in the unit file for your preferred `--target`, `--interval`, `--pid-file`, or `--log-file` values before enabling it.
 
 ## Rule Assets
 

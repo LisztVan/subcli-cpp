@@ -1,6 +1,7 @@
 #include "subcli/fetch.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <curl/curl.h>
 
 #include "subcli/util.hpp"
@@ -32,6 +33,39 @@ size_t writeBody(char* ptr, size_t size, size_t nmemb, void* userdata) {
 bool hasAllowedScheme(const std::string& url) {
     return url.rfind("file://", 0) == 0 || url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
 }
+
+int hexValue(char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (ch >= 'a' && ch <= 'f') {
+        return 10 + (ch - 'a');
+    }
+    return -1;
+}
+
+} // namespace
+
+std::string decodeFileUrlPath(const std::string& encoded) {
+    std::string out;
+    out.reserve(encoded.size());
+    for (size_t i = 0; i < encoded.size(); ++i) {
+        if (encoded[i] == '%' && i + 2 < encoded.size()) {
+            const int hi = hexValue(encoded[i + 1]);
+            const int lo = hexValue(encoded[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                out.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(encoded[i]);
+    }
+    return out;
+}
+
+namespace {
 
 std::string trimHeaderValue(std::string v) {
     while (!v.empty() && (v.back() == '\r' || v.back() == '\n' || v.back() == ' ' || v.back() == '\t')) {
@@ -67,7 +101,7 @@ FetchResult fetchOnce(const Subscription& sub, bool useCacheFallback) {
     }
 
     if (sub.url.rfind("file://", 0) == 0) {
-        const std::string path = sub.url.substr(7);
+        const std::string path = decodeFileUrlPath(sub.url.substr(7));
         if (!fileExists(path)) {
             result.error = "local file not found: " + path;
             return result;

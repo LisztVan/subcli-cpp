@@ -109,6 +109,8 @@ void testDaemonBuildsExpectedArgs() {
     options.updateAssets = true;
     options.strictNetwork = true;
     options.check = true;
+    options.pidFile = "/tmp/subcli-daemon.pid";
+    options.logFile = "/tmp/subcli-daemon.log";
 
     const auto subArgs = subcli::buildDaemonSubUpdateArgs(options);
     require(subArgs.size() == 3, "daemon sub update args should include strict-network");
@@ -123,11 +125,27 @@ void testDaemonBuildsExpectedArgs() {
     require(exportArgs[4] == "--check", "daemon export args should include check");
 
     const auto runArgs = subcli::buildDaemonRunArgs(options);
-    require(runArgs.size() == 9, "daemon run args should include mode and flags");
+    require(runArgs.size() == 13, "daemon run args should include mode, flags, pid, and log paths");
     require(runArgs[0] == "daemon" && runArgs[1] == "run", "daemon run args should start from daemon run");
     require(runArgs[2] == "--interval" && runArgs[3] == "3600", "daemon run args should include default interval");
     require(runArgs[4] == "--target" && runArgs[5] == "sing-box", "daemon run args should include export target");
-    require(runArgs[8] == "--check", "daemon run args should include check flag");
+    bool hasUpdateAssets = false;
+    bool hasStrictNetwork = false;
+    bool hasCheck = false;
+    bool hasPidFile = false;
+    bool hasLogFile = false;
+    for (size_t i = 0; i < runArgs.size(); ++i) {
+        hasUpdateAssets = hasUpdateAssets || runArgs[i] == "--update-assets";
+        hasStrictNetwork = hasStrictNetwork || runArgs[i] == "--strict-network";
+        hasCheck = hasCheck || runArgs[i] == "--check";
+        hasPidFile = hasPidFile || (runArgs[i] == "--pid-file" && i + 1 < runArgs.size() && runArgs[i + 1] == "/tmp/subcli-daemon.pid");
+        hasLogFile = hasLogFile || (runArgs[i] == "--log-file" && i + 1 < runArgs.size() && runArgs[i + 1] == "/tmp/subcli-daemon.log");
+    }
+    require(hasUpdateAssets, "daemon run args should include update-assets flag");
+    require(hasStrictNetwork, "daemon run args should include strict-network flag");
+    require(hasCheck, "daemon run args should include check flag");
+    require(hasPidFile, "daemon run args should include pid file");
+    require(hasLogFile, "daemon run args should include log file");
 }
 
 void testDaemonProcessLifecycle() {
@@ -164,6 +182,33 @@ void testDaemonProcessLifecycle() {
     require(!status.running, "inspectDaemonProcess should report stopped process");
 
     fs::remove_all(stateDir);
+}
+
+void testDaemonProcessLifecycleWithCustomFiles() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-daemon-custom-files-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+
+    subcli::DaemonOptions options;
+    options.intervalSec = 60;
+    options.exportTarget = "mihomo";
+    options.pidFile = (dir / "daemon.pid").string();
+    options.logFile = (dir / "daemon.log").string();
+    std::string error;
+
+    const bool started = subcli::startDaemonProcess(dir, "/bin/sleep", {"30"}, options, error);
+    require(started, "startDaemonProcess should support custom file paths: " + error);
+    require(fs::exists(options.pidFile), "custom pid file should be created");
+    require(fs::exists(options.logFile), "custom log file should be created");
+
+    const auto status = subcli::inspectDaemonProcess(dir, error);
+    require(status.options.pidFile == options.pidFile, "daemon status should persist custom pid file");
+    require(status.options.logFile == options.logFile, "daemon status should persist custom log file");
+
+    require(subcli::stopDaemonProcess(dir, 1, error), "stopDaemonProcess should stop custom daemon files case: " + error);
+    require(!fs::exists(options.pidFile), "pid file should be removed after stop");
+
+    fs::remove_all(dir);
 }
 
 void testStartDaemonProcessFailsWhenExecCannotStart() {
@@ -1433,6 +1478,89 @@ void testXrayExportIncludesBypassCnProfileRules() {
     require(hasProxyFallback, "xray should proxy unmatched traffic through PROXY balancer");
 }
 
+void testMihomoExportSupportsGlobalAndDirectProfiles() {
+    auto config = makeConfig();
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-mihomo";
+    fs::create_directories(outDir);
+
+    config.profile = "global";
+    std::string error;
+    auto global = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        (outDir / "mihomo-global.yaml").string(),
+        error
+    );
+    require(global.ok, "mihomo global export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "mihomo-global.yaml");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("MATCH,PROXY") != std::string::npos, "mihomo global profile should proxy unmatched traffic");
+        require(content.find("GEOSITE,cn,DIRECT") == std::string::npos, "mihomo global profile should not inject bypass-cn rules");
+    }
+
+    config.profile = "direct";
+    auto direct = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        (outDir / "mihomo-direct.yaml").string(),
+        error
+    );
+    require(direct.ok, "mihomo direct export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "mihomo-direct.yaml");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("MATCH,DIRECT") != std::string::npos, "mihomo direct profile should direct unmatched traffic");
+        require(content.find("MATCH,PROXY") == std::string::npos, "mihomo direct profile should not proxy unmatched traffic");
+    }
+}
+
+void testSingBoxAndXrayExportSupportDirectProfile() {
+    auto config = makeConfig();
+    config.profile = "direct";
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-json";
+    fs::create_directories(outDir);
+    std::string error;
+
+    auto sing = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        (outDir / "sing-direct.json").string(),
+        error
+    );
+    require(sing.ok, "sing-box direct export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "sing-direct.json");
+        const auto json = nlohmann::json::parse(in);
+        require(json["route"].value("final", "") == "DIRECT", "sing-box direct profile should direct unmatched traffic");
+    }
+
+    auto xray = subcli::exportForTarget(
+        subcli::ExportTarget::Xray,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        (outDir / "xray-direct.json").string(),
+        error
+    );
+    require(xray.ok, "xray direct export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "xray-direct.json");
+        const auto json = nlohmann::json::parse(in);
+        bool hasFinalDirect = false;
+        for (const auto& rule : json["routing"]["rules"]) {
+            hasFinalDirect = hasFinalDirect || (rule.value("outboundTag", "") == "DIRECT" && rule.value("network", "") == "tcp,udp");
+        }
+        require(hasFinalDirect, "xray direct profile should direct unmatched traffic");
+    }
+}
+
 void testStorePersistsOverrideFlags() {
     const fs::path path = fs::temp_directory_path() / "subcli-tests-subs.yaml";
 
@@ -1581,6 +1709,53 @@ void testCustomStrategyGroupsRenderForMihomoAndSingBox() {
     }
 }
 
+void testFallbackAndLoadBalanceGroupsRenderForMihomoAndSingBox() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::AppConfig::StrategyGroup fallback;
+    fallback.name = "FAILOVER";
+    fallback.type = "fallback";
+    fallback.members = {"DIRECT", "HK"};
+    fallback.url = "http://www.gstatic.com/generate_204";
+    fallback.interval = 300;
+    config.strategyGroups.push_back(fallback);
+
+    subcli::AppConfig::StrategyGroup lb;
+    lb.name = "BALANCE";
+    lb.type = "load-balance";
+    lb.members = {"HK", "DIRECT"};
+    lb.defaultMember = "HK";
+    config.strategyGroups.push_back(lb);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-extended-groups";
+    fs::create_directories(outDir);
+    const auto node = makeExportReadyShadowsocksNode("HK Node");
+    std::string error;
+
+    auto mihomo = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {node}, config, false, (outDir / "mihomo-extended-groups.yaml").string(), error);
+    require(mihomo.ok, "mihomo extended groups export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "mihomo-extended-groups.yaml");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("name: FAILOVER") != std::string::npos, "mihomo should include FAILOVER group");
+        require(content.find("type: fallback") != std::string::npos, "mihomo should render fallback group type");
+        require(content.find("name: BALANCE") != std::string::npos, "mihomo should include BALANCE group");
+        require(content.find("type: load-balance") != std::string::npos, "mihomo should render load-balance group type");
+    }
+
+    auto sing = subcli::exportForTarget(subcli::ExportTarget::SingBox, {node}, config, false, (outDir / "sing-extended-groups.json").string(), error);
+    require(sing.ok, "sing-box extended groups export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "sing-extended-groups.json");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("\"tag\": \"FAILOVER\"") != std::string::npos, "sing-box should include FAILOVER group");
+        require(content.find("\"type\": \"urltest\"") != std::string::npos, "sing-box should degrade fallback to urltest");
+        require(content.find("\"tag\": \"BALANCE\"") != std::string::npos, "sing-box should include BALANCE group");
+        require(content.find("\"type\": \"selector\"") != std::string::npos, "sing-box should degrade load-balance to selector");
+    }
+}
+
 void testCustomRoutingRulesMapToAllTargets() {
     auto config = makeConfig();
     config.profile = "custom";
@@ -1644,6 +1819,99 @@ void testCustomRoutingRulesMapToAllTargets() {
         require(hasGeositeProxy, "xray should map geosite cn to PROXY");
         require(hasGeoipProxy, "xray should map geoip cn to PROXY");
         require(hasFinalDirect, "xray should map final rule to DIRECT");
+    }
+}
+
+void testMatchRoutingRuleMapsToAllTargets() {
+    auto config = makeConfig();
+    config.profile = "custom";
+    config.routingRules = {
+        {"match", "", "DIRECT"},
+    };
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-match-routing";
+    fs::create_directories(outDir);
+    const auto node = makeExportReadyShadowsocksNode("HK Node");
+    std::string error;
+
+    auto mihomo = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {node}, config, false, (outDir / "mihomo-match.yaml").string(), error);
+    require(mihomo.ok, "mihomo match routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "mihomo-match.yaml");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("MATCH,DIRECT") != std::string::npos, "mihomo should map match rule to DIRECT");
+    }
+
+    auto sing = subcli::exportForTarget(subcli::ExportTarget::SingBox, {node}, config, false, (outDir / "sing-match.json").string(), error);
+    require(sing.ok, "sing-box match routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "sing-match.json");
+        const auto json = nlohmann::json::parse(in);
+        require(json["route"].value("final", "") == "DIRECT", "sing-box should map match rule to DIRECT final");
+    }
+
+    auto xray = subcli::exportForTarget(subcli::ExportTarget::Xray, {node}, config, false, (outDir / "xray-match.json").string(), error);
+    require(xray.ok, "xray match routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "xray-match.json");
+        const auto json = nlohmann::json::parse(in);
+        bool hasFinalDirect = false;
+        for (const auto& rule : json["routing"]["rules"]) {
+            hasFinalDirect = hasFinalDirect || (rule.value("outboundTag", "") == "DIRECT" && rule.value("network", "") == "tcp,udp");
+        }
+        require(hasFinalDirect, "xray should map match rule to DIRECT final");
+    }
+}
+
+void testPrivateRoutingRulesMapToAllTargets() {
+    auto config = makeConfig();
+    config.profile = "custom";
+    config.routingRules = {
+        {"geosite", "private", "DIRECT"},
+        {"geoip", "private", "DIRECT"},
+        {"final", "", "PROXY"},
+    };
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-private-routing";
+    fs::create_directories(outDir);
+    const auto node = makeExportReadyShadowsocksNode("HK Node");
+    std::string error;
+
+    auto mihomo = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {node}, config, false, (outDir / "mihomo-private.yaml").string(), error);
+    require(mihomo.ok, "mihomo private routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "mihomo-private.yaml");
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        require(content.find("GEOSITE,private,DIRECT") != std::string::npos, "mihomo should map geosite private");
+        require(content.find("GEOIP,private,DIRECT") != std::string::npos, "mihomo should map geoip private");
+    }
+
+    auto sing = subcli::exportForTarget(subcli::ExportTarget::SingBox, {node}, config, false, (outDir / "sing-private.json").string(), error);
+    require(sing.ok, "sing-box private routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "sing-private.json");
+        const auto json = nlohmann::json::parse(in);
+        bool hasPrivateDirect = false;
+        for (const auto& rule : json["route"]["rules"]) {
+            const auto domainText = rule.contains("domain") ? rule["domain"].dump() : "";
+            const auto ipText = rule.contains("ip_cidr") ? rule["ip_cidr"].dump() : "";
+            hasPrivateDirect = hasPrivateDirect || (rule.value("outbound", "") == "DIRECT" && (domainText.find("private") != std::string::npos || ipText.find("private") != std::string::npos));
+        }
+        require(hasPrivateDirect, "sing-box should map private direct rule");
+    }
+
+    auto xray = subcli::exportForTarget(subcli::ExportTarget::Xray, {node}, config, false, (outDir / "xray-private.json").string(), error);
+    require(xray.ok, "xray private routing export should succeed: " + error);
+    {
+        std::ifstream in(outDir / "xray-private.json");
+        const auto json = nlohmann::json::parse(in);
+        bool hasPrivateDirect = false;
+        for (const auto& rule : json["routing"]["rules"]) {
+            const auto domainText = rule.contains("domain") ? rule["domain"].dump() : "";
+            const auto ipText = rule.contains("ip") ? rule["ip"].dump() : "";
+            hasPrivateDirect = hasPrivateDirect || (rule.value("outboundTag", "") == "DIRECT" && (domainText.find("geosite:private") != std::string::npos || ipText.find("geoip:private") != std::string::npos));
+        }
+        require(hasPrivateDirect, "xray should map private direct rule");
     }
 }
 
@@ -1740,6 +2008,29 @@ void testUpdateAssetFailureKeepsPreviousFile() {
     fs::remove_all(dir);
 }
 
+void testSystemdUserServiceExampleExists() {
+    const fs::path servicePath = fs::path(SUBCLI_SOURCE_DIR) / "packaging/systemd/subcli-daemon.service";
+    require(fs::exists(servicePath), "systemd user service example should exist");
+
+    std::ifstream in(servicePath);
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    require(content.find("[Unit]") != std::string::npos, "systemd service should include Unit section");
+    require(content.find("ExecStart=") != std::string::npos, "systemd service should include ExecStart");
+    require(content.find("daemon run") != std::string::npos, "systemd service should launch daemon run mode");
+}
+
+void testReadmeDeclaresConfigGenerationAsPrimaryGoal() {
+    const fs::path path = fs::path(SUBCLI_SOURCE_DIR) / "README.subcli.md";
+    require(fs::exists(path), "README.subcli.md should exist");
+
+    std::ifstream in(path);
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    require(content.find("primary workflow is subscription + asset management + native config export") != std::string::npos,
+            "README should declare config generation as the primary workflow");
+    require(content.find("runtime and daemon commands are optional") != std::string::npos,
+            "README should declare runtime and daemon as optional capabilities");
+}
+
 void testFetchRejectsUnsupportedScheme() {
     subcli::Subscription sub;
     sub.id = "bad";
@@ -1769,6 +2060,57 @@ void testFetchFileHonorsMaxBytes() {
     require(result.error.find("fetch_max_bytes") != std::string::npos, "oversized fetch error should mention fetch_max_bytes");
 
     fs::remove(path);
+}
+
+void testFetchFileUrlDecodesPercentEscapes() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-file-url-space-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "with space.txt";
+    {
+        std::ofstream out(path);
+        out << "ok";
+    }
+
+    subcli::Subscription sub;
+    sub.id = "space";
+    sub.name = "space";
+    sub.url = "file://" + dir.string() + "/with%20space.txt";
+
+    auto result = subcli::fetchSubscription(sub, false);
+    require(result.ok, "percent-encoded file url should succeed");
+    require(result.content == "ok", "percent-encoded file url should read content");
+
+    fs::remove_all(dir);
+}
+
+void testDecodeFileUrlPathPreservesWindowsStyleDrivePath() {
+    const std::string decoded = subcli::decodeFileUrlPath("/C:/Users/test/with%20space.txt");
+    require(decoded == "/C:/Users/test/with space.txt", "decodeFileUrlPath should preserve Windows drive-style path text");
+}
+
+void testDecodeFileUrlPathPreservesUncStylePath() {
+    const std::string decoded = subcli::decodeFileUrlPath("//server/share/with%20space.txt");
+    require(decoded == "//server/share/with space.txt", "decodeFileUrlPath should preserve UNC-style path text");
+}
+
+void testResolveAgainstConfigDirUsesConfigBase() {
+    const fs::path base = fs::temp_directory_path() / "subcli-config-base-tests";
+    const auto resolved = subcli::resolveAgainstBaseForTest(base.string(), "assets/geoip.dat");
+    require(resolved == (base / "assets/geoip.dat").lexically_normal().string(), "config-relative path should resolve against config dir base");
+}
+
+void testResolveAgainstCliCwdUsesCwdBase() {
+    const fs::path base = fs::temp_directory_path() / "subcli-cwd-base-tests";
+    const auto resolved = subcli::resolveAgainstBaseForTest(base.string(), "outputs/mihomo.yaml");
+    require(resolved == (base / "outputs/mihomo.yaml").lexically_normal().string(), "cli relative path should resolve against cwd base");
+}
+
+void testResolveAgainstBaseKeepsAbsolutePath() {
+    const fs::path base = fs::temp_directory_path() / "subcli-absolute-base-tests";
+    const fs::path absolute = fs::temp_directory_path() / "already/absolute.txt";
+    const auto resolved = subcli::resolveAgainstBaseForTest(base.string(), absolute.string());
+    require(resolved == absolute.lexically_normal().string(), "absolute path should remain absolute");
 }
 
 void testStructuredFieldsSurviveExportNormalization() {
@@ -1955,6 +2297,7 @@ int main() {
     testBashCompletionContainsCommands();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
+    testDaemonProcessLifecycleWithCustomFiles();
     testStartDaemonProcessFailsWhenExecCannotStart();
     testRunDaemonCycleWithStateUpdatesSuccessSummary();
     testInspectDaemonProcessExposesLastCycleFailure();
@@ -1994,7 +2337,9 @@ int main() {
     testExportXraySupportsLeastLoadStrategyFromTemplate();
     testExportSingBoxDnsRuleUsesRouteActionWithPort53();
     testMihomoExportIncludesBypassCnProfileRules();
+    testMihomoExportSupportsGlobalAndDirectProfiles();
     testSingBoxExportIncludesBypassCnProfileRules();
+    testSingBoxAndXrayExportSupportDirectProfile();
     testXrayExportIncludesBypassCnProfileRules();
     testStructuredFieldsSurviveExportNormalization();
     testNodeManagementPreprocess();
@@ -2008,12 +2353,23 @@ int main() {
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();
+    testMatchRoutingRuleMapsToAllTargets();
+    testPrivateRoutingRulesMapToAllTargets();
     testCustomStrategyGroupsRenderForMihomoAndSingBox();
+    testFallbackAndLoadBalanceGroupsRenderForMihomoAndSingBox();
     testAssetRecordsExposeConfiguredFiles();
     testMissingAssetsReturnsOnlyMissingRecords();
     testUpdateAssetPersistsMetadata();
     testUpdateAssetFailureKeepsPreviousFile();
+    testSystemdUserServiceExampleExists();
+    testReadmeDeclaresConfigGenerationAsPrimaryGoal();
     testFetchRejectsUnsupportedScheme();
     testFetchFileHonorsMaxBytes();
+    testFetchFileUrlDecodesPercentEscapes();
+    testDecodeFileUrlPathPreservesWindowsStyleDrivePath();
+    testDecodeFileUrlPathPreservesUncStylePath();
+    testResolveAgainstConfigDirUsesConfigBase();
+    testResolveAgainstCliCwdUsesCwdBase();
+    testResolveAgainstBaseKeepsAbsolutePath();
     return 0;
 }

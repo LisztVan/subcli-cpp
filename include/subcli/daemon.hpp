@@ -14,6 +14,8 @@ struct DaemonOptions {
     bool check = false;
     bool restartRunning = true;
     std::string exportTarget = "all";
+    std::string pidFile;
+    std::string logFile;
 };
 
 struct DaemonCallbacks {

@@ -187,6 +187,10 @@ std::string defaultTemplatePath(const std::string& dir, const std::string& filen
     return (base / filename).string();
 }
 
+bool isSupportedProfile(const std::string& value) {
+    return value == "bypass-cn" || value == "global" || value == "direct" || value == "custom";
+}
+
 void updateTemplateDirDefaults(AppConfig& c, const std::string& oldDir) {
     const std::map<std::string, std::string> filenames = {
         {"mihomo.normal", "mihomo_base.yaml"},
@@ -378,12 +382,14 @@ bool hasHelp(const std::vector<std::string>& args) {
 void printRootUsage() {
     std::cout << "subcli <init|doctor|sub|config|template|asset|export|daemon|run|stop|status|restart|check|completion> ...\n"
               << "\n"
-              << "Common flow:\n"
+              << "Primary flow (cross-platform guarantee):\n"
               << "  subcli init\n"
               << "  subcli doctor\n"
               << "  subcli sub add --name NAME --url URL\n"
               << "  subcli sub update\n"
               << "  subcli export all --check\n"
+              << "\n"
+              << "Optional runtime helpers:\n"
               << "  subcli daemon once --target all\n"
               << "  subcli run sing-box\n"
               << "\n"
@@ -441,7 +447,8 @@ void printExportUsage() {
 
 void printDaemonUsage() {
     std::cout << "usage: subcli daemon <once|run|start|stop|status> [--interval SEC] [--target all|mihomo|sing-box|xray]\n"
-              << "       [--update-assets] [--strict-network] [--check] [--no-restart]\n";
+              << "       [--update-assets] [--strict-network] [--check] [--no-restart] [--pid-file PATH] [--log-file PATH]\n"
+              << "Optional helper for local process hosting; config generation remains the primary product workflow.\n";
 }
 
 void printCheckUsage() {
@@ -1943,7 +1950,7 @@ int doConfigCommand(const std::vector<std::string>& args) {
         } else if (key == "output_dir") {
             cfg.outputDir = resolveFromConfigDir(value);
         } else if (key == "profile") {
-            if (value != "bypass-cn") {
+            if (!isSupportedProfile(value)) {
                 std::cerr << "unsupported profile: " << value << "\n";
                 return 1;
             }
@@ -2686,12 +2693,12 @@ int doDaemonCommand(const std::vector<std::string>& args) {
     if (!validateOptions(
             args,
             2,
-            {"--interval", "--target", "--update-assets", "--strict-network", "--check", "--no-restart"},
-            {"--interval", "--target"}
+            {"--interval", "--target", "--update-assets", "--strict-network", "--check", "--no-restart", "--pid-file", "--log-file"},
+            {"--interval", "--target", "--pid-file", "--log-file"}
         )) {
         return ExitUsage;
     }
-    if (!ensureNoExtraPositionals(args, 2, {"--interval", "--target"}, "daemon accepts mode and options")) {
+    if (!ensureNoExtraPositionals(args, 2, {"--interval", "--target", "--pid-file", "--log-file"}, "daemon accepts mode and options")) {
         return ExitUsage;
     }
 
@@ -2716,6 +2723,8 @@ int doDaemonCommand(const std::vector<std::string>& args) {
     options.strictNetwork = hasFlag(args, "--strict-network");
     options.check = hasFlag(args, "--check");
     options.restartRunning = !hasFlag(args, "--no-restart");
+    options.pidFile = argValue(args, "--pid-file");
+    options.logFile = argValue(args, "--log-file");
 
     DaemonCallbacks callbacks;
     callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return doSubCommand(subArgs); };

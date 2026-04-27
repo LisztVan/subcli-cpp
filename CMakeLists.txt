@@ -110,6 +110,7 @@ target_compile_definitions(subcli PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}
 
 install(TARGETS subcli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY templates/ DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/templates)
+install(FILES packaging/systemd/subcli-daemon.service DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/systemd)
 install(FILES README.subcli.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
 enable_testing()

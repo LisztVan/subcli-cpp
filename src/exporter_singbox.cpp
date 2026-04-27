@@ -17,6 +17,12 @@ std::string normalizeSingBoxGroupType(std::string type) {
     if (type == "url-test" || type == "urltest") {
         return "urltest";
     }
+    if (type == "fallback") {
+        return "urltest";
+    }
+    if (type == "load-balance" || type == "loadbalance") {
+        return "selector";
+    }
     return "selector";
 }
 
@@ -143,6 +149,14 @@ void ensureSingBoxCustomRoutingRules(nlohmann::json& root, const AppConfig& conf
             root["route"]["final"] = item.outbound;
             continue;
         }
+        if (type == "geosite" && value == "private" && !item.outbound.empty()) {
+            root["route"]["rules"].push_back({{"domain", nlohmann::json::array({"private"})}, {"outbound", item.outbound}});
+            continue;
+        }
+        if (type == "geoip" && value == "private" && !item.outbound.empty()) {
+            root["route"]["rules"].push_back({{"ip_cidr", nlohmann::json::array({"private"})}, {"outbound", item.outbound}});
+            continue;
+        }
         if (type == "geosite" && value == "cn" && !item.outbound.empty()) {
             if (!hasRuleSetOutboundRule(root["route"]["rules"], "geosite-cn", item.outbound)) {
                 root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geosite-cn"})}, {"outbound", item.outbound}});
@@ -156,6 +170,43 @@ void ensureSingBoxCustomRoutingRules(nlohmann::json& root, const AppConfig& conf
             continue;
         }
     }
+}
+
+void ensureSingBoxProfileRoute(nlohmann::json& root, const std::string& finalTarget) {
+    if (!root.contains("dns") || !root["dns"].is_object()) {
+        root["dns"] = nlohmann::json::object();
+    }
+    if (!root["dns"].contains("servers") || !root["dns"]["servers"].is_array()) {
+        root["dns"]["servers"] = nlohmann::json::array();
+    }
+    removeJsonArrayObjectsByTag(root["dns"]["servers"], {"dns-remote"});
+    root["dns"]["servers"].push_back(
+        {{"type", "udp"}, {"tag", "dns-remote"}, {"server", "1.1.1.1"}, {"server_port", 53}}
+    );
+    if (!root["dns"].contains("rules") || !root["dns"]["rules"].is_array()) {
+        root["dns"]["rules"] = nlohmann::json::array();
+    }
+    if (root["dns"]["rules"].empty()) {
+        root["dns"]["rules"].push_back({{"server", "dns-remote"}});
+    }
+    if (!root["dns"].contains("final")) {
+        root["dns"]["final"] = "dns-remote";
+    }
+
+    if (!root.contains("route") || !root["route"].is_object()) {
+        root["route"] = nlohmann::json::object();
+    }
+    if (!root["route"].contains("rules") || !root["route"]["rules"].is_array()) {
+        root["route"]["rules"] = nlohmann::json::array();
+    }
+    if (!hasSingBoxDnsDirectRule(root["route"]["rules"])) {
+        root["route"]["rules"].push_back(
+            {{"port", 53}, {"network", nlohmann::json::array({"udp"})}, {"action", "route"}, {"outbound", "DIRECT"}}
+        );
+    }
+    root["route"]["auto_detect_interface"] = true;
+    root["route"]["default_domain_resolver"] = "dns-remote";
+    root["route"]["final"] = finalTarget;
 }
 
 } // namespace
@@ -285,47 +336,10 @@ ExportResult exportSingBoxImpl(
         ensureSingBoxCustomRoutingRules(root, config);
     } else if (config.profile == "bypass-cn") {
         ensureSingBoxBypassCnProfile(root, config);
+    } else if (config.profile == "direct") {
+        ensureSingBoxProfileRoute(root, "DIRECT");
     } else {
-    if (!root.contains("dns") || !root["dns"].is_object()) {
-        root["dns"] = nlohmann::json::object();
-    }
-    if (!root["dns"].contains("servers") || !root["dns"]["servers"].is_array()) {
-        root["dns"]["servers"] = nlohmann::json::array();
-    }
-    removeJsonArrayObjectsByTag(root["dns"]["servers"], {"dns-remote"});
-    root["dns"]["servers"].push_back(
-        {{"type", "udp"}, {"tag", "dns-remote"}, {"server", "1.1.1.1"}, {"server_port", 53}}
-    );
-    if (!root["dns"].contains("rules") || !root["dns"]["rules"].is_array()) {
-        root["dns"]["rules"] = nlohmann::json::array();
-    }
-    if (root["dns"]["rules"].empty()) {
-        root["dns"]["rules"].push_back({{"server", "dns-remote"}});
-    }
-    if (!root["dns"].contains("final")) {
-        root["dns"]["final"] = "dns-remote";
-    }
-
-    if (!root.contains("route") || !root["route"].is_object()) {
-        root["route"] = nlohmann::json::object();
-    }
-    if (!root["route"].contains("rules") || !root["route"]["rules"].is_array()) {
-        root["route"]["rules"] = nlohmann::json::array();
-    }
-    if (!hasSingBoxDnsDirectRule(root["route"]["rules"])) {
-        root["route"]["rules"].push_back(
-            {{"port", 53}, {"network", nlohmann::json::array({"udp"})}, {"action", "route"}, {"outbound", "DIRECT"}}
-        );
-    }
-    if (!root["route"].contains("auto_detect_interface")) {
-        root["route"]["auto_detect_interface"] = true;
-    }
-    if (!root["route"].contains("default_domain_resolver")) {
-        root["route"]["default_domain_resolver"] = "dns-remote";
-    }
-    if (!root["route"].contains("final")) {
-        root["route"]["final"] = "PROXY";
-    }
+        ensureSingBoxProfileRoute(root, "PROXY");
     }
 
     result.ok = writeFile(outPath, root.dump(2), error);

@@ -20,6 +20,15 @@ std::time_t timegmPortable(std::tm* tm) {
 #endif
 }
 
+std::filesystem::path normalizeAbsolutePathImpl(const std::filesystem::path& path) {
+    std::error_code ec;
+    auto abs = std::filesystem::absolute(path, ec);
+    if (ec) {
+        return path;
+    }
+    return abs.lexically_normal();
+}
+
 } // namespace
 
 std::string nowIso8601() {
@@ -99,6 +108,18 @@ bool parseIso8601(const std::string& value, std::time_t& out) {
     }
     out = timegmPortable(&tm);
     return out != static_cast<std::time_t>(-1);
+}
+
+std::filesystem::path normalizeAbsolutePathForTest(const std::filesystem::path& path) {
+    return normalizeAbsolutePathImpl(path);
+}
+
+std::string resolveAgainstBaseForTest(const std::string& baseDir, const std::string& path) {
+    std::filesystem::path p(path);
+    if (p.is_absolute()) {
+        return normalizeAbsolutePathImpl(p).string();
+    }
+    return normalizeAbsolutePathImpl(std::filesystem::path(baseDir) / p).string();
 }
 
 } // namespace subcli

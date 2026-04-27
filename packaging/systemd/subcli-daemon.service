@@ -1,0 +1,13 @@
+[Unit]
+Description=subcli daemon background sync service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/subcli daemon run --target all --interval 1800 --update-assets
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -20,5 +20,6 @@ struct FetchResult {
 
 FetchResult fetchSubscription(const Subscription& sub, bool useCacheFallback = true);
 FetchResult fetchSubscriptionWithRetry(const Subscription& sub, bool useCacheFallback = true);
+std::string decodeFileUrlPath(const std::string& encoded);
 
 } // namespace subcli

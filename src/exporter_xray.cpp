@@ -153,6 +153,15 @@ void ensureXrayCustomRoutingRules(nlohmann::json& root, const AppConfig& config)
     }
 }
 
+void ensureXrayProfileRoutingRoot(nlohmann::json& root) {
+    if (!root.contains("routing") || !root["routing"].is_object()) {
+        root["routing"] = nlohmann::json::object();
+    }
+    if (!root["routing"].contains("rules") || !root["routing"]["rules"].is_array()) {
+        root["routing"]["rules"] = nlohmann::json::array();
+    }
+}
+
 } // namespace
 
 ExportResult exportXrayImpl(
@@ -215,6 +224,8 @@ ExportResult exportXrayImpl(
         ensureXrayCustomRoutingRules(root, config);
     } else if (config.profile == "bypass-cn") {
         ensureXrayBypassCnProfile(root);
+    } else if (config.profile == "direct") {
+        ensureXrayProfileRoutingRoot(root);
     }
     if (!root["routing"].contains("balancers") || !root["routing"]["balancers"].is_array()) {
         root["routing"]["balancers"] = nlohmann::json::array();
@@ -228,8 +239,12 @@ ExportResult exportXrayImpl(
         root["routing"]["balancers"].push_back(
             {{"tag", "PROXY"}, {"selector", nlohmann::json::array({kManagedTagPrefix})}, {"fallbackTag", "DIRECT"}, {"strategy", {{"type", strategy}}}}
         );
-        const std::string finalOutbound = customXrayFinalOutbound(config);
-        if (finalOutbound == "PROXY" || finalOutbound.empty()) {
+        const std::string customFinalOutbound = customXrayFinalOutbound(config);
+        std::string finalOutbound = customFinalOutbound;
+        if (finalOutbound.empty()) {
+            finalOutbound = config.profile == "direct" ? "DIRECT" : "PROXY";
+        }
+        if (finalOutbound == "PROXY") {
             if (!hasXrayCatchAllRule(root["routing"]["rules"], "PROXY")) {
                 root["routing"]["rules"].push_back(
                     {{"type", "field"}, {"network", "tcp,udp"}, {"balancerTag", "PROXY"}}

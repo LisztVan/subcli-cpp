@@ -12,6 +12,12 @@ std::string normalizeMihomoGroupType(std::string type) {
     if (type == "url-test" || type == "urltest") {
         return "url-test";
     }
+    if (type == "fallback") {
+        return "fallback";
+    }
+    if (type == "load-balance" || type == "loadbalance") {
+        return "load-balance";
+    }
     return "select";
 }
 
@@ -63,6 +69,25 @@ void ensureMihomoCustomRoutingRules(YAML::Node& root, const AppConfig& config) {
         if (!hasMihomoRule(root["rules"], rendered)) {
             root["rules"].push_back(rendered);
         }
+    }
+}
+
+void ensureMihomoProfileRules(YAML::Node& root, const std::string& finalTarget) {
+    if (!root["rules"] || !root["rules"].IsSequence()) {
+        root["rules"] = YAML::Node(YAML::NodeType::Sequence);
+    }
+    YAML::Node filtered(YAML::NodeType::Sequence);
+    for (const auto& rule : root["rules"]) {
+        const auto text = rule.as<std::string>("");
+        if (text == "MATCH,PROXY" || text == "MATCH,DIRECT") {
+            continue;
+        }
+        filtered.push_back(rule);
+    }
+    root["rules"] = filtered;
+    const std::string rule = "MATCH," + finalTarget;
+    if (!hasMihomoRule(root["rules"], rule)) {
+        root["rules"].push_back(rule);
     }
 }
 
@@ -171,9 +196,12 @@ ExportResult exportMihomoImpl(
             group["name"] = configured.name;
             const auto groupType = normalizeMihomoGroupType(configured.type);
             group["type"] = groupType;
-            if (groupType == "url-test") {
+            if (groupType == "url-test" || groupType == "fallback") {
                 group["url"] = configured.url.empty() ? "http://www.gstatic.com/generate_204" : configured.url;
                 group["interval"] = configured.interval > 0 ? configured.interval : 300;
+            }
+            if (groupType == "load-balance") {
+                group["strategy"] = "round-robin";
             }
             group["proxies"] = YAML::Node(YAML::NodeType::Sequence);
             for (const auto& member : configured.members) {
@@ -197,13 +225,10 @@ ExportResult exportMihomoImpl(
         ensureMihomoCustomRoutingRules(root, config);
     } else if (config.profile == "bypass-cn") {
         ensureMihomoBypassCnProfile(root);
+    } else if (config.profile == "direct") {
+        ensureMihomoProfileRules(root, "DIRECT");
     } else {
-        if (!root["rules"] || !root["rules"].IsSequence()) {
-            root["rules"] = YAML::Node(YAML::NodeType::Sequence);
-        }
-        if (!hasMihomoRule(root["rules"], "MATCH,PROXY")) {
-            root["rules"].push_back("MATCH,PROXY");
-        }
+        ensureMihomoProfileRules(root, "PROXY");
     }
 
     YAML::Emitter emitter;

@@ -19,6 +19,7 @@
 #include "subcli/fetch.hpp"
 #include "subcli/node.hpp"
 #include "subcli/parser.hpp"
+#include "subcli/profile.hpp"
 #include "subcli/protocol_registry.hpp"
 #include "subcli/store.hpp"
 #include "subcli/util.hpp"
@@ -57,6 +58,109 @@ bool containsProtocol(const std::vector<std::string>& protocols, const std::stri
         }
     }
     return false;
+}
+
+void testLoadProfileReadsGroupsRulesAndDns() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-loader-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "work",
+  "description": "daily profile",
+  "default_outbound": "AUTO",
+  "dns": {
+    "mode": "fakeip",
+    "strategy": "prefer_ipv4",
+    "direct_servers": ["223.5.5.5"],
+    "remote_servers": ["1.1.1.1"]
+  },
+  "groups": [
+    {
+      "tag": "AUTO",
+      "type": "url-test",
+      "members": ["HK", "JP"],
+      "default_member": "HK",
+      "url": "https://example.com/generate_204",
+      "strategy": "latency"
+    }
+  ],
+  "rules": [
+    {"type": "geosite", "value": "cn", "outbound": "DIRECT"}
+  ]
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(subcli::loadProfile(path.string(), profile, error), "loadProfile should read valid profile: " + error);
+    require(profile.version == 1, "profile version should be read");
+    require(profile.name == "work", "profile name should be read");
+    require(profile.description == "daily profile", "profile description should be read");
+    require(profile.defaultOutbound == "AUTO", "profile default outbound should be read");
+    require(profile.dns.mode == "fakeip", "profile dns mode should be read");
+    require(profile.dns.strategy == "prefer_ipv4", "profile dns strategy should be read");
+    require(profile.dns.directServers.size() == 1 && profile.dns.directServers[0] == "223.5.5.5", "direct dns server should be read");
+    require(profile.dns.remoteServers.size() == 1 && profile.dns.remoteServers[0] == "1.1.1.1", "remote dns server should be read");
+    require(profile.groups.size() == 1, "profile group should be read");
+    require(profile.groups[0].tag == "AUTO", "profile group tag should be read");
+    require(profile.groups[0].type == "url-test", "profile group type should be read");
+    require(profile.groups[0].members.size() == 2 && profile.groups[0].members[1] == "JP", "profile group members should be read");
+    require(profile.groups[0].defaultMember == "HK", "profile group default member should be read");
+    require(profile.groups[0].url == "https://example.com/generate_204", "profile group url should be read");
+    require(profile.groups[0].interval == 300, "profile group interval should default to 300");
+    require(profile.groups[0].strategy == "latency", "profile group strategy should be read");
+    require(profile.rules.size() == 1, "profile rule should be read");
+    require(profile.rules[0].type == "geosite", "profile rule type should be read");
+    require(profile.rules[0].value == "cn", "profile rule value should be read");
+    require(profile.rules[0].outbound == "DIRECT", "profile rule outbound should be read");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsInvalidJson() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-invalid-json-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << "{ invalid json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject invalid JSON");
+    require(!error.empty(), "invalid JSON should produce an error");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsRuleWithoutOutbound() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-rule-outbound-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "work",
+  "rules": [
+    {"type": "geosite", "value": "cn"}
+  ]
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject rule without outbound");
+    require(!error.empty(), "rule without outbound should produce an error");
+
+    fs::remove_all(dir);
 }
 
 void testProtocolRegistryCoversOfficialTargets() {
@@ -2291,6 +2395,9 @@ void testCoreRuntimeLifecycle() {
 } // namespace
 
 int main() {
+    testLoadProfileReadsGroupsRulesAndDns();
+    testLoadProfileRejectsInvalidJson();
+    testLoadProfileRejectsRuleWithoutOutbound();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();

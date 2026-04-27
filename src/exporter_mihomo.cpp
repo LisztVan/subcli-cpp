@@ -90,6 +90,16 @@ void addMihomoRule(YAML::Node& rules, std::set<std::string>& seen, const std::st
     rules.push_back(rendered);
 }
 
+std::vector<std::string> valuesOrScalar(const std::vector<std::string>& values, const std::string& scalar) {
+    if (!values.empty()) {
+        return values;
+    }
+    if (!scalar.empty()) {
+        return {scalar};
+    }
+    return {};
+}
+
 void applyMihomoProfileDns(YAML::Node& root, const ResolvedProfile& profile) {
     if (!root["dns"] || !root["dns"].IsMap()) {
         root["dns"] = YAML::Node(YAML::NodeType::Map);
@@ -117,25 +127,36 @@ void applyMihomoProfileRules(YAML::Node& root, const ResolvedProfile& profile) {
             addMihomoRule(rules, seen, "GEOSITE," + rule.value + "," + rule.outbound);
         } else if (type == "geoip" && !rule.value.empty()) {
             addMihomoRule(rules, seen, "GEOIP," + rule.value + "," + rule.outbound);
-        } else if (type == "domain" && !rule.value.empty()) {
-            addMihomoRule(rules, seen, "DOMAIN," + rule.value + "," + rule.outbound);
-        } else if (type == "domain_suffix" && !rule.value.empty()) {
-            addMihomoRule(rules, seen, "DOMAIN-SUFFIX," + rule.value + "," + rule.outbound);
-        } else if (type == "domain_keyword" && !rule.value.empty()) {
-            addMihomoRule(rules, seen, "DOMAIN-KEYWORD," + rule.value + "," + rule.outbound);
-        } else if (type == "ip_cidr" && !rule.value.empty()) {
-            addMihomoRule(rules, seen, "IP-CIDR," + rule.value + "," + rule.outbound);
+        } else if (type == "domain") {
+            for (const auto& domain : valuesOrScalar(rule.domains, rule.value)) {
+                addMihomoRule(rules, seen, "DOMAIN," + domain + "," + rule.outbound);
+            }
+        } else if (type == "domain_suffix") {
+            for (const auto& domain : valuesOrScalar(rule.domains, rule.value)) {
+                addMihomoRule(rules, seen, "DOMAIN-SUFFIX," + domain + "," + rule.outbound);
+            }
+        } else if (type == "domain_keyword") {
+            for (const auto& domain : valuesOrScalar(rule.domains, rule.value)) {
+                addMihomoRule(rules, seen, "DOMAIN-KEYWORD," + domain + "," + rule.outbound);
+            }
+        } else if (type == "ip_cidr") {
+            for (const auto& ipCidr : valuesOrScalar(rule.ipCidrs, rule.value)) {
+                addMihomoRule(rules, seen, "IP-CIDR," + ipCidr + "," + rule.outbound);
+            }
         } else if (type == "port") {
-            for (const auto& port : rule.ports) {
+            for (const auto& port : valuesOrScalar(rule.ports, rule.value)) {
                 addMihomoRule(rules, seen, "DST-PORT," + port + "," + rule.outbound);
             }
         } else if (type == "network") {
-            for (const auto& network : rule.networks) {
+            for (const auto& network : valuesOrScalar(rule.networks, rule.value)) {
                 addMihomoRule(rules, seen, "NETWORK," + network + "," + rule.outbound);
             }
         } else if (type == "final" && !outbound.empty()) {
             addMihomoRule(rules, seen, "MATCH," + outbound);
         }
+    }
+    if (rules.size() == 0) {
+        addMihomoRule(rules, seen, "MATCH," + (profile.defaultOutbound.empty() ? std::string("PROXY") : profile.defaultOutbound));
     }
     root["rules"] = rules;
 }

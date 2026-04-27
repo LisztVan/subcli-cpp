@@ -2319,6 +2319,110 @@ void testMihomoProfileDnsAndRulesRenderFromProfile() {
     }
 }
 
+void testMihomoProfileEmptyRulesFallbackToDefaultOutbound() {
+    auto config = makeConfig();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "empty-rules";
+    profile.defaultOutbound = "DIRECT";
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-empty-rules-mihomo";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "mihomo-profile-empty-rules.yaml").string(),
+        error
+    );
+    require(result.ok, "mihomo empty profile rules export should succeed: " + error);
+
+    std::ifstream in(outDir / "mihomo-profile-empty-rules.yaml");
+    const auto yaml = YAML::Load(in);
+    require(yaml["rules"] && yaml["rules"].IsSequence(), "mihomo empty profile rules should render rules list");
+    require(yaml["rules"].size() == 1, "mihomo empty profile rules should render one fallback rule");
+    require(yaml["rules"][0].as<std::string>("") == "MATCH,DIRECT", "mihomo empty profile rules should use profile default outbound");
+}
+
+void testMihomoProfileListValuedRulesRenderAllEntries() {
+    auto config = makeConfig();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "list-rules";
+    subcli::ProfileRule domain;
+    domain.type = "domain";
+    domain.outbound = "DIRECT";
+    domain.domains = {"one.example", "two.example"};
+    profile.rules.push_back(domain);
+    subcli::ProfileRule suffix;
+    suffix.type = "domain_suffix";
+    suffix.outbound = "PROXY";
+    suffix.domains = {"example.org", "example.net"};
+    profile.rules.push_back(suffix);
+    subcli::ProfileRule keyword;
+    keyword.type = "domain_keyword";
+    keyword.outbound = "PROXY";
+    keyword.domains = {"video", "music"};
+    profile.rules.push_back(keyword);
+    subcli::ProfileRule ip;
+    ip.type = "ip_cidr";
+    ip.outbound = "DIRECT";
+    ip.ipCidrs = {"10.0.0.0/8", "192.168.0.0/16"};
+    profile.rules.push_back(ip);
+    subcli::ProfileRule port;
+    port.type = "port";
+    port.outbound = "DIRECT";
+    port.ports = {"53", "123"};
+    profile.rules.push_back(port);
+    subcli::ProfileRule network;
+    network.type = "network";
+    network.outbound = "PROXY";
+    network.networks = {"tcp", "udp"};
+    profile.rules.push_back(network);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-list-rules-mihomo";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "mihomo-profile-list-rules.yaml").string(),
+        error
+    );
+    require(result.ok, "mihomo list-valued profile rules export should succeed: " + error);
+
+    std::ifstream in(outDir / "mihomo-profile-list-rules.yaml");
+    const auto yaml = YAML::Load(in);
+    std::vector<std::string> rules;
+    for (const auto& rule : yaml["rules"]) {
+        rules.push_back(rule.as<std::string>(""));
+    }
+    const std::vector<std::string> expected = {
+        "DOMAIN,one.example,DIRECT",
+        "DOMAIN,two.example,DIRECT",
+        "DOMAIN-SUFFIX,example.org,PROXY",
+        "DOMAIN-SUFFIX,example.net,PROXY",
+        "DOMAIN-KEYWORD,video,PROXY",
+        "DOMAIN-KEYWORD,music,PROXY",
+        "IP-CIDR,10.0.0.0/8,DIRECT",
+        "IP-CIDR,192.168.0.0/16,DIRECT",
+        "DST-PORT,53,DIRECT",
+        "DST-PORT,123,DIRECT",
+        "NETWORK,tcp,PROXY",
+        "NETWORK,udp,PROXY",
+    };
+    require(rules.size() == expected.size(), "mihomo list-valued profile rules should render each entry once");
+    for (size_t i = 0; i < expected.size(); ++i) {
+        require(rules[i] == expected[i], "mihomo list-valued profile rule mapping should preserve order");
+    }
+}
+
 void testCustomRoutingRulesMapToAllTargets() {
     auto config = makeConfig();
     config.profile = "custom";
@@ -3009,6 +3113,8 @@ int main() {
     testMihomoWithEmptyProfileGroupsKeepsLegacyGroupBehavior();
     testMihomoProfileGroupsSynthesizeMissingProxyAndAuto();
     testMihomoProfileDnsAndRulesRenderFromProfile();
+    testMihomoProfileEmptyRulesFallbackToDefaultOutbound();
+    testMihomoProfileListValuedRulesRenderAllEntries();
     testAssetRecordsExposeConfiguredFiles();
     testMissingAssetsReturnsOnlyMissingRecords();
     testUpdateAssetPersistsMetadata();

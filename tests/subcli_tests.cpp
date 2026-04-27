@@ -2823,6 +2823,9 @@ void testSingBoxProfileDnsAndRulesRenderFromProfile() {
     bool hasPorts = false;
     bool hasNetworks = false;
     for (const auto& rule : json["route"]["rules"]) {
+        if (rule.contains("outbound")) {
+            require(rule.value("action", "") == "route", "sing-box profile route rules with outbound should use route action");
+        }
         if (rule.value("outbound", "") == "DIRECT" && rule.contains("rule_set")) {
             for (const auto& name : rule["rule_set"]) {
                 geositeCnRules += name.get<std::string>() == "geosite-cn" ? 1 : 0;
@@ -2831,7 +2834,12 @@ void testSingBoxProfileDnsAndRulesRenderFromProfile() {
         }
         hasBypassCnDuplicate = hasBypassCnDuplicate || (rule.value("outbound", "") == "DIRECT" && rule.contains("rule_set") && rule["rule_set"].size() == 2);
         hasPrivateDomain = hasPrivateDomain || (rule.value("outbound", "") == "DIRECT" && rule.contains("domain") && rule["domain"][0].get<std::string>() == "private");
-        hasPrivateIp = hasPrivateIp || (rule.value("outbound", "") == "DIRECT" && rule.contains("ip_cidr") && rule["ip_cidr"][0].get<std::string>() == "private");
+        if (rule.value("outbound", "") == "DIRECT" && rule.contains("ip_cidr")) {
+            for (const auto& cidr : rule["ip_cidr"]) {
+                require(cidr.get<std::string>() != "private", "sing-box profile geoip private must not render invalid ip_cidr private token");
+            }
+        }
+        hasPrivateIp = hasPrivateIp || (rule.value("outbound", "") == "DIRECT" && rule.value("ip_is_private", false));
         hasScalarDomain = hasScalarDomain || (rule.value("outbound", "") == "DIRECT" && rule.contains("domain") && rule["domain"][0].get<std::string>() == "example.com");
         hasListDomain = hasListDomain || (rule.value("outbound", "") == "PROXY" && rule.contains("domain") && rule["domain"].size() == 2 && rule["domain"][1].get<std::string>() == "two.example");
         hasScalarSuffix = hasScalarSuffix || (rule.value("outbound", "") == "PROXY" && rule.contains("domain_suffix") && rule["domain_suffix"][0].get<std::string>() == "example.org");
@@ -2840,7 +2848,7 @@ void testSingBoxProfileDnsAndRulesRenderFromProfile() {
         hasListKeyword = hasListKeyword || (rule.value("outbound", "") == "DIRECT" && rule.contains("domain_keyword") && rule["domain_keyword"].size() == 2 && rule["domain_keyword"][1].get<std::string>() == "game");
         hasScalarIp = hasScalarIp || (rule.value("outbound", "") == "DIRECT" && rule.contains("ip_cidr") && rule["ip_cidr"][0].get<std::string>() == "10.0.0.0/8");
         hasListIp = hasListIp || (rule.value("outbound", "") == "PROXY" && rule.contains("ip_cidr") && rule["ip_cidr"].size() == 2 && rule["ip_cidr"][1].get<std::string>() == "192.168.0.0/16");
-        hasPorts = hasPorts || (rule.value("outbound", "") == "PROXY" && rule.contains("port") && rule["port"].size() == 3 && rule["port"][0].get<std::string>() == "443" && rule["port"][2].get<std::string>() == "123");
+        hasPorts = hasPorts || (rule.value("outbound", "") == "PROXY" && rule.contains("port") && rule["port"].size() == 3 && rule["port"][0].is_number_integer() && rule["port"][0].get<int>() == 443 && rule["port"][2].is_number_integer() && rule["port"][2].get<int>() == 123);
         hasNetworks = hasNetworks || (rule.value("outbound", "") == "DIRECT" && rule.contains("network") && rule["network"].size() == 2 && rule["network"][0].get<std::string>() == "tcp" && rule["network"][1].get<std::string>() == "udp");
     }
     require(geositeCnRules == 1, "sing-box profile geosite cn should render one profile rule only");
@@ -2854,6 +2862,43 @@ void testSingBoxProfileDnsAndRulesRenderFromProfile() {
     require(hasScalarIp && hasListIp, "sing-box profile ip_cidr rules should support scalar and list values");
     require(hasPorts, "sing-box profile port rules should support scalar and list values");
     require(hasNetworks, "sing-box profile network rules should support scalar and list values");
+}
+
+void testSingBoxProfileEmptyDnsUsesExistingResolverTag() {
+    auto config = makeConfig();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "empty-dns";
+    profile.defaultOutbound = "PROXY";
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-empty-dns-singbox";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "sing-profile-empty-dns.json").string(),
+        error
+    );
+    require(result.ok, "sing-box profile empty dns export should succeed: " + error);
+
+    std::ifstream in(outDir / "sing-profile-empty-dns.json");
+    const auto json = nlohmann::json::parse(in);
+    const std::string dnsFinal = json["dns"].value("final", "");
+    const std::string routeResolver = json["route"].value("default_domain_resolver", "");
+    bool hasDnsFinalServer = false;
+    bool hasRouteResolverServer = false;
+    for (const auto& server : json["dns"]["servers"]) {
+        hasDnsFinalServer = hasDnsFinalServer || server.value("tag", "") == dnsFinal;
+        hasRouteResolverServer = hasRouteResolverServer || server.value("tag", "") == routeResolver;
+    }
+    require(!dnsFinal.empty(), "sing-box profile empty dns should set dns final");
+    require(dnsFinal == routeResolver, "sing-box profile empty dns route resolver should match dns final");
+    require(hasDnsFinalServer, "sing-box profile empty dns final should reference an existing server tag");
+    require(hasRouteResolverServer, "sing-box profile empty dns route resolver should reference an existing server tag");
 }
 
 void testMihomoProfileDnsAndRulesRenderFromProfile() {
@@ -3735,6 +3780,7 @@ int main() {
     testSingBoxProfileRegionMemberRendersRegionSelector();
     testSingBoxProfileRegionWildcardRendersReferencedRegionSelectors();
     testSingBoxProfileDnsAndRulesRenderFromProfile();
+    testSingBoxProfileEmptyDnsUsesExistingResolverTag();
     testMihomoProfileDnsAndRulesRenderFromProfile();
     testMihomoProfileEmptyRulesFallbackToDefaultOutbound();
     testMihomoProfileListValuedRulesRenderAllEntries();

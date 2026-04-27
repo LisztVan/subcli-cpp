@@ -82,6 +82,32 @@ nlohmann::json valuesWithScalar(const std::string& value, const std::vector<std:
     return result;
 }
 
+nlohmann::json portValuesWithScalar(const std::string& value, const std::vector<std::string>& values) {
+    nlohmann::json result = nlohmann::json::array();
+    auto addPort = [&](const std::string& item) {
+        if (item.empty()) {
+            return;
+        }
+        try {
+            size_t parsed = 0;
+            const int port = std::stoi(item, &parsed);
+            if (parsed == item.size() && port > 0 && port <= 65535) {
+                result.push_back(port);
+            }
+        } catch (const std::exception&) {
+        }
+    };
+    addPort(value);
+    for (const auto& item : values) {
+        addPort(item);
+    }
+    return result;
+}
+
+nlohmann::json singBoxRouteRule(const std::string& outbound) {
+    return {{"action", "route"}, {"outbound", outbound}};
+}
+
 void appendSingBoxDnsServers(nlohmann::json& servers, const std::vector<std::string>& configured, const std::string& tagPrefix) {
     for (size_t i = 0; i < configured.size(); ++i) {
         if (configured[i].empty()) {
@@ -114,7 +140,11 @@ void ensureSingBoxProfileRouting(nlohmann::json& root, const AppConfig& config, 
     if (root["dns"]["servers"].empty()) {
         root["dns"]["servers"].push_back({{"type", "udp"}, {"tag", "dns-remote"}, {"server", "1.1.1.1"}, {"server_port", 53}});
     }
-    root["dns"]["final"] = profile.dns.remoteServers.empty() ? "dns-direct" : "dns-remote";
+    std::string dnsFinal = "dns-remote";
+    if (profile.dns.remoteServers.empty() && !profile.dns.directServers.empty()) {
+        dnsFinal = "dns-direct";
+    }
+    root["dns"]["final"] = dnsFinal;
     root["dns"]["rules"] = nlohmann::json::array();
     if (!profile.dns.directServers.empty()) {
         root["dns"]["rules"].push_back({{"domain", nlohmann::json::array({"private"})}, {"server", "dns-direct"}});
@@ -148,24 +178,32 @@ void ensureSingBoxProfileRouting(nlohmann::json& root, const AppConfig& config, 
 
         if (type == "geosite" && value == "cn") {
             ensureSingBoxRuleSet(root["route"]["rule_set"], config, "geosite-cn", "sing-box.geosite-cn");
-            root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geosite-cn"})}, {"outbound", item.outbound}});
+            auto rule = singBoxRouteRule(item.outbound);
+            rule["rule_set"] = nlohmann::json::array({"geosite-cn"});
+            root["route"]["rules"].push_back(rule);
             continue;
         }
         if (type == "geoip" && value == "cn") {
             ensureSingBoxRuleSet(root["route"]["rule_set"], config, "geoip-cn", "sing-box.geoip-cn");
-            root["route"]["rules"].push_back({{"rule_set", nlohmann::json::array({"geoip-cn"})}, {"outbound", item.outbound}});
+            auto rule = singBoxRouteRule(item.outbound);
+            rule["rule_set"] = nlohmann::json::array({"geoip-cn"});
+            root["route"]["rules"].push_back(rule);
             continue;
         }
         if (type == "geosite" && value == "private") {
-            root["route"]["rules"].push_back({{"domain", nlohmann::json::array({"private"})}, {"outbound", item.outbound}});
+            auto rule = singBoxRouteRule(item.outbound);
+            rule["domain"] = nlohmann::json::array({"private"});
+            root["route"]["rules"].push_back(rule);
             continue;
         }
         if (type == "geoip" && value == "private") {
-            root["route"]["rules"].push_back({{"ip_cidr", nlohmann::json::array({"private"})}, {"outbound", item.outbound}});
+            auto rule = singBoxRouteRule(item.outbound);
+            rule["ip_is_private"] = true;
+            root["route"]["rules"].push_back(rule);
             continue;
         }
 
-        nlohmann::json rule = {{"outbound", item.outbound}};
+        nlohmann::json rule = singBoxRouteRule(item.outbound);
         if (type == "domain") {
             rule["domain"] = valuesWithScalar(item.value, item.domains);
         } else if (type == "domain_suffix") {
@@ -175,13 +213,13 @@ void ensureSingBoxProfileRouting(nlohmann::json& root, const AppConfig& config, 
         } else if (type == "ip_cidr") {
             rule["ip_cidr"] = valuesWithScalar(item.value, item.ipCidrs);
         } else if (type == "port") {
-            rule["port"] = valuesWithScalar(item.value, item.ports);
+            rule["port"] = portValuesWithScalar(item.value, item.ports);
         } else if (type == "network") {
             rule["network"] = valuesWithScalar(item.value, item.networks);
         } else {
             continue;
         }
-        if (rule.size() > 1) {
+        if (rule.size() > 2) {
             root["route"]["rules"].push_back(rule);
         }
     }

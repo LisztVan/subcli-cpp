@@ -143,6 +143,33 @@ std::string xrayQueryStrategy(std::string strategy) {
     return "UseIP";
 }
 
+std::string xrayProfileFinalTarget(const ResolvedProfile& profile) {
+    for (const auto& item : profile.rules) {
+        const std::string type = toLower(item.type);
+        if (type == "final" || type == "match") {
+            return !item.outbound.empty() ? item.outbound : item.value;
+        }
+    }
+    return profile.defaultOutbound.empty() ? "PROXY" : profile.defaultOutbound;
+}
+
+std::string resolveXrayRouteTarget(
+    const std::string& target,
+    const std::set<std::string>& balancerTags,
+    const std::set<std::string>& outboundTags,
+    std::vector<DiagnosticMessage>& warnings
+) {
+    if (balancerTags.count(target) || outboundTags.count(target)) {
+        return target;
+    }
+    if (balancerTags.count("PROXY") || outboundTags.count("PROXY")) {
+        warnings.push_back({"profile_group_degraded", target + ": unresolved route target, using PROXY"});
+        return "PROXY";
+    }
+    warnings.push_back({"profile_group_degraded", target + ": unresolved route target, using DIRECT"});
+    return "DIRECT";
+}
+
 void setXrayRuleTarget(nlohmann::json& rule, const std::string& target, const std::set<std::string>& balancerTags) {
     if (balancerTags.count(target)) {
         rule["balancerTag"] = target;
@@ -212,6 +239,10 @@ std::vector<std::string> expandXrayProfileMembers(
             }
             continue;
         }
+        if (profileIt != profileMemberMap.end()) {
+            unresolvedMembers.push_back(member);
+            continue;
+        }
         if (validLiteralTags.count(member)) {
             appendUniqueString(out, seen, member);
             continue;
@@ -266,7 +297,9 @@ std::vector<std::string> resolveXrayFallbackMember(
 void ensureXrayProfileRouting(
     nlohmann::json& root,
     const ResolvedProfile& profile,
-    const std::set<std::string>& balancerTags
+    const std::set<std::string>& balancerTags,
+    const std::set<std::string>& outboundTags,
+    std::vector<DiagnosticMessage>& warnings
 ) {
     if (!root.contains("dns") || !root["dns"].is_object()) {
         root["dns"] = nlohmann::json::object();
@@ -334,13 +367,12 @@ void ensureXrayProfileRouting(
         if (rule.size() <= 1) {
             continue;
         }
-        setXrayRuleTarget(rule, item.outbound, balancerTags);
+        const auto target = resolveXrayRouteTarget(item.outbound, balancerTags, outboundTags, warnings);
+        setXrayRuleTarget(rule, target, balancerTags);
         root["routing"]["rules"].push_back(rule);
     }
 
-    if (finalTarget.empty()) {
-        finalTarget = profile.defaultOutbound.empty() ? "PROXY" : profile.defaultOutbound;
-    }
+    finalTarget = resolveXrayRouteTarget(finalTarget.empty() ? xrayProfileFinalTarget(profile) : finalTarget, balancerTags, outboundTags, warnings);
     nlohmann::json finalRule = {{"type", "field"}, {"network", "tcp,udp"}};
     setXrayRuleTarget(finalRule, finalTarget, balancerTags);
     root["routing"]["rules"].push_back(finalRule);
@@ -500,8 +532,10 @@ ExportResult exportXrayImpl(
         removeJsonArrayObjectsByTag(root["routing"]["balancers"], managedBalancerTags);
 
         std::map<std::string, std::string> managedTagByName;
+        std::set<std::string> outboundTags = {"DIRECT", "REJECT"};
         for (size_t i = 0; i < supported.size(); ++i) {
             managedTagByName[supported[i].name] = managed[i].name;
+            outboundTags.insert(managed[i].name);
         }
         std::map<std::string, std::vector<std::string>> profileMemberMap;
         for (const auto& group : profile->groups) {
@@ -568,9 +602,10 @@ ExportResult exportXrayImpl(
             root["routing"]["balancers"].push_back(balancer);
             renderedProfileGroups.insert(group.tag);
         }
+        const std::string finalTarget = xrayProfileFinalTarget(*profile);
         const bool hasAuto = renderedProfileGroups.count("AUTO") > 0;
         const bool hasProxy = renderedProfileGroups.count("PROXY") > 0;
-        if (!hasAuto && (!hasProxy || proxyReferencesAuto)) {
+        if (!hasAuto && (!hasProxy || proxyReferencesAuto || finalTarget == "AUTO")) {
             appendXrayBalancer(root["routing"]["balancers"], "AUTO", managedGroups.groups.at("AUTO"), "leastPing");
             managedBalancerTags.insert("AUTO");
         }
@@ -585,7 +620,7 @@ ExportResult exportXrayImpl(
             appendXrayBalancer(root["routing"]["balancers"], "PROXY", proxyMembers, "leastPing");
             managedBalancerTags.insert("PROXY");
         }
-        ensureXrayProfileRouting(root, *profile, managedBalancerTags);
+        ensureXrayProfileRouting(root, *profile, managedBalancerTags, outboundTags, result.warnings);
         const std::string strategy = detectXrayStrategy(root["routing"]["balancers"]);
         ensureObservatoryForStrategy(root, strategy);
     } else if (!config.routingRules.empty()) {

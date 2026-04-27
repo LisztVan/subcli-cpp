@@ -2101,6 +2101,91 @@ void testXrayProfileInvalidFallbackDefaultIsOmittedWithWarning() {
     }
 }
 
+void testXrayProfileDefaultAutoSynthesizesAutoWhenProxyDoesNotReferenceIt() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-default-auto";
+    profile.defaultOutbound = "AUTO";
+    subcli::ProfileGroup proxy;
+    proxy.tag = "PROXY";
+    proxy.type = "select";
+    proxy.members = {"REGION:HK"};
+    profile.groups.push_back(proxy);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-xray-default-auto";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, (outDir / "xray-default-auto.json").string(), error);
+    require(result.ok, "xray default AUTO profile export should succeed: " + error);
+
+    std::ifstream in(outDir / "xray-default-auto.json");
+    const auto json = nlohmann::json::parse(in);
+    std::set<std::string> validTags;
+    for (const auto& outbound : json["outbounds"]) {
+        validTags.insert(outbound.value("tag", ""));
+    }
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        validTags.insert(balancer.value("tag", ""));
+    }
+
+    require(validTags.count("AUTO") > 0, "xray default AUTO should synthesize an AUTO balancer when groups omit it");
+    bool hasAutoFinal = false;
+    for (const auto& rule : json["routing"]["rules"]) {
+        const auto target = rule.value("balancerTag", rule.value("outboundTag", ""));
+        if (rule.value("network", "") == "tcp,udp") {
+            require(validTags.count(target) > 0, "xray final target should reference an existing outbound or balancer");
+            hasAutoFinal = hasAutoFinal || target == "AUTO";
+        }
+    }
+    require(hasAutoFinal, "xray default AUTO final should route through synthesized AUTO balancer");
+}
+
+void testXrayProfileCyclicGroupsDoNotEmitRecursiveSelectors() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-cyclic-groups";
+    subcli::ProfileGroup a;
+    a.tag = "A";
+    a.type = "select";
+    a.members = {"B"};
+    profile.groups.push_back(a);
+    subcli::ProfileGroup b;
+    b.tag = "B";
+    b.type = "select";
+    b.members = {"A"};
+    profile.groups.push_back(b);
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-xray-cycles";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, (outDir / "xray-cycles.json").string(), error);
+    require(result.ok, "xray cyclic profile groups export should succeed: " + error);
+
+    bool warned = false;
+    for (const auto& warning : result.warnings) {
+        warned = warned || warning.code == "profile_group_degraded";
+    }
+    require(warned, "xray cyclic profile groups should emit degradation warning");
+
+    std::ifstream in(outDir / "xray-cycles.json");
+    const auto json = nlohmann::json::parse(in);
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        const auto tag = balancer.value("tag", "");
+        if (tag != "A" && tag != "B") {
+            continue;
+        }
+        require(!balancer["selector"].empty(), "xray cyclic group should use a safe fallback selector");
+        for (const auto& member : balancer["selector"]) {
+            const auto target = member.get<std::string>();
+            require(target != "A" && target != "B", "xray cyclic group selector should not reference cyclic profile groups");
+        }
+    }
+}
+
 void testMihomoExportSupportsGlobalAndDirectProfiles() {
     auto config = makeConfig();
     const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-mihomo";
@@ -4114,6 +4199,8 @@ int main() {
     testXrayProfileGroupsSynthesizeMissingProxyAndAuto();
     testXrayProfileBalancerReferencesAreResolvedAndWarnWhenLossy();
     testXrayProfileInvalidFallbackDefaultIsOmittedWithWarning();
+    testXrayProfileDefaultAutoSynthesizesAutoWhenProxyDoesNotReferenceIt();
+    testXrayProfileCyclicGroupsDoNotEmitRecursiveSelectors();
     testStructuredFieldsSurviveExportNormalization();
     testNodeManagementPreprocess();
     testExpandProfileMembersExpandsRegionWildcardInOrder();

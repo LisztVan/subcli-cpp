@@ -272,6 +272,47 @@ void testExportProfileResolverLoadsBuiltInProfile() {
     fs::remove_all(outDir);
 }
 
+void testExportProfileResolverOverrideLoadsBuiltInProfile() {
+    auto config = makeConfig();
+    config.profile = "direct";
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    bool loaded = false;
+    require(
+        subcli::loadExportProfile(config, (fs::path(SUBCLI_SOURCE_DIR) / "profiles").string(), "global", profile, loaded, error),
+        "export profile resolver should load built-in profile override: " + error
+    );
+    require(loaded, "export profile resolver should mark built-in override loaded");
+    require(profile.name == "global", "export profile resolver should prefer requested built-in override");
+}
+
+void testExportProfileResolverOverrideLoadsPath() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-export-profile-override-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "custom.json";
+    {
+        std::ofstream out(path);
+        out << R"json({"version":1,"name":"custom-override","default_outbound":"DIRECT"})json";
+    }
+
+    auto config = makeConfig();
+    config.profile = "global";
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    bool loaded = false;
+    require(
+        subcli::loadExportProfile(config, (fs::path(SUBCLI_SOURCE_DIR) / "profiles").string(), path.string(), profile, loaded, error),
+        "export profile resolver should load explicit profile override path: " + error
+    );
+    require(loaded, "export profile resolver should mark path override loaded");
+    require(profile.name == "custom-override", "export profile resolver should prefer requested path override");
+
+    fs::remove_all(dir);
+}
+
 void testExportProfileResolverFailsForMissingProfilePath() {
     auto config = makeConfig();
     config.profilePath = (fs::temp_directory_path() / "subcli-missing-profile.json").string();
@@ -370,7 +411,7 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
-    require(script.find("init doctor sub config template asset export daemon run stop status restart check completion") != std::string::npos, "completion should include root commands");
+    require(script.find("init doctor sub config template asset profile export daemon run stop status restart check completion") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
     require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
 }
@@ -4140,6 +4181,8 @@ int main() {
     testLoadProfileAcceptsFinalRuleWithoutOutbound();
     testBuiltInProfilesExistAndLoad();
     testExportProfileResolverLoadsBuiltInProfile();
+    testExportProfileResolverOverrideLoadsBuiltInProfile();
+    testExportProfileResolverOverrideLoadsPath();
     testExportProfileResolverFailsForMissingProfilePath();
     testExportProfileResolverFailsForInvalidProfileJson();
     testBuiltInAutoGroupsDoNotReferenceProxy();

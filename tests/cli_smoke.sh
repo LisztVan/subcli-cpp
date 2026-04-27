@@ -13,6 +13,19 @@ export XDG_STATE_HOME="$tmp/state"
 "$bin" init >/dev/null
 "$bin" template validate >/dev/null
 
+profile_list="$($bin profile list)"
+if [[ "$profile_list" != *"bypass-cn"* || "$profile_list" != *"global"* || "$profile_list" != *"direct"* ]]; then
+    printf '%s\n' "$profile_list"
+    exit 1
+fi
+"$bin" profile validate profiles/bypass-cn.json >/dev/null
+profile_json="$($bin profile get bypass-cn)"
+if [[ "$profile_json" != *'"name"'* || "$profile_json" != *'"bypass-cn"'* ]]; then
+    printf '%s\n' "$profile_json"
+    exit 1
+fi
+"$bin" profile get unknown >/dev/null 2>&1 && exit 1 || true
+
 config_json="$($bin config list --json)"
 if [[ "$config_json" != *'"output_dir"'* ]]; then
     printf '%s\n' "$config_json"

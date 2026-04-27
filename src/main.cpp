@@ -189,6 +189,23 @@ std::string resolveFromCliCwd(const std::string& path) {
     return resolveAgainst(normalizeAbsolutePath(std::filesystem::current_path()), path);
 }
 
+std::string resolveProfileFileArg(const std::string& path) {
+    const std::string cwdPath = resolveFromCliCwd(path);
+    std::error_code ec;
+    if (std::filesystem::exists(cwdPath, ec) && !ec) {
+        return cwdPath;
+    }
+    ec.clear();
+    std::filesystem::path p(path);
+    if (!p.is_absolute()) {
+        const auto rootPath = normalizeAbsolutePath(gPaths.root / p);
+        if (std::filesystem::exists(rootPath, ec) && !ec) {
+            return rootPath.string();
+        }
+    }
+    return cwdPath;
+}
+
 std::string resolveCachePath(const std::string& path) {
     std::filesystem::path p(path);
     if (p.is_absolute()) {
@@ -211,6 +228,10 @@ std::string defaultTemplatePath(const std::string& dir, const std::string& filen
 
 bool isSupportedProfile(const std::string& value) {
     return value == "bypass-cn" || value == "global" || value == "direct" || value == "custom";
+}
+
+bool isBuiltInProfileNameForCli(const std::string& value) {
+    return value == "bypass-cn" || value == "global" || value == "direct";
 }
 
 void updateTemplateDirDefaults(AppConfig& c, const std::string& oldDir) {
@@ -405,7 +426,7 @@ bool hasHelp(const std::vector<std::string>& args) {
 }
 
 void printRootUsage() {
-    std::cout << "subcli <init|doctor|sub|config|template|asset|export|daemon|run|stop|status|restart|check|completion> ...\n"
+    std::cout << "subcli <init|doctor|sub|config|template|asset|profile|export|daemon|run|stop|status|restart|check|completion> ...\n"
               << "\n"
               << "Primary flow (cross-platform guarantee):\n"
               << "  subcli init\n"
@@ -465,9 +486,16 @@ void printAssetUsage() {
               << "  subcli asset update [asset-key]\n";
 }
 
+void printProfileUsage() {
+    std::cout << "usage: subcli profile <list|get|validate> ...\n"
+              << "  subcli profile list\n"
+              << "  subcli profile get <bypass-cn|global|direct>\n"
+              << "  subcli profile validate <path>\n";
+}
+
 void printExportUsage() {
     std::cout << "usage: subcli export <all|mihomo|sing-box|xray> [--tun] [--check] [--check-timeout SEC]\n"
-              << "       [--output-dir DIR] [--sub ID_OR_NAME] [--tag TAG] [--strict-network]\n";
+              << "       [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network]\n";
 }
 
 void printDaemonUsage() {
@@ -2413,6 +2441,76 @@ int doAssetCommand(const std::vector<std::string>& args) {
     return ExitUsage;
 }
 
+int doProfileCommand(const std::vector<std::string>& args) {
+    if (args.size() < 2 || hasHelp(args)) {
+        printProfileUsage();
+        return ExitOk;
+    }
+    ensureDefaults();
+    AppConfig cfg = loadConfig(gPaths.configPath.string());
+    applyConfigDefaults(cfg);
+    const std::string cmd = args[1];
+    const std::vector<std::string> builtIns = {"bypass-cn", "global", "direct"};
+
+    if (cmd == "list") {
+        if (args.size() != 2) {
+            std::cerr << "profile list does not accept arguments\n";
+            return ExitUsage;
+        }
+        std::cout << "built-in profiles:\n";
+        for (const auto& name : builtIns) {
+            std::cout << "  " << name << "\n";
+        }
+        if (!cfg.profile.empty()) {
+            std::cout << "configured profile: " << cfg.profile << "\n";
+        }
+        if (!cfg.profilePath.empty()) {
+            std::cout << "configured profile_path: " << cfg.profilePath << "\n";
+        }
+        return ExitOk;
+    }
+
+    if (cmd == "get") {
+        if (args.size() != 3) {
+            printProfileUsage();
+            return ExitUsage;
+        }
+        if (!isBuiltInProfileNameForCli(args[2])) {
+            std::cerr << "unknown built-in profile: " << args[2] << "\n";
+            return ExitError;
+        }
+        std::string path;
+        AppConfig builtInConfig;
+        resolveExportProfilePath(builtInConfig, gPaths.profileDir.string(), args[2], path);
+        std::ifstream in(path);
+        if (!in) {
+            std::cerr << "failed to open profile: " << path << "\n";
+            return ExitError;
+        }
+        std::cout << in.rdbuf();
+        return ExitOk;
+    }
+
+    if (cmd == "validate") {
+        if (args.size() != 3) {
+            printProfileUsage();
+            return ExitUsage;
+        }
+        ResolvedProfile profile;
+        std::string error;
+        const std::string path = resolveProfileFileArg(args[2]);
+        if (!loadProfile(path, profile, error)) {
+            std::cerr << "profile validation failed: " << error << "\n";
+            return ExitError;
+        }
+        std::cout << "profile valid: " << profile.name << "\n";
+        return ExitOk;
+    }
+
+    std::cerr << "unknown profile command: " << cmd << "\n";
+    return ExitUsage;
+}
+
 int doExportCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         printExportUsage();
@@ -2431,12 +2529,12 @@ int doExportCommand(const std::vector<std::string>& args) {
     if (!validateOptions(
             args,
             2,
-            {"--tun", "--check", "--check-timeout", "--output-dir", "--sub", "--tag", "--strict-network", "--download-assets"},
-            {"--check-timeout", "--output-dir", "--sub", "--tag"}
+            {"--tun", "--check", "--check-timeout", "--output-dir", "--profile", "--sub", "--tag", "--strict-network", "--download-assets"},
+            {"--check-timeout", "--output-dir", "--profile", "--sub", "--tag"}
         )) {
         return ExitUsage;
     }
-    if (!ensureNoExtraPositionals(args, 2, {"--check-timeout", "--output-dir", "--sub", "--tag"}, "export accepts only one target and options")) {
+    if (!ensureNoExtraPositionals(args, 2, {"--check-timeout", "--output-dir", "--profile", "--sub", "--tag"}, "export accepts only one target and options")) {
         return ExitUsage;
     }
 
@@ -2481,6 +2579,13 @@ int doExportCommand(const std::vector<std::string>& args) {
     }
     const auto onlySubs = argValues(args, "--sub");
     const auto onlyTags = argValues(args, "--tag");
+    std::string profileOverride;
+    if (hasOption(args, "--profile")) {
+        profileOverride = argValue(args, "--profile");
+        if (!isBuiltInProfileNameForCli(profileOverride)) {
+            profileOverride = resolveProfileFileArg(profileOverride);
+        }
+    }
     std::filesystem::create_directories(outputDir);
 
     std::vector<size_t> selected;
@@ -2574,7 +2679,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     bool xrayOk = false;
     ResolvedProfile resolvedProfile;
     bool profileLoaded = false;
-    if (!loadExportProfile(cfg, gPaths.profileDir.string(), resolvedProfile, profileLoaded, error)) {
+    if (!loadExportProfile(cfg, gPaths.profileDir.string(), profileOverride, resolvedProfile, profileLoaded, error)) {
         std::cerr << error << "\n";
         return 1;
     }
@@ -2862,6 +2967,9 @@ int main(int argc, char** argv) {
         }
         if (cmd == "asset") {
             return doAssetCommand(tail);
+        }
+        if (cmd == "profile") {
+            return doProfileCommand(tail);
         }
         if (cmd == "export") {
             return doExportCommand(tail);

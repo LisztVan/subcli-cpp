@@ -12,7 +12,7 @@ std::string generateBashCompletion() {
     subcmd="${COMP_WORDS[2]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "init doctor sub config template asset export daemon run stop status restart check completion" -- "$cur") )
+        COMPREPLY=( $(compgen -W "init doctor sub config template asset profile export daemon run stop status restart check completion" -- "$cur") )
         return 0
     fi
 
@@ -41,12 +41,19 @@ std::string generateBashCompletion() {
         asset)
             COMPREPLY=( $(compgen -W "list status validate update" -- "$cur") )
             ;;
+        profile)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "list get validate" -- "$cur") )
+                return 0
+            fi
+            COMPREPLY=( $(compgen -W "bypass-cn global direct" -- "$cur") )
+            ;;
         export)
             if [[ $COMP_CWORD -eq 2 ]]; then
                 COMPREPLY=( $(compgen -W "all mihomo sing-box xray" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "--tun --check --check-timeout --output-dir --sub --tag --strict-network" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--tun --check --check-timeout --output-dir --profile --sub --tag --strict-network" -- "$cur") )
             ;;
         daemon)
             if [[ $COMP_CWORD -eq 2 ]]; then

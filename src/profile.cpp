@@ -53,15 +53,19 @@ bool resolveExportProfilePath(const AppConfig& config, const std::string& profil
         path = (std::filesystem::path(profilesDir) / (profileName + ".json")).string();
         return true;
     }
+    if (!requestedProfile.empty()) {
+        path = requestedProfile;
+        return true;
+    }
     return false;
 }
 
-bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, ResolvedProfile& profile, bool& loaded, std::string& error) {
+bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, const std::string& requestedProfile, ResolvedProfile& profile, bool& loaded, std::string& error) {
     loaded = false;
     error.clear();
 
     std::string path;
-    if (!resolveExportProfilePath(config, profilesDir, "", path)) {
+    if (!resolveExportProfilePath(config, profilesDir, requestedProfile, path)) {
         return true;
     }
 
@@ -73,6 +77,10 @@ bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, 
 
     loaded = true;
     return true;
+}
+
+bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, ResolvedProfile& profile, bool& loaded, std::string& error) {
+    return loadExportProfile(config, profilesDir, "", profile, loaded, error);
 }
 
 bool loadExportProfile(const AppConfig& config, const std::string& profilesDir, ResolvedProfile& profile, std::string& error) {

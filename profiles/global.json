@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "name": "global",
+  "description": "Proxy all traffic through selectable proxy groups.",
+  "default_outbound": "PROXY",
+  "groups": [
+    {
+      "tag": "PROXY",
+      "type": "select",
+      "members": [
+        "AUTO",
+        "DIRECT"
+      ],
+      "default": "AUTO"
+    },
+    {
+      "tag": "AUTO",
+      "type": "url-test",
+      "members": [
+        "PROXY"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "strategy": "latency"
+    }
+  ],
+  "rules": [
+    {
+      "type": "final",
+      "outbound": "PROXY"
+    }
+  ]
+}

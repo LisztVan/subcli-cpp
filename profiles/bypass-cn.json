@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "name": "bypass-cn",
+  "description": "Route private and China traffic directly, proxy everything else.",
+  "default_outbound": "PROXY",
+  "dns": {
+    "mode": "fake-ip",
+    "strategy": "prefer_ipv4",
+    "direct_servers": [
+      "223.5.5.5",
+      "119.29.29.29"
+    ],
+    "remote_servers": [
+      "1.1.1.1",
+      "8.8.8.8"
+    ]
+  },
+  "groups": [
+    {
+      "tag": "PROXY",
+      "type": "select",
+      "members": [
+        "AUTO",
+        "DIRECT"
+      ],
+      "default": "AUTO"
+    },
+    {
+      "tag": "AUTO",
+      "type": "url-test",
+      "members": [
+        "PROXY"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": 300,
+      "strategy": "latency"
+    }
+  ],
+  "rules": [
+    {
+      "type": "geosite",
+      "value": "private",
+      "outbound": "DIRECT"
+    },
+    {
+      "type": "geoip",
+      "value": "private",
+      "outbound": "DIRECT"
+    },
+    {
+      "type": "geosite",
+      "value": "cn",
+      "outbound": "DIRECT"
+    },
+    {
+      "type": "geoip",
+      "value": "cn",
+      "outbound": "DIRECT"
+    },
+    {
+      "type": "final",
+      "outbound": "PROXY"
+    }
+  ]
+}

@@ -216,6 +216,32 @@ void testLoadProfileAcceptsFinalRuleWithoutOutbound() {
     fs::remove_all(dir);
 }
 
+void testBuiltInProfilesExistAndLoad() {
+    const fs::path profilesDir = fs::path(SUBCLI_SOURCE_DIR) / "profiles";
+    const fs::path bypassCnPath = profilesDir / "bypass-cn.json";
+    const fs::path globalPath = profilesDir / "global.json";
+    const fs::path directPath = profilesDir / "direct.json";
+
+    require(fs::exists(bypassCnPath), "bypass-cn profile should exist");
+    require(fs::exists(globalPath), "global profile should exist");
+    require(fs::exists(directPath), "direct profile should exist");
+
+    subcli::ResolvedProfile bypassCn;
+    subcli::ResolvedProfile global;
+    subcli::ResolvedProfile direct;
+    std::string error;
+    require(subcli::loadProfile(bypassCnPath.string(), bypassCn, error), "bypass-cn profile should load: " + error);
+    require(subcli::loadProfile(globalPath.string(), global, error), "global profile should load: " + error);
+    require(subcli::loadProfile(directPath.string(), direct, error), "direct profile should load: " + error);
+
+    require(bypassCn.name == "bypass-cn", "bypass-cn profile name should be set");
+    require(bypassCn.defaultOutbound == "PROXY", "bypass-cn default outbound should be PROXY");
+    require(bypassCn.rules.size() == 5, "bypass-cn should define four bypass rules and a final rule");
+    require(global.defaultOutbound == "PROXY", "global default outbound should be PROXY");
+    require(direct.defaultOutbound == "DIRECT", "direct default outbound should be DIRECT");
+    require(direct.groups.empty(), "direct profile should not define groups");
+}
+
 void testProtocolRegistryCoversOfficialTargets() {
     require(subcli::canonicalProtocolName("ss") == "shadowsocks", "ss should normalize to shadowsocks");
     require(subcli::canonicalProtocolName("hy2") == "hysteria2", "hy2 should normalize to hysteria2");
@@ -2453,6 +2479,7 @@ int main() {
     testLoadProfileRejectsRuleWithoutOutbound();
     testLoadProfileAcceptsRuleWithoutValueOrLists();
     testLoadProfileAcceptsFinalRuleWithoutOutbound();
+    testBuiltInProfilesExistAndLoad();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();

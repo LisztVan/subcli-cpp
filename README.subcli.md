@@ -99,6 +99,7 @@ subcli asset update xray.geoip
 
 subcli export all
 subcli export all --check
+subcli export all --strict-capabilities
 subcli export sing-box --output-dir ./outputs --check --check-timeout 30
 subcli export mihomo --strict-network
 subcli export mihomo --download-assets
@@ -206,7 +207,7 @@ Profile group member selectors support generated expansion tokens:
 - `TAG:<tag>`
 - `PROTOCOL:<name>`
 
-Use `subcli profile explain <path-or-name> [--target <mihomo|sing-box|xray>]` to inspect effective profile behavior and selector semantics.
+Use `subcli profile explain <path-or-name> [--target <all|mihomo|sing-box|xray>]` to inspect effective profile behavior, selector semantics, and per-target capability notes.
 
 Advanced template merge behavior is also profile-driven via `template_policy`.
 
@@ -230,6 +231,51 @@ Example:
 ```
 
 `reject` keeps template content and emits warning `template_policy_reject_preserved` without failing export.
+
+Capability-aware warnings:
+
+- `capability_degraded`: exported with target-specific approximation.
+- `capability_unsupported`: node/feature skipped for this target.
+
+Use `--strict-capabilities` to fail export when degraded/unsupported behavior is detected for the selected target(s).
+
+JSON output example:
+
+```bash
+subcli export mihomo --profile bypass-cn --json
+```
+
+```json
+{
+  "summary": {
+    "success": 1,
+    "failed": 0,
+    "skipped_nodes": 0
+  },
+  "targets": [
+    {
+      "target": "mihomo",
+      "ok": true,
+      "output": ".../mihomo.yaml",
+      "skipped": 0,
+      "capabilities": {
+        "native": 3,
+        "degraded": 0,
+        "unsupported": 0,
+        "requires_asset": 0
+      },
+      "findings": [
+        {
+          "level": "native",
+          "code": "profile_group_type",
+          "subject": "AUTO",
+          "message": "group type is natively supported"
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## Template Management
 

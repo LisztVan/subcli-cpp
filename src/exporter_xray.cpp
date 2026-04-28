@@ -163,10 +163,10 @@ std::string resolveXrayRouteTarget(
         return target;
     }
     if (balancerTags.count("PROXY") || outboundTags.count("PROXY")) {
-        warnings.push_back({"profile_group_degraded", target + ": unresolved route target, using PROXY"});
+        warnings.push_back({"capability_degraded", target + ": unresolved route target, using PROXY"});
         return "PROXY";
     }
-    warnings.push_back({"profile_group_degraded", target + ": unresolved route target, using DIRECT"});
+    warnings.push_back({"capability_degraded", target + ": unresolved route target, using DIRECT"});
     return "DIRECT";
 }
 
@@ -476,7 +476,7 @@ ExportResult exportXrayImpl(
             supported.push_back(node);
         } else {
             ++result.skipped;
-            result.warnings.push_back({"unsupported_node", node.name + ": " + reason});
+            result.warnings.push_back({"capability_unsupported", node.name + ": " + reason});
         }
     }
     if (supported.empty()) {
@@ -583,7 +583,7 @@ ExportResult exportXrayImpl(
             std::vector<std::string> unresolvedMembers;
             auto members = expandXrayProfileMembers(group.members, profileGroups, managedGroups, supported, managedTagByName, profileMemberMap, validLiteralTags, unresolvedMembers, visiting);
             for (const auto& member : unresolvedMembers) {
-                result.warnings.push_back({"profile_group_degraded", group.tag + ": unresolved member " + member + " omitted"});
+                result.warnings.push_back({"capability_degraded", group.tag + ": unresolved member " + member + " omitted"});
             }
             if (members.empty()) {
                 for (const auto& tag : managedGroups.groups.at("PROXY")) {
@@ -592,7 +592,7 @@ ExportResult exportXrayImpl(
                 if (members.empty()) {
                     members.push_back("DIRECT");
                 }
-                result.warnings.push_back({"profile_group_degraded", group.tag + ": no resolvable members, using safe fallback selector"});
+                result.warnings.push_back({"capability_degraded", group.tag + ": no resolvable members, using safe fallback selector"});
             }
             nlohmann::json selector = nlohmann::json::array();
             for (const auto& member : members) {
@@ -604,22 +604,22 @@ ExportResult exportXrayImpl(
             nlohmann::json balancer = {{"tag", group.tag}, {"selector", selector}, {"strategy", {{"type", xrayGroupStrategy(group.type)}}}};
             const std::string type = toLower(group.type);
             if (isXraySelectGroup(type)) {
-                result.warnings.push_back({"profile_group_degraded", group.tag + ": select rendered as leastPing balancer"});
+                result.warnings.push_back({"capability_degraded", group.tag + ": select rendered as leastPing balancer"});
             }
             if (isXrayFallbackGroup(type)) {
                 if (!group.defaultMember.empty()) {
                     std::vector<std::string> unresolvedFallback;
                     const auto fallbackTags = resolveXrayFallbackMember(group.defaultMember, profileGroups, managedGroups, supported, managedTagByName, validLiteralTags, unresolvedFallback);
                     for (const auto& member : unresolvedFallback) {
-                        result.warnings.push_back({"profile_group_degraded", group.tag + ": unresolved fallback default " + member + " omitted"});
+                        result.warnings.push_back({"capability_degraded", group.tag + ": unresolved fallback default " + member + " omitted"});
                     }
                     if (!fallbackTags.empty()) {
                         balancer["fallbackTag"] = fallbackTags.front();
                     } else {
-                        result.warnings.push_back({"profile_group_degraded", group.tag + ": fallback rendered as leastPing without fallbackTag"});
+                        result.warnings.push_back({"capability_degraded", group.tag + ": fallback rendered as leastPing without fallbackTag"});
                     }
                 } else {
-                    result.warnings.push_back({"profile_group_degraded", group.tag + ": fallback rendered as leastPing without fallbackTag"});
+                    result.warnings.push_back({"capability_degraded", group.tag + ": fallback rendered as leastPing without fallbackTag"});
                 }
             }
             root["routing"]["balancers"].push_back(balancer);

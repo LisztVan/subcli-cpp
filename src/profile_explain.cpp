@@ -6,6 +6,7 @@
 #include <sstream>
 
 #include "exporter_internal.hpp"
+#include "subcli/capability_matrix.hpp"
 #include "subcli/util.hpp"
 
 namespace subcli {
@@ -298,9 +299,9 @@ std::string explainProfileText(const ResolvedProfile& profile, const ProfileExpl
         }
     }
 
-    if (options.hasTarget) {
-        out << "\ntarget: " << targetName(options.target) << "\n";
-        const auto assets = requiredAssetsForProfileTarget(profile, options.target);
+    auto renderTargetSection = [&](ExportTarget target) {
+        out << "\ntarget: " << targetName(target) << "\n";
+        const auto assets = requiredAssetsForProfileTarget(profile, target);
         out << "\nrequired_assets:\n";
         if (assets.empty()) {
             out << "  none\n";
@@ -309,7 +310,7 @@ std::string explainProfileText(const ResolvedProfile& profile, const ProfileExpl
                 out << "  " << asset << "\n";
             }
         }
-        const auto notes = targetNotesForProfile(profile, options.target);
+        const auto notes = targetNotesForProfile(profile, target);
         out << "\ntarget_notes:\n";
         if (notes.empty()) {
             out << "  none\n";
@@ -318,11 +319,28 @@ std::string explainProfileText(const ResolvedProfile& profile, const ProfileExpl
                 out << "  " << note << "\n";
             }
         }
+        const auto capabilities = assessProfileCapabilities(target, profile);
+        out << "\ncapabilities:\n";
+        if (capabilities.empty()) {
+            out << "  none\n";
+        } else {
+            for (const auto& item : capabilities) {
+                std::string level = "native";
+                if (item.level == CapabilityLevel::Degraded) {
+                    level = "degraded";
+                } else if (item.level == CapabilityLevel::Unsupported) {
+                    level = "unsupported";
+                } else if (item.level == CapabilityLevel::RequiresAsset) {
+                    level = "requires_asset";
+                }
+                out << "  " << item.subject << ": " << level << "\n";
+            }
+        }
 
         out << "\ntemplate_policy_effective:\n";
-        const std::string key = templatePolicyTargetKey(options.target);
+        const std::string key = templatePolicyTargetKey(target);
         const auto targetIt = profile.templatePolicy.targets.find(key);
-        const auto paths = supportedPathsForTarget(options.target);
+        const auto paths = supportedPathsForTarget(target);
         for (const auto& path : paths) {
             std::string action = "default exporter behavior";
             if (targetIt != profile.templatePolicy.targets.end()) {
@@ -333,6 +351,14 @@ std::string explainProfileText(const ResolvedProfile& profile, const ProfileExpl
             }
             out << "  " << path << ": " << action << "\n";
         }
+    };
+
+    if (options.allTargets) {
+        renderTargetSection(ExportTarget::Mihomo);
+        renderTargetSection(ExportTarget::SingBox);
+        renderTargetSection(ExportTarget::Xray);
+    } else if (options.hasTarget) {
+        renderTargetSection(options.target);
     }
 
     return out.str();
@@ -377,7 +403,33 @@ nlohmann::json explainProfileJson(const ResolvedProfile& profile, const ProfileE
         }
     }
 
-    if (!options.hasTarget) {
+    if (!options.hasTarget && !options.allTargets) {
+        result["target"] = nullptr;
+        return result;
+    }
+
+    if (options.allTargets) {
+        result["targets"] = nlohmann::json::array();
+        for (const auto targetValue : {ExportTarget::Mihomo, ExportTarget::SingBox, ExportTarget::Xray}) {
+            nlohmann::json target;
+            target["name"] = targetName(targetValue);
+            target["required_assets"] = requiredAssetsForProfileTarget(profile, targetValue);
+            target["notes"] = targetNotesForProfile(profile, targetValue);
+            nlohmann::json capabilities = nlohmann::json::array();
+            for (const auto& item : assessProfileCapabilities(targetValue, profile)) {
+                std::string level = "native";
+                if (item.level == CapabilityLevel::Degraded) {
+                    level = "degraded";
+                } else if (item.level == CapabilityLevel::Unsupported) {
+                    level = "unsupported";
+                } else if (item.level == CapabilityLevel::RequiresAsset) {
+                    level = "requires_asset";
+                }
+                capabilities.push_back({{"subject", item.subject}, {"code", item.code}, {"level", level}});
+            }
+            target["capabilities"] = capabilities;
+            result["targets"].push_back(target);
+        }
         result["target"] = nullptr;
         return result;
     }

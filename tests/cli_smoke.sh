@@ -63,6 +63,11 @@ if [[ "$profile_explain_target" != *"target: sing-box"* || "$profile_explain_tar
     printf '%s\n' "$profile_explain_target"
     exit 1
 fi
+profile_explain_all="$($bin profile explain bypass-cn --target all)"
+if [[ "$profile_explain_all" != *"target: mihomo"* || "$profile_explain_all" != *"target: sing-box"* || "$profile_explain_all" != *"target: xray"* ]]; then
+    printf '%s\n' "$profile_explain_all"
+    exit 1
+fi
 profile_explain_json="$($bin profile explain bypass-cn --json)"
 if [[ "$profile_explain_json" != *'"profile"'* || "$profile_explain_json" != *'"name":"bypass-cn"'* ]]; then
     printf '%s\n' "$profile_explain_json"
@@ -175,3 +180,21 @@ if [[ "$explain_export" != *"policy explain: profile=bypass-cn"* || "$explain_ex
     printf '%s\n' "$explain_export"
     exit 1
 fi
+if [[ "$explain_export" != *"mihomo capability summary:"* ]]; then
+    printf '%s\n' "$explain_export"
+    exit 1
+fi
+
+export_json="$({ "$bin" export mihomo --profile bypass-cn --sub explain --json; } 2>/dev/null || true)"
+if [[ "$export_json" != *'"summary"'* || "$export_json" != *'"targets"'* || "$export_json" != *'"capabilities"'* || "$export_json" != *'"findings"'* ]]; then
+    printf '%s\n' "$export_json"
+    exit 1
+fi
+
+strict_export_json="$({ "$bin" export all --profile bypass-cn --sub explain --strict-capabilities --json; } 2>/dev/null || true)"
+if [[ "$strict_export_json" != *'"strict_capabilities_blocked":true'* || "$strict_export_json" != *'"violations"'* ]]; then
+    printf '%s\n' "$strict_export_json"
+    exit 1
+fi
+
+"$bin" export all --profile bypass-cn --sub explain --strict-capabilities >/dev/null 2>&1 && exit 1 || true

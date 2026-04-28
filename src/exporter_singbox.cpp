@@ -406,7 +406,7 @@ ExportResult exportSingBoxImpl(
             supported.push_back(node);
         } else {
             ++result.skipped;
-            result.warnings.push_back({"unsupported_node", node.name + ": " + reason});
+            result.warnings.push_back({"capability_unsupported", node.name + ": " + reason});
         }
     }
     if (supported.empty()) {
@@ -536,7 +536,7 @@ ExportResult exportSingBoxImpl(
                 continue;
             }
             if (isDegradedSingBoxProfileGroupType(configured.type)) {
-                result.warnings.push_back({"profile_group_degraded", configured.tag + ": " + configured.type + " rendered as " + normalizeSingBoxGroupType(configured.type)});
+                result.warnings.push_back({"capability_degraded", configured.tag + ": " + configured.type + " rendered as " + normalizeSingBoxGroupType(configured.type)});
             }
             const auto members = expandProfileMembers(configured.members, groups, supported);
             for (const auto& member : members) {

@@ -14,6 +14,8 @@
 #include <sstream>
 #include <thread>
 #include <system_error>
+#include <map>
+#include <tuple>
 
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
@@ -25,6 +27,7 @@
 #include "subcli/daemon.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
+#include "subcli/capability_matrix.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
 #include "subcli/parser.hpp"
@@ -494,12 +497,12 @@ void printProfileUsage() {
               << "  subcli profile list\n"
               << "  subcli profile get <bypass-cn|global|direct>\n"
               << "  subcli profile validate <path>\n"
-              << "  subcli profile explain <path-or-name> [--target <mihomo|sing-box|xray>] [--json]\n";
+              << "  subcli profile explain <path-or-name> [--target <all|mihomo|sing-box|xray>] [--json]\n";
 }
 
 void printExportUsage() {
     std::cout << "usage: subcli export <all|mihomo|sing-box|xray> [--tun] [--check] [--check-timeout SEC]\n"
-              << "       [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network] [--download-assets] [--explain-policy]\n";
+              << "       [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network] [--strict-capabilities] [--download-assets] [--explain-policy] [--json]\n";
 }
 
 std::vector<std::string> templatePolicyPathsForTarget(ExportTarget target) {
@@ -2638,11 +2641,15 @@ int doProfileCommand(const std::vector<std::string>& args) {
         ProfileExplainOptions options;
         if (hasOption(args, "--target")) {
             const auto value = argValue(args, "--target");
-            if (!parseTemplatePolicyTarget(value, options.target)) {
+            if (value == "all") {
+                options.hasTarget = true;
+                options.allTargets = true;
+            } else if (!parseTemplatePolicyTarget(value, options.target)) {
                 std::cerr << "invalid --target value: " << value << "\n";
                 return ExitUsage;
+            } else {
+                options.hasTarget = true;
             }
-            options.hasTarget = true;
         }
 
         if (hasFlag(args, "--json")) {
@@ -2675,7 +2682,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     if (!validateOptions(
             args,
             2,
-            {"--tun", "--check", "--check-timeout", "--output-dir", "--profile", "--sub", "--tag", "--strict-network", "--download-assets", "--explain-policy"},
+            {"--tun", "--check", "--check-timeout", "--output-dir", "--profile", "--sub", "--tag", "--strict-network", "--strict-capabilities", "--download-assets", "--explain-policy", "--json"},
             {"--check-timeout", "--output-dir", "--profile", "--sub", "--tag"}
         )) {
         return ExitUsage;
@@ -2689,6 +2696,8 @@ int doExportCommand(const std::vector<std::string>& args) {
     applyConfigDefaults(cfg);
     const bool tun = hasFlag(args, "--tun") ? true : cfg.tun;
     const bool strictNetwork = hasFlag(args, "--strict-network");
+    const bool strictCapabilities = hasFlag(args, "--strict-capabilities");
+    const bool jsonOutput = hasFlag(args, "--json");
     const bool downloadAssets = hasFlag(args, "--download-assets");
     const auto missing = missingAssets(cfg);
     if (!missing.empty()) {
@@ -2826,6 +2835,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     bool mihomoOk = false;
     bool singOk = false;
     bool xrayOk = false;
+    nlohmann::json exportTargets = nlohmann::json::array();
     ResolvedProfile resolvedProfile;
     bool profileLoaded = false;
     if (!loadExportProfile(cfg, gPaths.profileDir.string(), profileOverride, resolvedProfile, profileLoaded, error)) {
@@ -2833,6 +2843,151 @@ int doExportCommand(const std::vector<std::string>& args) {
         return 1;
     }
     const ResolvedProfile* exportProfile = profileLoaded ? &resolvedProfile : nullptr;
+    auto capabilityLevelName = [](CapabilityLevel level) {
+        switch (level) {
+            case CapabilityLevel::Native:
+                return "native";
+            case CapabilityLevel::Degraded:
+                return "degraded";
+            case CapabilityLevel::Unsupported:
+                return "unsupported";
+            case CapabilityLevel::RequiresAsset:
+                return "requires_asset";
+        }
+        return "native";
+    };
+
+    auto capabilityFindingsForTarget = [&](ExportTarget exportTarget) {
+        std::vector<nlohmann::json> findingItems;
+        if (exportProfile != nullptr) {
+            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile)) {
+                findingItems.push_back(
+                    {
+                        {"level", capabilityLevelName(item.level)},
+                        {"code", item.code},
+                        {"subject", item.subject},
+                        {"message", item.message},
+                    }
+                );
+            }
+        }
+        for (const auto& item : assessNodeCapabilities(exportTarget, allNodes)) {
+            findingItems.push_back(
+                {
+                    {"level", capabilityLevelName(item.level)},
+                    {"code", item.code},
+                    {"subject", item.subject},
+                    {"message", item.message},
+                }
+            );
+        }
+
+        std::sort(findingItems.begin(), findingItems.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+            return std::tie(a["level"], a["code"], a["subject"], a["message"]) < std::tie(b["level"], b["code"], b["subject"], b["message"]);
+        });
+
+        nlohmann::json findings = nlohmann::json::array();
+        for (const auto& item : findingItems) {
+            findings.push_back(item);
+        }
+        return findings;
+    };
+
+    auto capabilityCountsForTarget = [&](ExportTarget exportTarget) {
+        std::map<std::string, int> counts = {
+            {"native", 0},
+            {"degraded", 0},
+            {"unsupported", 0},
+            {"requires_asset", 0},
+        };
+        if (exportProfile != nullptr) {
+            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile)) {
+                if (item.level == CapabilityLevel::Native) {
+                    ++counts["native"];
+                } else if (item.level == CapabilityLevel::Degraded) {
+                    ++counts["degraded"];
+                } else if (item.level == CapabilityLevel::Unsupported) {
+                    ++counts["unsupported"];
+                } else if (item.level == CapabilityLevel::RequiresAsset) {
+                    ++counts["requires_asset"];
+                }
+            }
+        }
+        for (const auto& item : assessNodeCapabilities(exportTarget, allNodes)) {
+            if (item.level == CapabilityLevel::Unsupported) {
+                ++counts["unsupported"];
+            }
+        }
+        return counts;
+    };
+
+    auto printCapabilitySummaryForTarget = [&](ExportTarget exportTarget, const std::string& displayName) {
+        const auto counts = capabilityCountsForTarget(exportTarget);
+        std::cout << displayName << " capability summary:"
+                  << " native=" << counts.at("native")
+                  << " degraded=" << counts.at("degraded")
+                  << " unsupported=" << counts.at("unsupported")
+                  << " requires_asset=" << counts.at("requires_asset") << "\n";
+    };
+    if (strictCapabilities && exportProfile != nullptr) {
+        nlohmann::json strictViolations = nlohmann::json::array();
+        auto hasStrictViolation = [&](ExportTarget exportTarget) {
+            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile)) {
+                if (item.level == CapabilityLevel::Degraded || item.level == CapabilityLevel::Unsupported) {
+                    strictViolations.push_back(
+                        {
+                            {"target", templatePolicyTargetKey(exportTarget)},
+                            {"level", capabilityLevelName(item.level)},
+                            {"code", item.code},
+                            {"subject", item.subject},
+                            {"message", item.message},
+                        }
+                    );
+                    if (!jsonOutput) {
+                        std::cerr << "strict-capabilities blocked " << templatePolicyTargetKey(exportTarget) << ": "
+                                  << item.subject << " " << item.message << "\n";
+                    }
+                    return true;
+                }
+            }
+            for (const auto& item : assessNodeCapabilities(exportTarget, allNodes)) {
+                if (item.level == CapabilityLevel::Unsupported) {
+                    strictViolations.push_back(
+                        {
+                            {"target", templatePolicyTargetKey(exportTarget)},
+                            {"level", capabilityLevelName(item.level)},
+                            {"code", item.code},
+                            {"subject", item.subject.empty() ? std::string("node") : item.subject},
+                            {"message", item.message},
+                        }
+                    );
+                    if (!jsonOutput) {
+                        std::cerr << "strict-capabilities blocked " << templatePolicyTargetKey(exportTarget) << ": "
+                                  << (item.subject.empty() ? std::string("node") : item.subject) << " " << item.message << "\n";
+                    }
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        bool blocked = false;
+        if (target == "all") {
+            blocked = hasStrictViolation(ExportTarget::Mihomo) || hasStrictViolation(ExportTarget::SingBox) || hasStrictViolation(ExportTarget::Xray);
+        } else if (target == "mihomo") {
+            blocked = hasStrictViolation(ExportTarget::Mihomo);
+        } else if (target == "sing-box") {
+            blocked = hasStrictViolation(ExportTarget::SingBox);
+        } else if (target == "xray") {
+            blocked = hasStrictViolation(ExportTarget::Xray);
+        }
+        if (blocked) {
+            if (jsonOutput) {
+                printJsonLine({{"summary", {{"success", 0}, {"failed", 1}, {"skipped_nodes", skippedNodes}}}, {"strict_capabilities_blocked", true}, {"violations", strictViolations}});
+            }
+            return ExitError;
+        }
+    }
     if (hasFlag(args, "--explain-policy")) {
         if (exportProfile == nullptr) {
             std::cout << "policy explain: no export profile loaded; using legacy/default exporter behavior\n";
@@ -2855,14 +3010,22 @@ int doExportCommand(const std::vector<std::string>& args) {
     auto runMihomo = [&]() {
         auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, exportProfile, outputDir + "/mihomo.yaml", error);
         if (result.ok) {
-            std::cout << "exported mihomo: " << outputDir << "/mihomo.yaml\n";
-            if (result.skipped > 0) {
-                std::cout << "mihomo skipped nodes: " << result.skipped << "\n";
+            const auto counts = capabilityCountsForTarget(ExportTarget::Mihomo);
+            if (!jsonOutput) {
+                std::cout << "exported mihomo: " << outputDir << "/mihomo.yaml\n";
+                printCapabilitySummaryForTarget(ExportTarget::Mihomo, "mihomo");
+                if (result.skipped > 0) {
+                    std::cout << "mihomo skipped nodes: " << result.skipped << "\n";
+                }
             }
+            exportTargets.push_back({{"target", "mihomo"}, {"ok", true}, {"output", outputDir + "/mihomo.yaml"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Mihomo)}});
             ++success;
             mihomoOk = true;
         } else {
-            std::cerr << "mihomo export failed: " << error << "\n";
+            if (!jsonOutput) {
+                std::cerr << "mihomo export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "mihomo"}, {"ok", false}, {"error", error}});
             ++failed;
         }
     };
@@ -2870,14 +3033,22 @@ int doExportCommand(const std::vector<std::string>& args) {
     auto runSing = [&]() {
         auto result = exportForTarget(ExportTarget::SingBox, allNodes, cfg, tun, exportProfile, outputDir + "/sing-box.json", error);
         if (result.ok) {
-            std::cout << "exported sing-box: " << outputDir << "/sing-box.json\n";
-            if (result.skipped > 0) {
-                std::cout << "sing-box skipped nodes: " << result.skipped << "\n";
+            const auto counts = capabilityCountsForTarget(ExportTarget::SingBox);
+            if (!jsonOutput) {
+                std::cout << "exported sing-box: " << outputDir << "/sing-box.json\n";
+                printCapabilitySummaryForTarget(ExportTarget::SingBox, "sing-box");
+                if (result.skipped > 0) {
+                    std::cout << "sing-box skipped nodes: " << result.skipped << "\n";
+                }
             }
+            exportTargets.push_back({{"target", "sing-box"}, {"ok", true}, {"output", outputDir + "/sing-box.json"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::SingBox)}});
             ++success;
             singOk = true;
         } else {
-            std::cerr << "sing-box export failed: " << error << "\n";
+            if (!jsonOutput) {
+                std::cerr << "sing-box export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "sing-box"}, {"ok", false}, {"error", error}});
             ++failed;
         }
     };
@@ -2885,14 +3056,22 @@ int doExportCommand(const std::vector<std::string>& args) {
     auto runXray = [&]() {
         auto result = exportForTarget(ExportTarget::Xray, allNodes, cfg, tun, exportProfile, outputDir + "/xray.json", error);
         if (result.ok) {
-            std::cout << "exported xray: " << outputDir << "/xray.json\n";
-            if (result.skipped > 0) {
-                std::cout << "xray skipped nodes: " << result.skipped << "\n";
+            const auto counts = capabilityCountsForTarget(ExportTarget::Xray);
+            if (!jsonOutput) {
+                std::cout << "exported xray: " << outputDir << "/xray.json\n";
+                printCapabilitySummaryForTarget(ExportTarget::Xray, "xray");
+                if (result.skipped > 0) {
+                    std::cout << "xray skipped nodes: " << result.skipped << "\n";
+                }
             }
+            exportTargets.push_back({{"target", "xray"}, {"ok", true}, {"output", outputDir + "/xray.json"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Xray)}});
             ++success;
             xrayOk = true;
         } else {
-            std::cerr << "xray export failed: " << error << "\n";
+            if (!jsonOutput) {
+                std::cerr << "xray export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "xray"}, {"ok", false}, {"error", error}});
             ++failed;
         }
     };
@@ -2925,7 +3104,11 @@ int doExportCommand(const std::vector<std::string>& args) {
         }
     }
 
-    std::cout << "export summary: success=" << success << " failed=" << failed << " skipped_nodes=" << skippedNodes << "\n";
+    if (jsonOutput) {
+        printJsonLine({{"summary", {{"success", success}, {"failed", failed}, {"skipped_nodes", skippedNodes}}}, {"targets", exportTargets}});
+    } else {
+        std::cout << "export summary: success=" << success << " failed=" << failed << " skipped_nodes=" << skippedNodes << "\n";
+    }
     return failed > 0 ? 1 : (success > 0 ? 0 : 1);
 }
 

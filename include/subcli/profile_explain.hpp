@@ -11,6 +11,7 @@ namespace subcli {
 
 struct ProfileExplainOptions {
     bool hasTarget = false;
+    bool allTargets = false;
     ExportTarget target = ExportTarget::Mihomo;
 };
 

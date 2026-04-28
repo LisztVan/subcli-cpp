@@ -54,6 +54,7 @@ subcli config set profile_path /path/to/profile.json
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export all --profile bypass-cn --check
+subcli export all --profile bypass-cn --strict-capabilities
 ```
 
 Primary workflow: subscriptions + assets + profile JSON + templates -> exported native configs. Optional runtime helpers such as `run` and `daemon` exist, but cross-platform config generation is the main guarantee.
@@ -97,4 +98,4 @@ Xray does not provide a native TUN device. The Xray TUN template is a transparen
 
 ## Documentation
 
-See [`README.subcli.md`](README.subcli.md) for detailed command examples, cache behavior, troubleshooting, and deployment notes. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes.
+See [`README.subcli.md`](README.subcli.md) for detailed command examples, cache behavior, troubleshooting, and deployment notes. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for target-native/degraded/unsupported mapping in v2.1.

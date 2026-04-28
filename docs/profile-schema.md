@@ -200,13 +200,13 @@ Target mappings:
 Profiles are target-neutral, but not every target has equivalent strategy behavior.
 
 - Mihomo supports `select`, `url-test`, `fallback`, and `load-balance` directly.
-- sing-box maps `select` to `selector`, `url-test` to `urltest`, `fallback` to `urltest`, and `load-balance` to `selector`. Lossy mappings emit `profile_group_degraded` warnings.
-- Xray renders profile groups as balancers. `url-test` and `select` use `leastPing`, `load-balance` uses `leastLoad`, and `fallback` is approximated with `leastPing` plus `fallbackTag` when the default member can be resolved. Unresolved members, unresolved route targets, and lossy mappings emit `profile_group_degraded` warnings.
+- sing-box maps `select` to `selector`, `url-test` to `urltest`, `fallback` to `urltest`, and `load-balance` to `selector`. Lossy mappings emit `capability_degraded` warnings.
+- Xray renders profile groups as balancers. `url-test` and `select` use `leastPing`, `load-balance` uses `leastLoad`, and `fallback` is approximated with `leastPing` plus `fallbackTag` when the default member can be resolved. Unresolved members, unresolved route targets, and lossy mappings emit `capability_degraded` warnings.
 - Xray does not preserve subscription node names as outbound tags. Generated node outbounds use managed tags such as `SUBCLI_00001`; profile member expansion maps node names to those tags internally.
 - sing-box only has built-in asset mapping for the current managed China rule sets in this phase: `sing-box.geosite-cn` and `sing-box.geoip-cn`.
 - Xray TUN output is still a transparent-proxy helper. Xray has no native TUN device and requires OS-level redirect/tproxy/tun2socks plumbing.
 
-Warnings are printed during export. Treat `profile_group_degraded` as a signal that the target config was generated, but behavior is an approximation of the target-neutral profile.
+Warnings are printed during export. Treat `capability_degraded` as a signal that the target config was generated, but behavior is an approximation of the target-neutral profile.
 
 ## Example Custom Profile
 

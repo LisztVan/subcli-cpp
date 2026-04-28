@@ -11,6 +11,7 @@
 #include "exporter_internal.hpp"
 #include "subcli/assets.hpp"
 #include "subcli/capabilities.hpp"
+#include "subcli/capability_matrix.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
 #include "subcli/daemon.hpp"
@@ -1458,6 +1459,29 @@ void testProfileExplainJsonIncludesProfileDnsGroupsRules() {
     require(json.contains("dns") && json["dns"].value("strategy", "") == "prefer_ipv4", "profile explain json should include dns strategy");
     require(json.contains("groups") && json["groups"].is_array() && json["groups"].size() == 1, "profile explain json should include groups array");
     require(json.contains("rules") && json["rules"].is_array() && json["rules"].size() == 1, "profile explain json should include rules array");
+}
+
+void testProfileExplainAllTargetsIncludesCapabilitySections() {
+    subcli::ResolvedProfile profile;
+    profile.name = "all-targets-test";
+    subcli::ProfileGroup group;
+    group.tag = "PROXY";
+    group.type = "fallback";
+    group.members = {"REGION:*"};
+    profile.groups.push_back(group);
+
+    subcli::ProfileExplainOptions options;
+    options.hasTarget = true;
+    options.allTargets = true;
+
+    const std::string text = subcli::explainProfileText(profile, options);
+    require(text.find("target: mihomo") != std::string::npos, "all target explain should include mihomo section");
+    require(text.find("target: sing-box") != std::string::npos, "all target explain should include sing-box section");
+    require(text.find("target: xray") != std::string::npos, "all target explain should include xray section");
+    require(text.find("capabilities:") != std::string::npos, "all target explain should include capability section");
+
+    const auto json = subcli::explainProfileJson(profile, options);
+    require(json.contains("targets") && json["targets"].is_array() && json["targets"].size() == 3, "all target explain json should include three targets");
 }
 
 void testBuiltInAutoGroupsDoNotReferenceProxy() {
@@ -3147,7 +3171,7 @@ void testXrayProfileFallbackWarnsWhenLossy() {
 
     bool warned = false;
     for (const auto& warning : result.warnings) {
-        warned = warned || warning.code == "profile_group_degraded";
+        warned = warned || warning.code == "capability_degraded";
     }
     require(warned, "xray fallback profile group without fallbackTag should emit degradation warning");
 
@@ -3222,7 +3246,7 @@ void testXrayProfileBalancerReferencesAreResolvedAndWarnWhenLossy() {
 
     size_t degradedWarnings = 0;
     for (const auto& warning : result.warnings) {
-        degradedWarnings += warning.code == "profile_group_degraded" ? 1 : 0;
+        degradedWarnings += warning.code == "capability_degraded" ? 1 : 0;
     }
     require(degradedWarnings >= 2, "xray select and unknown profile members should emit degradation warnings");
 
@@ -3282,7 +3306,7 @@ void testXrayProfileInvalidFallbackDefaultIsOmittedWithWarning() {
 
     bool warned = false;
     for (const auto& warning : result.warnings) {
-        warned = warned || warning.code == "profile_group_degraded";
+        warned = warned || warning.code == "capability_degraded";
     }
     require(warned, "xray invalid fallback default should emit degradation warning");
 
@@ -3361,7 +3385,7 @@ void testXrayProfileCyclicGroupsDoNotEmitRecursiveSelectors() {
 
     bool warned = false;
     for (const auto& warning : result.warnings) {
-        warned = warned || warning.code == "profile_group_degraded";
+        warned = warned || warning.code == "capability_degraded";
     }
     require(warned, "xray cyclic profile groups should emit degradation warning");
 
@@ -3987,7 +4011,7 @@ void testSingBoxProfileFallbackDegradesToUrltestWithWarning() {
 
     bool warned = false;
     for (const auto& warning : result.warnings) {
-        warned = warned || warning.code == "profile_group_degraded";
+        warned = warned || warning.code == "capability_degraded";
     }
     require(warned, "sing-box fallback profile group should emit degradation warning");
 
@@ -4033,7 +4057,7 @@ void testSingBoxProfileLoadBalanceDegradesToSelectorWithWarning() {
 
     bool warned = false;
     for (const auto& warning : result.warnings) {
-        warned = warned || warning.code == "profile_group_degraded";
+        warned = warned || warning.code == "capability_degraded";
     }
     require(warned, "sing-box load-balance profile group should emit degradation warning");
 
@@ -4215,7 +4239,7 @@ void testSingBoxProfileGroupAliasSpellings() {
 
     bool warned = false;
     for (const auto& warning : result.warnings) {
-        warned = warned || warning.code == "profile_group_degraded";
+        warned = warned || warning.code == "capability_degraded";
     }
     require(warned, "sing-box loadbalance alias should emit degradation warning");
 
@@ -5393,6 +5417,63 @@ void testCoreRuntimeLifecycle() {
     fs::remove_all(stateDir);
 }
 
+void testCapabilityMatrixAssessesProfileGroupsAcrossTargets() {
+    subcli::ResolvedProfile profile;
+    profile.name = "matrix-profile";
+
+    subcli::ProfileGroup proxy;
+    proxy.tag = "PROXY";
+    proxy.type = "fallback";
+    proxy.members = {"HK", "JP"};
+    profile.groups.push_back(proxy);
+
+    auto mihomo = subcli::assessProfileCapabilities(subcli::ExportTarget::Mihomo, profile);
+    auto sing = subcli::assessProfileCapabilities(subcli::ExportTarget::SingBox, profile);
+    auto xray = subcli::assessProfileCapabilities(subcli::ExportTarget::Xray, profile);
+
+    auto hasLevel = [](const std::vector<subcli::CapabilityFinding>& findings,
+                       subcli::CapabilityLevel level,
+                       const std::string& code) {
+        for (const auto& finding : findings) {
+            if (finding.level == level && finding.code == code) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    require(hasLevel(mihomo, subcli::CapabilityLevel::Native, "profile_group_type"), "mihomo fallback should be native");
+    require(hasLevel(sing, subcli::CapabilityLevel::Degraded, "profile_group_type"), "sing-box fallback should be degraded");
+    require(hasLevel(xray, subcli::CapabilityLevel::Degraded, "profile_group_type"), "xray fallback should be degraded");
+}
+
+void testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets() {
+    subcli::ProxyNode hy2;
+    hy2.type = "hysteria2";
+    hy2.name = "HY2";
+    hy2.server = "hy2.example.com";
+    hy2.port = 443;
+    hy2.protocol.password = "p";
+    hy2.normalize();
+
+    auto mihomo = subcli::assessNodeCapabilities(subcli::ExportTarget::Mihomo, {hy2});
+    auto sing = subcli::assessNodeCapabilities(subcli::ExportTarget::SingBox, {hy2});
+    auto xray = subcli::assessNodeCapabilities(subcli::ExportTarget::Xray, {hy2});
+
+    auto hasUnsupported = [](const std::vector<subcli::CapabilityFinding>& findings) {
+        for (const auto& finding : findings) {
+            if (finding.level == subcli::CapabilityLevel::Unsupported && finding.code == "node_protocol") {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    require(!hasUnsupported(mihomo), "mihomo should support hysteria2");
+    require(!hasUnsupported(sing), "sing-box should support hysteria2");
+    require(hasUnsupported(xray), "xray should not support hysteria2");
+}
+
 } // namespace
 
 int main() {
@@ -5434,6 +5515,7 @@ int main() {
     testProfileExplainTextShowsDnsGroupsRulesAndPolicy();
     testProfileExplainTargetShowsSingBoxRequiredAssets();
     testProfileExplainJsonIncludesProfileDnsGroupsRules();
+    testProfileExplainAllTargetsIncludesCapabilitySections();
     testBuiltInAutoGroupsDoNotReferenceProxy();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();
@@ -5507,6 +5589,8 @@ int main() {
     testWriteFileCreatesParentDirectories();
     testLoadConfigMalformedYamlThrows();
     testCoreRuntimeLifecycle();
+    testCapabilityMatrixAssessesProfileGroupsAcrossTargets();
+    testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets();
     testStorePersistsOverrideFlags();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();

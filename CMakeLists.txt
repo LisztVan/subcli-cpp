@@ -94,6 +94,7 @@ set(SUBCLI_SOURCES
     src/protocol_registry.cpp
     src/node.cpp
     src/capabilities.cpp
+    src/capability_matrix.cpp
     src/core_discovery.cpp
     src/core_check.cpp
     src/core_runtime.cpp

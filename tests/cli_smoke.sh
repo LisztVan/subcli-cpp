@@ -197,4 +197,10 @@ if [[ "$strict_export_json" != *'"strict_capabilities_blocked":true'* || "$stric
     exit 1
 fi
 
+check_export_json="$({ "$bin" export mihomo --profile bypass-cn --sub explain --check --json; } 2>/dev/null || true)"
+if [[ "$check_export_json" != *'"check"'* || "$check_export_json" != *'"requested":true'* ]]; then
+    printf '%s\n' "$check_export_json"
+    exit 1
+fi
+
 "$bin" export all --profile bypass-cn --sub explain --strict-capabilities >/dev/null 2>&1 && exit 1 || true

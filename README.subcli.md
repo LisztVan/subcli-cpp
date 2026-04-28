@@ -209,6 +209,18 @@ Profile group member selectors support generated expansion tokens:
 
 Use `subcli profile explain <path-or-name> [--target <all|mihomo|sing-box|xray>]` to inspect effective profile behavior, selector semantics, and per-target capability notes.
 
+Release validation workflow:
+
+```bash
+subcli profile explain --target all bypass-cn
+subcli export all --profile bypass-cn --json
+subcli export all --profile bypass-cn --strict-capabilities
+```
+
+- `profile explain --target all` is the pre-export capability interpretation check.
+- `export ... --json` is machine-readable evidence of per-target capability findings.
+- `--strict-capabilities` blocks degraded or unsupported exports for selected target(s).
+
 Advanced template merge behavior is also profile-driven via `template_policy`.
 
 Example:
@@ -258,6 +270,11 @@ subcli export mihomo --profile bypass-cn --json
       "ok": true,
       "output": ".../mihomo.yaml",
       "skipped": 0,
+      "check": {
+        "requested": true,
+        "ok": true,
+        "message": "check passed"
+      },
       "capabilities": {
         "native": 3,
         "degraded": 0,
@@ -276,6 +293,12 @@ subcli export mihomo --profile bypass-cn --json
   ]
 }
 ```
+
+`check` object schema per target in `export --json`:
+
+- `requested` (`bool`): whether `--check` was requested.
+- `ok` (`bool|null`): check result when run; `null` when not run.
+- `message` (`string`): `check passed`, a check failure message, `check not run`, or `check not requested`.
 
 ## Template Management
 

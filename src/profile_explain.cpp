@@ -12,6 +12,17 @@
 namespace subcli {
 namespace {
 
+std::vector<CapabilityFinding> assessCapabilitiesForExplain(
+    ExportTarget target,
+    const ResolvedProfile& profile,
+    const ProfileExplainOptions& options
+) {
+    if (options.config != nullptr) {
+        return assessProfileCapabilities(target, profile, *options.config);
+    }
+    return assessProfileCapabilities(target, profile);
+}
+
 std::string targetName(ExportTarget target) {
     return templatePolicyTargetKey(target);
 }
@@ -319,7 +330,7 @@ std::string explainProfileText(const ResolvedProfile& profile, const ProfileExpl
                 out << "  " << note << "\n";
             }
         }
-        const auto capabilities = assessProfileCapabilities(target, profile);
+        const auto capabilities = assessCapabilitiesForExplain(target, profile, options);
         out << "\ncapabilities:\n";
         if (capabilities.empty()) {
             out << "  none\n";
@@ -416,7 +427,7 @@ nlohmann::json explainProfileJson(const ResolvedProfile& profile, const ProfileE
             target["required_assets"] = requiredAssetsForProfileTarget(profile, targetValue);
             target["notes"] = targetNotesForProfile(profile, targetValue);
             nlohmann::json capabilities = nlohmann::json::array();
-            for (const auto& item : assessProfileCapabilities(targetValue, profile)) {
+            for (const auto& item : assessCapabilitiesForExplain(targetValue, profile, options)) {
                 std::string level = "native";
                 if (item.level == CapabilityLevel::Degraded) {
                     level = "degraded";

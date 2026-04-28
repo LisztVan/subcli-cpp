@@ -53,6 +53,8 @@ subcli profile get bypass-cn
 subcli config set profile_path /path/to/profile.json
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
+subcli profile explain --target all bypass-cn
+subcli export all --profile bypass-cn --json
 subcli export all --profile bypass-cn --check
 subcli export all --profile bypass-cn --strict-capabilities
 ```
@@ -98,4 +100,4 @@ Xray does not provide a native TUN device. The Xray TUN template is a transparen
 
 ## Documentation
 
-See [`README.subcli.md`](README.subcli.md) for detailed command examples, cache behavior, troubleshooting, and deployment notes. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for target-native/degraded/unsupported mapping in v2.1.
+See [`README.subcli.md`](README.subcli.md) for detailed command examples, release validation workflow (`profile explain`, `export --json`, `--strict-capabilities`), cache behavior, troubleshooting, and deployment notes. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for the full v2.1 capability matrix (protocols, groups, DNS, route mapping, assets, and strict-mode behavior).

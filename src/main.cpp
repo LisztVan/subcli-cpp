@@ -960,6 +960,17 @@ int runConfigCheckForTarget(const AppConfig& cfg, ExportTarget target, const std
     return 0;
 }
 
+CoreCheckResult runConfigCheckForTargetResult(const AppConfig& cfg, ExportTarget target, const std::string& filePath, int timeoutSec = 30) {
+    const auto cores = discoverCorePaths(cfg);
+    if (target == ExportTarget::Mihomo) {
+        return runMihomoConfigCheck(cores.mihomo, filePath, timeoutSec);
+    }
+    if (target == ExportTarget::SingBox) {
+        return runSingBoxConfigCheck(cores.singBox, filePath, timeoutSec);
+    }
+    return runXrayConfigCheck(cores.xray, filePath, timeoutSec);
+}
+
 std::string coreBinaryForTarget(const CorePaths& cores, ExportTarget target) {
     if (target == ExportTarget::Mihomo) {
         return cores.mihomo;
@@ -2639,6 +2650,14 @@ int doProfileCommand(const std::vector<std::string>& args) {
         }
 
         ProfileExplainOptions options;
+        AppConfig cfg;
+        try {
+            cfg = loadConfig(gPaths.configPath.string());
+            applyConfigDefaults(cfg);
+            options.config = &cfg;
+        } catch (const std::exception&) {
+            options.config = nullptr;
+        }
         if (hasOption(args, "--target")) {
             const auto value = argValue(args, "--target");
             if (value == "all") {
@@ -2860,7 +2879,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     auto capabilityFindingsForTarget = [&](ExportTarget exportTarget) {
         std::vector<nlohmann::json> findingItems;
         if (exportProfile != nullptr) {
-            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile)) {
+            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile, cfg)) {
                 findingItems.push_back(
                     {
                         {"level", capabilityLevelName(item.level)},
@@ -2901,7 +2920,7 @@ int doExportCommand(const std::vector<std::string>& args) {
             {"requires_asset", 0},
         };
         if (exportProfile != nullptr) {
-            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile)) {
+            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile, cfg)) {
                 if (item.level == CapabilityLevel::Native) {
                     ++counts["native"];
                 } else if (item.level == CapabilityLevel::Degraded) {
@@ -2932,7 +2951,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     if (strictCapabilities && exportProfile != nullptr) {
         nlohmann::json strictViolations = nlohmann::json::array();
         auto hasStrictViolation = [&](ExportTarget exportTarget) {
-            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile)) {
+            for (const auto& item : assessProfileCapabilities(exportTarget, *exportProfile, cfg)) {
                 if (item.level == CapabilityLevel::Degraded || item.level == CapabilityLevel::Unsupported) {
                     strictViolations.push_back(
                         {
@@ -3088,16 +3107,60 @@ int doExportCommand(const std::vector<std::string>& args) {
         runXray();
     }
 
+    auto setJsonTargetCheck = [&](const std::string& targetName, const nlohmann::json& checkObj) {
+        for (auto& item : exportTargets) {
+            if (item.value("target", std::string()) == targetName) {
+                item["check"] = checkObj;
+                break;
+            }
+        }
+    };
+
+    if (jsonOutput) {
+        const bool checkRequested = hasFlag(args, "--check");
+        for (auto& item : exportTargets) {
+            if (checkRequested) {
+                item["check"] = {{"requested", true}, {"ok", nullptr}, {"message", "check not run"}};
+            } else {
+                item["check"] = {{"requested", false}, {"ok", nullptr}, {"message", "check not requested"}};
+            }
+        }
+    }
+
     if (hasFlag(args, "--check")) {
         int checkFailed = 0;
         if ((target == "all" || target == "mihomo") && mihomoOk) {
-            checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Mihomo, outputDir + "/mihomo.yaml", checkTimeoutSec);
+            if (jsonOutput) {
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Mihomo, outputDir + "/mihomo.yaml", checkTimeoutSec);
+                setJsonTargetCheck("mihomo", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
+                if (!check.ok) {
+                    ++checkFailed;
+                }
+            } else {
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Mihomo, outputDir + "/mihomo.yaml", checkTimeoutSec);
+            }
         }
         if ((target == "all" || target == "sing-box") && singOk) {
-            checkFailed += runConfigCheckForTarget(cfg, ExportTarget::SingBox, outputDir + "/sing-box.json", checkTimeoutSec);
+            if (jsonOutput) {
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::SingBox, outputDir + "/sing-box.json", checkTimeoutSec);
+                setJsonTargetCheck("sing-box", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
+                if (!check.ok) {
+                    ++checkFailed;
+                }
+            } else {
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::SingBox, outputDir + "/sing-box.json", checkTimeoutSec);
+            }
         }
         if ((target == "all" || target == "xray") && xrayOk) {
-            checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Xray, outputDir + "/xray.json", checkTimeoutSec);
+            if (jsonOutput) {
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Xray, outputDir + "/xray.json", checkTimeoutSec);
+                setJsonTargetCheck("xray", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
+                if (!check.ok) {
+                    ++checkFailed;
+                }
+            } else {
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Xray, outputDir + "/xray.json", checkTimeoutSec);
+            }
         }
         if (checkFailed > 0) {
             ++failed;

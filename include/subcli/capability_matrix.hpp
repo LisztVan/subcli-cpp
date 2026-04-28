@@ -25,6 +25,7 @@ struct CapabilityFinding {
 };
 
 std::vector<CapabilityFinding> assessProfileCapabilities(ExportTarget target, const ResolvedProfile& profile);
+std::vector<CapabilityFinding> assessProfileCapabilities(ExportTarget target, const ResolvedProfile& profile, const AppConfig& config);
 std::vector<CapabilityFinding> assessNodeCapabilities(ExportTarget target, const std::vector<ProxyNode>& nodes);
 
 } // namespace subcli

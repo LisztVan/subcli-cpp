@@ -195,18 +195,23 @@ Target mappings:
 - sing-box: `geosite:cn` and `geoip:cn` become local rule sets using configured assets; `geosite:private` becomes a private domain rule; `geoip:private` becomes `ip_is_private`; direct domain, CIDR, port, and network rules map to native route rule fields.
 - Xray: `geosite` and `geoip` become `geosite:<value>` and `geoip:<value>` field rules; domain rules map to Xray domain match prefixes; port and network rules become joined Xray fields; final adds a catch-all route.
 
-## Target-Specific Degradation Warnings
+## Target-Specific Capability Warnings
 
 Profiles are target-neutral, but not every target has equivalent strategy behavior.
 
 - Mihomo supports `select`, `url-test`, `fallback`, and `load-balance` directly.
-- sing-box maps `select` to `selector`, `url-test` to `urltest`, `fallback` to `urltest`, and `load-balance` to `selector`. Lossy mappings emit `capability_degraded` warnings.
-- Xray renders profile groups as balancers. `url-test` and `select` use `leastPing`, `load-balance` uses `leastLoad`, and `fallback` is approximated with `leastPing` plus `fallbackTag` when the default member can be resolved. Unresolved members, unresolved route targets, and lossy mappings emit `capability_degraded` warnings.
+- sing-box maps `select` to `selector`, `url-test` to `urltest`, `fallback` to `urltest`, and `load-balance` to `selector`. Lossy mappings emit `capability_degraded`.
+- Xray renders profile groups as balancers. `url-test` and `select` use `leastPing`, `load-balance` uses `leastLoad`, and `fallback` is approximated with `leastPing` plus optional `fallbackTag` when default-member resolution succeeds. Unresolved members, unresolved route targets, and lossy mappings emit `capability_degraded`.
 - Xray does not preserve subscription node names as outbound tags. Generated node outbounds use managed tags such as `SUBCLI_00001`; profile member expansion maps node names to those tags internally.
 - sing-box only has built-in asset mapping for the current managed China rule sets in this phase: `sing-box.geosite-cn` and `sing-box.geoip-cn`.
 - Xray TUN output is still a transparent-proxy helper. Xray has no native TUN device and requires OS-level redirect/tproxy/tun2socks plumbing.
 
-Warnings are printed during export. Treat `capability_degraded` as a signal that the target config was generated, but behavior is an approximation of the target-neutral profile.
+Warnings are printed during export:
+
+- `capability_degraded`: target config was generated, but behavior is an approximation of the target-neutral profile.
+- `capability_unsupported`: node/feature was skipped for the target.
+
+For the full release matrix (protocols, groups, DNS, routes, asset requirements, strict mode), see [`docs/capability-matrix.md`](capability-matrix.md).
 
 ## Example Custom Profile
 

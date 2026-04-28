@@ -1484,6 +1484,32 @@ void testProfileExplainAllTargetsIncludesCapabilitySections() {
     require(json.contains("targets") && json["targets"].is_array() && json["targets"].size() == 3, "all target explain json should include three targets");
 }
 
+void testProfileExplainFallbackWhenConfigLoadFails() {
+    const fs::path path = fs::temp_directory_path() / "subcli-tests-config-malformed-for-explain.yaml";
+    {
+        std::ofstream out(path);
+        out << "tun: [";
+    }
+
+    subcli::ResolvedProfile profile;
+    profile.name = "fallback-explain";
+    profile.rules.push_back({"geosite", "cn", "DIRECT", {}, {}, {}, {}});
+
+    subcli::ProfileExplainOptions options;
+    try {
+        auto cfg = subcli::loadConfig(path.string());
+        options.config = &cfg;
+    } catch (const std::exception&) {
+        options.config = nullptr;
+    }
+
+    const std::string text = subcli::explainProfileText(profile, options);
+    require(text.find("profile: fallback-explain") != std::string::npos, "profile explain should still render profile when config load fails");
+    require(text.find("geosite cn -> DIRECT") != std::string::npos, "profile explain should still render rules when config load fails");
+
+    fs::remove(path);
+}
+
 void testBuiltInAutoGroupsDoNotReferenceProxy() {
     const fs::path profilesDir = fs::path(SUBCLI_SOURCE_DIR) / "profiles";
     const std::vector<fs::path> profilePaths = {
@@ -5447,6 +5473,155 @@ void testCapabilityMatrixAssessesProfileGroupsAcrossTargets() {
     require(hasLevel(xray, subcli::CapabilityLevel::Degraded, "profile_group_type"), "xray fallback should be degraded");
 }
 
+void testCapabilityMatrixFlagsMissingSingBoxAssetsWithConfigAwareAssess() {
+    subcli::ResolvedProfile profile;
+    profile.name = "asset-check";
+    profile.rules.push_back({"geosite", "cn", "DIRECT", {}, {}, {}, {}});
+    profile.rules.push_back({"geoip", "cn", "DIRECT", {}, {}, {}, {}});
+
+    auto cfg = makeConfig();
+    cfg.assetPaths["sing-box.geosite-cn"].clear();
+    cfg.assetPaths.erase("sing-box.geoip-cn");
+
+    const auto findings = subcli::assessProfileCapabilities(subcli::ExportTarget::SingBox, profile, cfg);
+    bool hasGeosite = false;
+    bool hasGeoip = false;
+    for (const auto& finding : findings) {
+        if (finding.code != "requires_asset" || finding.level != subcli::CapabilityLevel::RequiresAsset) {
+            continue;
+        }
+        if (finding.subject == "sing-box.geosite-cn") {
+            hasGeosite = true;
+        }
+        if (finding.subject == "sing-box.geoip-cn") {
+            hasGeoip = true;
+        }
+    }
+    require(hasGeosite, "config-aware assess should flag missing sing-box geosite-cn asset path");
+    require(hasGeoip, "config-aware assess should flag missing sing-box geoip-cn asset path");
+}
+
+void testCapabilityMatrixAssessesFakeIpDnsModeByTarget() {
+    subcli::ResolvedProfile profile;
+    profile.name = "dns-mode-check";
+    profile.dns.mode = "fake-ip";
+    auto cfg = makeConfig();
+
+    const auto mihomo = subcli::assessProfileCapabilities(subcli::ExportTarget::Mihomo, profile, cfg);
+    const auto sing = subcli::assessProfileCapabilities(subcli::ExportTarget::SingBox, profile, cfg);
+    const auto xray = subcli::assessProfileCapabilities(subcli::ExportTarget::Xray, profile, cfg);
+
+    auto hasDnsModeLevel = [](const std::vector<subcli::CapabilityFinding>& findings, subcli::CapabilityLevel level) {
+        for (const auto& finding : findings) {
+            if (finding.code == "dns_mode" && finding.level == level) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    require(hasDnsModeLevel(mihomo, subcli::CapabilityLevel::Native), "mihomo fake-ip dns mode should be native");
+    require(hasDnsModeLevel(sing, subcli::CapabilityLevel::Degraded), "sing-box fake-ip dns mode should be degraded");
+    require(hasDnsModeLevel(xray, subcli::CapabilityLevel::Degraded), "xray fake-ip dns mode should be degraded");
+}
+
+void testCapabilityMatrixFlagsUnsupportedRouteRuleType() {
+    subcli::ResolvedProfile profile;
+    profile.name = "unsupported-rule";
+    profile.rules.push_back({"asn", "13335", "DIRECT", {}, {}, {}, {}});
+    auto cfg = makeConfig();
+
+    const auto findings = subcli::assessProfileCapabilities(subcli::ExportTarget::Mihomo, profile, cfg);
+    bool hasUnsupported = false;
+    for (const auto& finding : findings) {
+        if (finding.code == "route_rule_type" && finding.level == subcli::CapabilityLevel::Unsupported && finding.subject == "asn") {
+            hasUnsupported = true;
+            break;
+        }
+    }
+    require(hasUnsupported, "config-aware assess should flag unsupported route rule type");
+}
+
+void testCapabilityMatrixFlagsUnsupportedSingBoxGeoRuleValues() {
+    subcli::ResolvedProfile profile;
+    profile.name = "unsupported-singbox-geo-values";
+    profile.rules.push_back({"geosite", "us", "DIRECT", {}, {}, {}, {}});
+    profile.rules.push_back({"geoip", "jp", "DIRECT", {}, {}, {}, {}});
+    auto cfg = makeConfig();
+
+    const auto findings = subcli::assessProfileCapabilities(subcli::ExportTarget::SingBox, profile, cfg);
+    bool hasGeositeUnsupported = false;
+    bool hasGeoipUnsupported = false;
+    for (const auto& finding : findings) {
+        if (finding.code != "route_rule_type" || finding.level != subcli::CapabilityLevel::Unsupported) {
+            continue;
+        }
+        hasGeositeUnsupported = hasGeositeUnsupported || finding.subject == "geosite:us";
+        hasGeoipUnsupported = hasGeoipUnsupported || finding.subject == "geoip:jp";
+    }
+    require(hasGeositeUnsupported, "sing-box config-aware assess should mark geosite:us unsupported");
+    require(hasGeoipUnsupported, "sing-box config-aware assess should mark geoip:jp unsupported");
+}
+
+void testCapabilityMatrixDeduplicatesRequiresAssetFindingsByAssetKey() {
+    subcli::ResolvedProfile profile;
+    profile.name = "dedupe-requires-asset";
+    profile.rules.push_back({"geosite", "cn", "DIRECT", {}, {}, {}, {}});
+    profile.rules.push_back({"geosite", "cn", "DIRECT", {}, {}, {}, {}});
+    profile.rules.push_back({"geoip", "cn", "DIRECT", {}, {}, {}, {}});
+    profile.rules.push_back({"geoip", "cn", "DIRECT", {}, {}, {}, {}});
+
+    auto cfg = makeConfig();
+    cfg.assetPaths["sing-box.geosite-cn"].clear();
+    cfg.assetPaths["sing-box.geoip-cn"].clear();
+
+    const auto findings = subcli::assessProfileCapabilities(subcli::ExportTarget::SingBox, profile, cfg);
+    int geositeCount = 0;
+    int geoipCount = 0;
+    for (const auto& finding : findings) {
+        if (finding.code != "requires_asset" || finding.level != subcli::CapabilityLevel::RequiresAsset) {
+            continue;
+        }
+        geositeCount += finding.subject == "sing-box.geosite-cn" ? 1 : 0;
+        geoipCount += finding.subject == "sing-box.geoip-cn" ? 1 : 0;
+    }
+
+    require(geositeCount == 1, "requires_asset findings should be deduplicated for sing-box.geosite-cn");
+    require(geoipCount == 1, "requires_asset findings should be deduplicated for sing-box.geoip-cn");
+}
+
+void testProfileExplainAllTargetsJsonIncludesRequiresAssetFindingFromConfig() {
+    subcli::ResolvedProfile profile;
+    profile.name = "explain-assets";
+    profile.rules.push_back({"geosite", "cn", "DIRECT", {}, {}, {}, {}});
+
+    auto cfg = makeConfig();
+    cfg.assetPaths["sing-box.geosite-cn"].clear();
+
+    subcli::ProfileExplainOptions options;
+    options.hasTarget = true;
+    options.allTargets = true;
+    options.config = &cfg;
+
+    const auto json = subcli::explainProfileJson(profile, options);
+    require(json.contains("targets") && json["targets"].is_array(), "profile explain all-target json should include targets array");
+
+    bool singHasRequiresAsset = false;
+    for (const auto& target : json["targets"]) {
+        if (target.value("name", "") != "sing-box") {
+            continue;
+        }
+        for (const auto& capability : target["capabilities"]) {
+            if (capability.value("code", "") == "requires_asset" && capability.value("level", "") == "requires_asset" &&
+                capability.value("subject", "") == "sing-box.geosite-cn") {
+                singHasRequiresAsset = true;
+                break;
+            }
+        }
+    }
+    require(singHasRequiresAsset, "profile explain all-target json should expose requires_asset finding when config asset path is missing");
+}
+
 void testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets() {
     subcli::ProxyNode hy2;
     hy2.type = "hysteria2";
@@ -5516,6 +5691,7 @@ int main() {
     testProfileExplainTargetShowsSingBoxRequiredAssets();
     testProfileExplainJsonIncludesProfileDnsGroupsRules();
     testProfileExplainAllTargetsIncludesCapabilitySections();
+    testProfileExplainFallbackWhenConfigLoadFails();
     testBuiltInAutoGroupsDoNotReferenceProxy();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();
@@ -5590,6 +5766,12 @@ int main() {
     testLoadConfigMalformedYamlThrows();
     testCoreRuntimeLifecycle();
     testCapabilityMatrixAssessesProfileGroupsAcrossTargets();
+    testCapabilityMatrixFlagsMissingSingBoxAssetsWithConfigAwareAssess();
+    testCapabilityMatrixAssessesFakeIpDnsModeByTarget();
+    testCapabilityMatrixFlagsUnsupportedRouteRuleType();
+    testCapabilityMatrixFlagsUnsupportedSingBoxGeoRuleValues();
+    testCapabilityMatrixDeduplicatesRequiresAssetFindingsByAssetKey();
+    testProfileExplainAllTargetsJsonIncludesRequiresAssetFindingFromConfig();
     testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets();
     testStorePersistsOverrideFlags();
     testStorePersistsFetchMaxBytes();

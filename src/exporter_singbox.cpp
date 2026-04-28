@@ -433,6 +433,35 @@ ExportResult exportSingBoxImpl(
     if (!root.contains("outbounds") || !root["outbounds"].is_array()) {
         root["outbounds"] = nlohmann::json::array();
     }
+    nlohmann::json outboundsTemplate;
+    const bool hasOutboundsTemplate = root.contains("outbounds") && root["outbounds"].is_array();
+    if (hasOutboundsTemplate) {
+        outboundsTemplate = root["outbounds"];
+    }
+    nlohmann::json dnsServersTemplate;
+    bool hasDnsServersTemplate = false;
+    nlohmann::json dnsRulesTemplate;
+    bool hasDnsRulesTemplate = false;
+    nlohmann::json routeRuleSetTemplate;
+    bool hasRouteRuleSetTemplate = false;
+    nlohmann::json routeRulesTemplate;
+    bool hasRouteRulesTemplate = false;
+    if (root.contains("dns") && root["dns"].is_object() && root["dns"].contains("servers")) {
+        dnsServersTemplate = root["dns"]["servers"];
+        hasDnsServersTemplate = true;
+    }
+    if (root.contains("dns") && root["dns"].is_object() && root["dns"].contains("rules")) {
+        dnsRulesTemplate = root["dns"]["rules"];
+        hasDnsRulesTemplate = true;
+    }
+    if (root.contains("route") && root["route"].is_object() && root["route"].contains("rules")) {
+        routeRulesTemplate = root["route"]["rules"];
+        hasRouteRulesTemplate = true;
+    }
+    if (root.contains("route") && root["route"].is_object() && root["route"].contains("rule_set")) {
+        routeRuleSetTemplate = root["route"]["rule_set"];
+        hasRouteRuleSetTemplate = true;
+    }
     const bool useProfileGroups = profile != nullptr && !profile->groups.empty();
 
     auto managedSingBoxTags = generatedSingBoxTags(supported, groups);
@@ -624,6 +653,47 @@ ExportResult exportSingBoxImpl(
 
     if (profile != nullptr) {
         ensureSingBoxProfileRouting(root, config, *profile);
+        if (!root.contains("dns") || !root["dns"].is_object()) {
+            root["dns"] = nlohmann::json::object();
+        }
+        if (!root.contains("route") || !root["route"].is_object()) {
+            root["route"] = nlohmann::json::object();
+        }
+
+        struct JsonPolicyPath {
+            const char* path;
+            nlohmann::json& parent;
+            const char* key;
+            const nlohmann::json* templateValue;
+            bool templateHad;
+            nlohmann::json generatedValue;
+            const char* mergeKey;
+        };
+
+        std::vector<JsonPolicyPath> paths;
+        paths.push_back({"outbounds", root, "outbounds", hasOutboundsTemplate ? &outboundsTemplate : nullptr, hasOutboundsTemplate, root["outbounds"], "tag"});
+        paths.push_back({"dns.servers", root["dns"], "servers", hasDnsServersTemplate ? &dnsServersTemplate : nullptr, hasDnsServersTemplate, root["dns"].contains("servers") ? root["dns"]["servers"] : nlohmann::json::array(), "tag"});
+        paths.push_back({"dns.rules", root["dns"], "rules", hasDnsRulesTemplate ? &dnsRulesTemplate : nullptr, hasDnsRulesTemplate, root["dns"].contains("rules") ? root["dns"]["rules"] : nlohmann::json::array(), ""});
+        paths.push_back({"route.rules", root["route"], "rules", hasRouteRulesTemplate ? &routeRulesTemplate : nullptr, hasRouteRulesTemplate, root["route"].contains("rules") ? root["route"]["rules"] : nlohmann::json::array(), ""});
+        paths.push_back({"route.rule_set", root["route"], "rule_set", hasRouteRuleSetTemplate ? &routeRuleSetTemplate : nullptr, hasRouteRuleSetTemplate, root["route"].contains("rule_set") ? root["route"]["rule_set"] : nlohmann::json::array(), "tag"});
+
+        for (const auto& item : paths) {
+            TemplatePolicyAction explicitAction;
+            if (!getExplicitTemplatePolicyAction(ExportTarget::SingBox, profile, item.path, explicitAction)) {
+                continue;
+            }
+            applyTemplatePolicyJsonField(
+                item.parent,
+                item.key,
+                item.templateValue,
+                item.templateHad,
+                item.generatedValue,
+                explicitAction,
+                item.path,
+                item.mergeKey,
+                result.warnings
+            );
+        }
     } else if (!config.routingRules.empty()) {
         ensureSingBoxCustomRoutingRules(root, config);
     } else if (config.profile == "bypass-cn") {

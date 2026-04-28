@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 
 #include "subcli/models.hpp"
 
@@ -34,6 +35,14 @@ struct ProfileRule {
     std::vector<std::string> networks;
 };
 
+struct ProfileTemplatePolicyTarget {
+    std::map<std::string, std::string> pathActions;
+};
+
+struct ProfileTemplatePolicy {
+    std::map<std::string, ProfileTemplatePolicyTarget> targets;
+};
+
 struct ResolvedProfile {
     int version = 1;
     std::string name;
@@ -42,6 +51,7 @@ struct ResolvedProfile {
     ProfileDns dns;
     std::vector<ProfileGroup> groups;
     std::vector<ProfileRule> rules;
+    ProfileTemplatePolicy templatePolicy;
 };
 
 bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string& error);

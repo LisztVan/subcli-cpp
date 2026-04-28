@@ -14,6 +14,7 @@
 - Mihomo YAML supports inline `proxies`, local `proxy-providers` with `type: file`, and remote `proxy-providers` with `type: http`/`url` plus optional `user-agent` and `header` fields.
 - Export non-`tun` and `tun` templates for Mihomo, sing-box, and Xray.
 - Generate configs from profile JSON policy files that define DNS, strategy groups, routing, and default outbound behavior.
+- Support `template_policy` in profile JSON for per-target, per-path replace/append/merge/reject control.
 - Support built-in `bypass-cn`, `global`, and `direct` profiles plus custom profile files.
 - Render custom strategy groups for Mihomo/sing-box, including `fallback` and `load-balance` types.
 - Manage geo/rule assets with `subcli asset list|validate|update`.

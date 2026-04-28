@@ -506,6 +506,29 @@ ExportResult exportXrayImpl(
         error = "invalid xray template json";
         return result;
     }
+    nlohmann::json outboundsTemplate;
+    const bool hasOutboundsTemplate = root.contains("outbounds") && root["outbounds"].is_array();
+    if (hasOutboundsTemplate) {
+        outboundsTemplate = root["outbounds"];
+    }
+    nlohmann::json routingRulesTemplate;
+    bool hasRoutingRulesTemplate = false;
+    nlohmann::json routingBalancersTemplate;
+    bool hasRoutingBalancersTemplate = false;
+    if (root.contains("routing") && root["routing"].is_object() && root["routing"].contains("rules")) {
+        routingRulesTemplate = root["routing"]["rules"];
+        hasRoutingRulesTemplate = true;
+    }
+    if (root.contains("routing") && root["routing"].is_object() && root["routing"].contains("balancers")) {
+        routingBalancersTemplate = root["routing"]["balancers"];
+        hasRoutingBalancersTemplate = true;
+    }
+    nlohmann::json dnsServersTemplate;
+    bool hasDnsServersTemplate = false;
+    if (root.contains("dns") && root["dns"].is_object() && root["dns"].contains("servers")) {
+        dnsServersTemplate = root["dns"]["servers"];
+        hasDnsServersTemplate = true;
+    }
     if (!root.contains("outbounds") || !root["outbounds"].is_array()) {
         root["outbounds"] = nlohmann::json::array();
     }
@@ -662,6 +685,49 @@ ExportResult exportXrayImpl(
         root["routing"]["rules"].push_back(
             {{"type", "field"}, {"network", "tcp,udp"}, {"outboundTag", "DIRECT"}}
         );
+    }
+
+    if (profile != nullptr) {
+        if (!root.contains("routing") || !root["routing"].is_object()) {
+            root["routing"] = nlohmann::json::object();
+        }
+        if (!root.contains("dns") || !root["dns"].is_object()) {
+            root["dns"] = nlohmann::json::object();
+        }
+
+        struct JsonPolicyPath {
+            const char* path;
+            nlohmann::json& parent;
+            const char* key;
+            const nlohmann::json* templateValue;
+            bool templateHad;
+            nlohmann::json generatedValue;
+            const char* mergeKey;
+        };
+
+        std::vector<JsonPolicyPath> paths;
+        paths.push_back({"outbounds", root, "outbounds", hasOutboundsTemplate ? &outboundsTemplate : nullptr, hasOutboundsTemplate, root["outbounds"], "tag"});
+        paths.push_back({"routing.rules", root["routing"], "rules", hasRoutingRulesTemplate ? &routingRulesTemplate : nullptr, hasRoutingRulesTemplate, root["routing"].contains("rules") ? root["routing"]["rules"] : nlohmann::json::array(), ""});
+        paths.push_back({"routing.balancers", root["routing"], "balancers", hasRoutingBalancersTemplate ? &routingBalancersTemplate : nullptr, hasRoutingBalancersTemplate, root["routing"].contains("balancers") ? root["routing"]["balancers"] : nlohmann::json::array(), "tag"});
+        paths.push_back({"dns.servers", root["dns"], "servers", hasDnsServersTemplate ? &dnsServersTemplate : nullptr, hasDnsServersTemplate, root["dns"].contains("servers") ? root["dns"]["servers"] : nlohmann::json::array(), ""});
+
+        for (const auto& item : paths) {
+            TemplatePolicyAction explicitAction;
+            if (!getExplicitTemplatePolicyAction(ExportTarget::Xray, profile, item.path, explicitAction)) {
+                continue;
+            }
+            applyTemplatePolicyJsonField(
+                item.parent,
+                item.key,
+                item.templateValue,
+                item.templateHad,
+                item.generatedValue,
+                explicitAction,
+                item.path,
+                item.mergeKey,
+                result.warnings
+            );
+        }
     }
 
     result.ok = writeFile(outPath, root.dump(2), error);

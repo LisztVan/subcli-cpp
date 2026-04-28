@@ -218,6 +218,349 @@ void testLoadProfileAcceptsFinalRuleWithoutOutbound() {
     fs::remove_all(dir);
 }
 
+void testLoadProfileReadsTemplatePolicy() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-reads-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "outbounds": "merge",
+          "route.rules": "reject"
+        }
+      },
+      "xray": {
+        "paths": {
+          "routing.balancers": "append"
+        }
+      },
+      "mihomo": {
+        "paths": {
+          "rules": "replace"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(subcli::loadProfile(path.string(), profile, error), "loadProfile should read template_policy: " + error);
+    require(profile.templatePolicy.targets.size() == 3, "template_policy should read target count");
+    require(profile.templatePolicy.targets.at("sing-box").pathActions.at("outbounds") == "merge", "template_policy sing-box outbounds should be merge");
+    require(profile.templatePolicy.targets.at("sing-box").pathActions.at("route.rules") == "reject", "template_policy sing-box route.rules should be reject");
+    require(profile.templatePolicy.targets.at("xray").pathActions.at("routing.balancers") == "append", "template_policy xray routing.balancers should be append");
+    require(profile.templatePolicy.targets.at("mihomo").pathActions.at("rules") == "replace", "template_policy mihomo rules should be replace");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsUnknownTemplatePolicyTarget() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-target-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "sing-box2": {
+        "paths": {
+          "outbounds": "merge"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject unknown template_policy target");
+    require(error.find("unsupported template_policy target") != std::string::npos, "unknown template_policy target should return clear error");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsUnknownTemplatePolicyPath() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-path-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "dns.fake": "merge"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject unknown template_policy path");
+    require(error.find("unsupported template_policy path") != std::string::npos, "unknown template_policy path should return clear error");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsUnknownTemplatePolicyAction() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-action-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "outbounds": "keep"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject unknown template_policy action");
+    require(error.find("unsupported template_policy action") != std::string::npos, "unknown template_policy action should return clear error");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsMergeOnSingBoxRouteRules() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-sing-merge-route-rules-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "route.rules": "merge"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject merge on sing-box route.rules");
+    require(error.find("unsupported template_policy action for sing-box path route.rules") != std::string::npos, "merge on sing-box route.rules should return clear error");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileAcceptsAppendOnSingBoxRouteRules() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-sing-append-route-rules-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "route.rules": "append"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(subcli::loadProfile(path.string(), profile, error), "loadProfile should accept append on sing-box route.rules: " + error);
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsMergeOnXrayDnsServers() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-xray-merge-dns-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "xray": {
+        "paths": {
+          "dns.servers": "merge"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject merge on xray dns.servers");
+    require(error.find("unsupported template_policy action for xray path dns.servers") != std::string::npos, "merge on xray dns.servers should return clear error");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileAcceptsReplaceOnXrayDnsServers() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-xray-replace-dns-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "xray": {
+        "paths": {
+          "dns.servers": "replace"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(subcli::loadProfile(path.string(), profile, error), "loadProfile should accept replace on xray dns.servers: " + error);
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsAppendOnMihomoDns() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-mihomo-append-dns-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "mihomo": {
+        "paths": {
+          "dns": "append"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject append on mihomo dns");
+    require(error.find("unsupported template_policy action for mihomo path dns") != std::string::npos, "append on mihomo dns should return clear error");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileAcceptsMergeOnMihomoDns() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-mihomo-merge-dns-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "mihomo": {
+        "paths": {
+          "dns": "merge"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(subcli::loadProfile(path.string(), profile, error), "loadProfile should accept merge on mihomo dns: " + error);
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsTemplatePolicyParentChildConflict() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-template-policy-parent-child-conflict-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "policy-test",
+  "template_policy": {
+    "targets": {
+      "mihomo": {
+        "paths": {
+          "dns": "merge",
+          "dns.nameserver": "replace"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject template_policy parent-child conflict");
+    require(error.find("conflicting template_policy paths") != std::string::npos, "parent-child conflict should return clear error");
+
+    fs::remove_all(dir);
+}
+
 void testBuiltInProfilesExistAndLoad() {
     const fs::path profilesDir = fs::path(SUBCLI_SOURCE_DIR) / "profiles";
     const fs::path bypassCnPath = profilesDir / "bypass-cn.json";
@@ -347,6 +690,640 @@ void testExportProfileResolverFailsForInvalidProfileJson() {
     require(error.find("invalid profile JSON") != std::string::npos, "invalid profile error should include JSON parse failure");
 
     fs::remove_all(dir);
+}
+
+void testSingBoxTemplatePolicyRejectRouteRulesPreservesTemplateWithWarning() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-singbox-template-policy-reject-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "singbox-template.json";
+    const fs::path outPath = dir / "singbox-out.json";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"json({
+  "outbounds": [
+    {"type": "direct", "tag": "DIRECT"}
+  ],
+  "route": {
+    "rules": [
+      {"action": "route", "outbound": "DIRECT", "domain_suffix": ["kept.example"]}
+    ]
+  },
+  "dns": {
+    "servers": [
+      {"type": "udp", "tag": "dns-remote", "server": "1.1.1.1", "server_port": 53}
+    ]
+  }
+})json";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["sing-box"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.rules.push_back({"domain_suffix", "generated.example", "PROXY", {}, {}, {}, {}});
+    profile.templatePolicy.targets["sing-box"].pathActions["route.rules"] = "reject";
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        outPath.string(),
+        error
+    );
+    require(result.ok, "sing-box export should succeed with reject policy: " + error);
+
+    bool hasRejectWarning = false;
+    for (const auto& warning : result.warnings) {
+        if (warning.code == "template_policy_reject_preserved" && warning.message.find("route.rules") != std::string::npos) {
+            hasRejectWarning = true;
+            break;
+        }
+    }
+    require(hasRejectWarning, "reject policy should emit template_policy_reject_preserved warning with path");
+
+    auto root = nlohmann::json::parse(subcli::readFile(outPath.string()), nullptr, false);
+    require(!root.is_discarded(), "exported sing-box JSON should be parseable");
+    require(root.contains("route") && root["route"].is_object(), "exported sing-box should contain route object");
+    require(root["route"].contains("rules") && root["route"]["rules"].is_array(), "exported sing-box should contain route rules array");
+
+    std::string rendered = root["route"]["rules"].dump();
+    require(rendered.find("kept.example") != std::string::npos, "reject policy should preserve template route rules");
+    require(rendered.find("generated.example") == std::string::npos, "reject policy should block generated route rules");
+
+    fs::remove_all(dir);
+}
+
+void testSingBoxTemplatePolicyMergeOutbounds() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-singbox-template-policy-merge-outbounds-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "singbox-template.json";
+    const fs::path outPath = dir / "singbox-out.json";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"json({
+  "outbounds": [
+    {"type": "selector", "tag": "PROXY", "outbounds": ["DIRECT"]},
+    {"type": "selector", "tag": "TEMPLATE_ONLY", "outbounds": ["DIRECT"]}
+  ],
+  "dns": {
+    "servers": [{"type": "udp", "tag": "dns-remote", "server": "1.1.1.1", "server_port": 53}]
+  },
+  "route": {
+    "rules": []
+  }
+})json";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["sing-box"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.templatePolicy.targets["sing-box"].pathActions["outbounds"] = "merge";
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        outPath.string(),
+        error
+    );
+    require(result.ok, "sing-box merge outbounds export should succeed: " + error);
+
+    auto root = nlohmann::json::parse(subcli::readFile(outPath.string()), nullptr, false);
+    require(!root.is_discarded(), "sing-box merge outbounds output should parse");
+    bool hasTemplateOnly = false;
+    bool hasProxy = false;
+    for (const auto& outbound : root["outbounds"]) {
+        const std::string tag = outbound.value("tag", "");
+        hasTemplateOnly = hasTemplateOnly || tag == "TEMPLATE_ONLY";
+        hasProxy = hasProxy || tag == "PROXY";
+    }
+    require(hasTemplateOnly, "sing-box outbounds merge should keep template-only outbound");
+    require(hasProxy, "sing-box outbounds merge should keep generated or merged PROXY outbound");
+
+    fs::remove_all(dir);
+}
+
+void testSingBoxTemplatePolicyAppendDnsRules() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-singbox-template-policy-append-dns-rules-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "singbox-template.json";
+    const fs::path outPath = dir / "singbox-out.json";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"json({
+  "outbounds": [{"type": "direct", "tag": "DIRECT"}],
+  "dns": {
+    "rules": [
+      {"domain_suffix": ["template.dns"], "server": "dns-remote"}
+    ],
+    "servers": [{"type": "udp", "tag": "dns-remote", "server": "1.1.1.1", "server_port": 53}]
+  },
+  "route": {"rules": []}
+})json";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["sing-box"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.dns.directServers = {"223.5.5.5"};
+    profile.dns.remoteServers = {"1.1.1.1"};
+    profile.templatePolicy.targets["sing-box"].pathActions["dns.rules"] = "append";
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        outPath.string(),
+        error
+    );
+    require(result.ok, "sing-box append dns.rules export should succeed: " + error);
+
+    auto root = nlohmann::json::parse(subcli::readFile(outPath.string()), nullptr, false);
+    require(!root.is_discarded(), "sing-box append dns.rules output should parse");
+    const std::string rendered = root["dns"]["rules"].dump();
+    require(rendered.find("template.dns") != std::string::npos, "append dns.rules should keep template dns rule");
+    require(root["dns"]["rules"].size() >= 2, "append dns.rules should include generated dns rules");
+
+    fs::remove_all(dir);
+}
+
+void testSingBoxTemplatePolicyMergeRuleSetByTag() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-singbox-template-policy-merge-ruleset-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "singbox-template.json";
+    const fs::path outPath = dir / "singbox-out.json";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"json({
+  "outbounds": [{"type": "direct", "tag": "DIRECT"}],
+  "route": {
+    "rule_set": [
+      {"type": "local", "tag": "template-only", "format": "binary", "path": "/tmp/template-only.srs"}
+    ],
+    "rules": []
+  },
+  "dns": {
+    "servers": [{"type": "udp", "tag": "dns-remote", "server": "1.1.1.1", "server_port": 53}]
+  }
+})json";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["sing-box"] = templatePath.string();
+    config.assetPaths["sing-box.geosite-cn"] = "/tmp/subcli-assets/geosite-cn.srs";
+    config.assetPaths["sing-box.geoip-cn"] = "/tmp/subcli-assets/geoip-cn.srs";
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.rules.push_back({"geosite", "cn", "DIRECT"});
+    profile.templatePolicy.targets["sing-box"].pathActions["route.rule_set"] = "merge";
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        outPath.string(),
+        error
+    );
+    require(result.ok, "sing-box merge rule_set export should succeed: " + error);
+
+    auto root = nlohmann::json::parse(subcli::readFile(outPath.string()), nullptr, false);
+    require(!root.is_discarded(), "sing-box merge rule_set output should parse");
+    bool hasTemplateOnly = false;
+    bool hasGeositeCn = false;
+    for (const auto& item : root["route"]["rule_set"]) {
+        const std::string tag = item.value("tag", "");
+        hasTemplateOnly = hasTemplateOnly || tag == "template-only";
+        hasGeositeCn = hasGeositeCn || tag == "geosite-cn";
+    }
+    require(hasTemplateOnly, "merge rule_set should keep template-only rule set");
+    require(hasGeositeCn, "merge rule_set should include generated geosite-cn rule set");
+
+    fs::remove_all(dir);
+}
+
+void testSingBoxTemplatePolicyMergeDnsServersKeepsUntaggedTemplateEntries() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-singbox-template-policy-merge-dns-servers-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "singbox-template.json";
+    const fs::path outPath = dir / "singbox-out.json";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"json({
+  "outbounds": [{"type": "direct", "tag": "DIRECT"}],
+  "dns": {
+    "servers": [
+      {"type": "udp", "server": "9.9.9.9", "server_port": 53},
+      {"type": "udp", "tag": "dns-remote", "server": "4.4.4.4", "server_port": 53}
+    ]
+  },
+  "route": {"rules": []}
+})json";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["sing-box"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.dns.directServers = {"223.5.5.5"};
+    profile.dns.remoteServers = {"1.1.1.1"};
+    profile.templatePolicy.targets["sing-box"].pathActions["dns.servers"] = "merge";
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        outPath.string(),
+        error
+    );
+    require(result.ok, "sing-box merge dns.servers export should succeed: " + error);
+
+    auto root = nlohmann::json::parse(subcli::readFile(outPath.string()), nullptr, false);
+    require(!root.is_discarded(), "sing-box merge dns.servers output should parse");
+    const std::string rendered = root["dns"]["servers"].dump();
+    require(rendered.find("9.9.9.9") != std::string::npos, "merge dns.servers should preserve untagged template entries");
+    require(rendered.find("1.1.1.1") != std::string::npos, "merge dns.servers should include generated tagged servers");
+
+    fs::remove_all(dir);
+}
+
+void testXrayTemplatePolicyRejectRoutingRulesPreservesTemplateWithWarning() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-xray-template-policy-reject-routing-rules-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "xray-template.json";
+    const fs::path outPath = dir / "xray-out.json";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"json({
+  "outbounds": [
+    {"protocol": "freedom", "tag": "DIRECT"}
+  ],
+  "routing": {
+    "rules": [
+      {"type": "field", "domain": ["domain:kept.example"], "outboundTag": "DIRECT"}
+    ],
+    "balancers": []
+  }
+})json";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["xray"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.rules.push_back({"domain_suffix", "generated.example", "PROXY", {}, {}, {}, {}});
+    profile.templatePolicy.targets["xray"].pathActions["routing.rules"] = "reject";
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Xray,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        outPath.string(),
+        error
+    );
+    require(result.ok, "xray export should succeed with reject routing.rules policy: " + error);
+
+    bool hasRejectWarning = false;
+    for (const auto& warning : result.warnings) {
+        if (warning.code == "template_policy_reject_preserved" && warning.message.find("routing.rules") != std::string::npos) {
+            hasRejectWarning = true;
+            break;
+        }
+    }
+    require(hasRejectWarning, "xray reject routing.rules should emit reject warning");
+
+    auto root = nlohmann::json::parse(subcli::readFile(outPath.string()), nullptr, false);
+    require(!root.is_discarded(), "xray reject output should parse");
+    const std::string rendered = root["routing"]["rules"].dump();
+    require(rendered.find("kept.example") != std::string::npos, "xray reject routing.rules should preserve template rule");
+    require(rendered.find("generated.example") == std::string::npos, "xray reject routing.rules should block generated rules");
+
+    fs::remove_all(dir);
+}
+
+void testMihomoTemplatePolicyRejectRulesPreservesTemplateWithWarning() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-mihomo-template-policy-reject-rules-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "mihomo-template.yaml";
+    const fs::path outPath = dir / "mihomo-out.yaml";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"yaml(proxies: []
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies: [DIRECT]
+rules:
+  - DOMAIN-SUFFIX,kept.example,DIRECT
+)yaml";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["mihomo"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.rules.push_back({"domain_suffix", "generated.example", "PROXY", {}, {}, {}, {}});
+    profile.templatePolicy.targets["mihomo"].pathActions["rules"] = "reject";
+
+    std::string error;
+    auto result = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        outPath.string(),
+        error
+    );
+    require(result.ok, "mihomo export should succeed with reject rules policy: " + error);
+
+    bool hasRejectWarning = false;
+    for (const auto& warning : result.warnings) {
+        if (warning.code == "template_policy_reject_preserved" && warning.message.find("rules") != std::string::npos) {
+            hasRejectWarning = true;
+            break;
+        }
+    }
+    require(hasRejectWarning, "mihomo reject rules should emit reject warning");
+
+    const auto root = YAML::LoadFile(outPath.string());
+    require(root["rules"] && root["rules"].IsSequence(), "mihomo output should include rules sequence");
+    bool hasKept = false;
+    bool hasGenerated = false;
+    for (const auto& rule : root["rules"]) {
+        const std::string value = rule.as<std::string>("");
+        hasKept = hasKept || value.find("kept.example") != std::string::npos;
+        hasGenerated = hasGenerated || value.find("generated.example") != std::string::npos;
+    }
+    require(hasKept, "mihomo reject rules should preserve template rules");
+    require(!hasGenerated, "mihomo reject rules should block generated rules");
+
+    fs::remove_all(dir);
+}
+
+void testXrayTemplatePolicyMergeBalancersByTagKeepsTemplateBalancer() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-xray-template-policy-merge-balancers-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "xray-template.json";
+    const fs::path outPath = dir / "xray-out.json";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"json({
+  "outbounds": [{"protocol":"freedom","tag":"DIRECT"}],
+  "routing": {
+    "balancers": [{"tag":"TEMPLATE_ONLY","selector":["DIRECT"],"strategy":{"type":"leastPing"}}],
+    "rules": []
+  }
+})json";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["xray"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    subcli::ProfileGroup group;
+    group.tag = "PROXY";
+    group.type = "select";
+    group.members = {"NODE:*"};
+    profile.groups.push_back(group);
+    profile.templatePolicy.targets["xray"].pathActions["routing.balancers"] = "merge";
+
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, outPath.string(), error);
+    require(result.ok, "xray merge balancers export should succeed: " + error);
+
+    auto root = nlohmann::json::parse(subcli::readFile(outPath.string()), nullptr, false);
+    require(!root.is_discarded(), "xray merge balancers output should parse");
+    bool hasTemplateOnly = false;
+    bool hasProxy = false;
+    for (const auto& balancer : root["routing"]["balancers"]) {
+        const std::string tag = balancer.value("tag", "");
+        hasTemplateOnly = hasTemplateOnly || tag == "TEMPLATE_ONLY";
+        hasProxy = hasProxy || tag == "PROXY";
+    }
+    require(hasTemplateOnly, "xray merge balancers should keep template balancer");
+    require(hasProxy, "xray merge balancers should keep generated balancer");
+
+    fs::remove_all(dir);
+}
+
+void testMihomoTemplatePolicyMergeProxiesByNameKeepsTemplateProxy() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-mihomo-template-policy-merge-proxies-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "mihomo-template.yaml";
+    const fs::path outPath = dir / "mihomo-out.yaml";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"yaml(proxies:
+  - name: TEMPLATE_ONLY
+    type: ss
+    server: 8.8.8.8
+    port: 443
+    cipher: chacha20-ietf-poly1305
+    password: pass
+proxy-groups: []
+rules:
+  - MATCH,DIRECT
+)yaml";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["mihomo"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.templatePolicy.targets["mihomo"].pathActions["proxies"] = "merge";
+
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, outPath.string(), error);
+    require(result.ok, "mihomo merge proxies export should succeed: " + error);
+
+    const auto root = YAML::LoadFile(outPath.string());
+    require(root["proxies"] && root["proxies"].IsSequence(), "mihomo merge proxies should output sequence");
+    bool hasTemplateOnly = false;
+    bool hasGenerated = false;
+    for (const auto& proxy : root["proxies"]) {
+        const std::string name = proxy["name"].as<std::string>("");
+        hasTemplateOnly = hasTemplateOnly || name == "TEMPLATE_ONLY";
+        hasGenerated = hasGenerated || name == "HK Node";
+    }
+    require(hasTemplateOnly, "mihomo merge proxies should keep template proxy");
+    require(hasGenerated, "mihomo merge proxies should include generated proxy");
+
+    fs::remove_all(dir);
+}
+
+void testMihomoTemplatePolicyRejectDnsPreservesTemplateWithWarning() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-mihomo-template-policy-reject-dns-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path templatePath = dir / "mihomo-template.yaml";
+    const fs::path outPath = dir / "mihomo-out.yaml";
+
+    {
+        std::ofstream out(templatePath);
+        out << R"yaml(proxies: []
+proxy-groups: []
+dns:
+  enable: true
+  nameserver:
+    - 9.9.9.9
+rules:
+  - MATCH,DIRECT
+)yaml";
+    }
+
+    auto config = makeConfig();
+    config.templateNormal["mihomo"] = templatePath.string();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy";
+    profile.defaultOutbound = "PROXY";
+    profile.dns.directServers = {"223.5.5.5"};
+    profile.templatePolicy.targets["mihomo"].pathActions["dns"] = "reject";
+
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {makeExportReadyShadowsocksNode("HK Node")}, config, false, &profile, outPath.string(), error);
+    require(result.ok, "mihomo reject dns export should succeed: " + error);
+
+    bool hasRejectWarning = false;
+    for (const auto& warning : result.warnings) {
+        if (warning.code == "template_policy_reject_preserved" && warning.message.find("dns") != std::string::npos) {
+            hasRejectWarning = true;
+            break;
+        }
+    }
+    require(hasRejectWarning, "mihomo reject dns should emit reject warning");
+
+    const auto root = YAML::LoadFile(outPath.string());
+    require(root["dns"] && root["dns"].IsMap(), "mihomo reject dns should preserve dns map");
+    require(root["dns"]["nameserver"] && root["dns"]["nameserver"].IsSequence(), "mihomo reject dns should keep nameserver");
+    require(root["dns"]["nameserver"][0].as<std::string>("") == "9.9.9.9", "mihomo reject dns should preserve template nameserver");
+
+    fs::remove_all(dir);
+}
+
+void testTemplatePolicyExportsRemainParseableForAllTargets() {
+    auto config = makeConfig();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "policy-parseable";
+    profile.defaultOutbound = "PROXY";
+    profile.dns.strategy = "prefer_ipv4";
+    profile.dns.directServers = {"223.5.5.5"};
+    profile.dns.remoteServers = {"1.1.1.1"};
+    profile.rules.push_back({"domain_suffix", "example.com", "PROXY", {}, {}, {}, {}});
+    profile.rules.push_back({"final", "", "PROXY", {}, {}, {}, {}});
+
+    profile.templatePolicy.targets["sing-box"].pathActions["outbounds"] = "merge";
+    profile.templatePolicy.targets["sing-box"].pathActions["route.rules"] = "append";
+    profile.templatePolicy.targets["xray"].pathActions["routing.balancers"] = "merge";
+    profile.templatePolicy.targets["xray"].pathActions["routing.rules"] = "append";
+    profile.templatePolicy.targets["mihomo"].pathActions["proxy-groups"] = "merge";
+    profile.templatePolicy.targets["mihomo"].pathActions["rules"] = "append";
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-template-policy-parseable-all-targets";
+    fs::remove_all(outDir);
+    fs::create_directories(outDir);
+
+    std::string error;
+    auto mihomo = subcli::exportForTarget(
+        subcli::ExportTarget::Mihomo,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "mihomo.yaml").string(),
+        error
+    );
+    require(mihomo.ok, "mihomo export should succeed with template_policy: " + error);
+
+    auto sing = subcli::exportForTarget(
+        subcli::ExportTarget::SingBox,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "sing-box.json").string(),
+        error
+    );
+    require(sing.ok, "sing-box export should succeed with template_policy: " + error);
+
+    auto xray = subcli::exportForTarget(
+        subcli::ExportTarget::Xray,
+        {makeExportReadyShadowsocksNode("HK Node")},
+        config,
+        false,
+        &profile,
+        (outDir / "xray.json").string(),
+        error
+    );
+    require(xray.ok, "xray export should succeed with template_policy: " + error);
+
+    const auto mihomoYaml = YAML::LoadFile((outDir / "mihomo.yaml").string());
+    require(mihomoYaml && mihomoYaml.IsMap(), "mihomo export output should parse as YAML map");
+
+    const auto singJson = nlohmann::json::parse(subcli::readFile((outDir / "sing-box.json").string()), nullptr, false);
+    require(!singJson.is_discarded() && singJson.is_object(), "sing-box export output should parse as JSON object");
+
+    const auto xrayJson = nlohmann::json::parse(subcli::readFile((outDir / "xray.json").string()), nullptr, false);
+    require(!xrayJson.is_discarded() && xrayJson.is_object(), "xray export output should parse as JSON object");
+
+    fs::remove_all(outDir);
 }
 
 void testBuiltInAutoGroupsDoNotReferenceProxy() {
@@ -4181,12 +5158,34 @@ int main() {
     testLoadProfileRejectsRuleWithoutOutbound();
     testLoadProfileAcceptsRuleWithoutValueOrLists();
     testLoadProfileAcceptsFinalRuleWithoutOutbound();
+    testLoadProfileReadsTemplatePolicy();
+    testLoadProfileRejectsUnknownTemplatePolicyTarget();
+    testLoadProfileRejectsUnknownTemplatePolicyPath();
+    testLoadProfileRejectsUnknownTemplatePolicyAction();
+    testLoadProfileRejectsMergeOnSingBoxRouteRules();
+    testLoadProfileAcceptsAppendOnSingBoxRouteRules();
+    testLoadProfileRejectsMergeOnXrayDnsServers();
+    testLoadProfileAcceptsReplaceOnXrayDnsServers();
+    testLoadProfileRejectsAppendOnMihomoDns();
+    testLoadProfileAcceptsMergeOnMihomoDns();
+    testLoadProfileRejectsTemplatePolicyParentChildConflict();
     testBuiltInProfilesExistAndLoad();
     testExportProfileResolverLoadsBuiltInProfile();
     testExportProfileResolverOverrideLoadsBuiltInProfile();
     testExportProfileResolverOverrideLoadsPath();
     testExportProfileResolverFailsForMissingProfilePath();
     testExportProfileResolverFailsForInvalidProfileJson();
+    testSingBoxTemplatePolicyRejectRouteRulesPreservesTemplateWithWarning();
+    testSingBoxTemplatePolicyMergeOutbounds();
+    testSingBoxTemplatePolicyAppendDnsRules();
+    testSingBoxTemplatePolicyMergeRuleSetByTag();
+    testSingBoxTemplatePolicyMergeDnsServersKeepsUntaggedTemplateEntries();
+    testXrayTemplatePolicyRejectRoutingRulesPreservesTemplateWithWarning();
+    testXrayTemplatePolicyMergeBalancersByTagKeepsTemplateBalancer();
+    testMihomoTemplatePolicyRejectRulesPreservesTemplateWithWarning();
+    testMihomoTemplatePolicyMergeProxiesByNameKeepsTemplateProxy();
+    testMihomoTemplatePolicyRejectDnsPreservesTemplateWithWarning();
+    testTemplatePolicyExportsRemainParseableForAllTargets();
     testBuiltInAutoGroupsDoNotReferenceProxy();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();

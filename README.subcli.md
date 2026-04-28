@@ -198,6 +198,29 @@ Built-in profiles:
 
 For custom authoring, see [`docs/profile-schema.md`](docs/profile-schema.md). Advanced routing and strategy behavior should now live in profile JSON, not in `config.yaml`. Keep `config.yaml` focused on subcli software settings such as paths, timeouts, core locations, assets, templates, and selected profile path/name.
 
+Advanced template merge behavior is also profile-driven via `template_policy`.
+
+Example:
+
+```json
+{
+  "version": 1,
+  "name": "policy-demo",
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "route.rules": "reject",
+          "outbounds": "merge"
+        }
+      }
+    }
+  }
+}
+```
+
+`reject` keeps template content and emits warning `template_policy_reject_preserved` without failing export.
+
 ## Template Management
 
 Templates define the base config around generated proxies and groups. Supported targets are `mihomo`, `sing-box`, and `xray`; supported kinds are `normal` and `tun`.
@@ -211,7 +234,7 @@ subcli template reset
 subcli template validate
 ```
 
-`template set` requires the file to exist. `template validate` returns non-zero if any configured template file is missing.
+`template set` requires the file to exist. `template validate` returns non-zero if any configured template file is missing or cannot be parsed as a valid target format (Mihomo YAML map, sing-box/Xray JSON object).
 
 ## Machine-Readable Output
 

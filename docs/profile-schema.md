@@ -47,7 +47,8 @@ subcli export all --profile /path/to/profile.json
   "default_outbound": "PROXY",
   "dns": {},
   "groups": [],
-  "rules": []
+  "rules": [],
+  "template_policy": {}
 }
 ```
 
@@ -58,8 +59,49 @@ subcli export all --profile /path/to/profile.json
 - `dns`: optional object.
 - `groups`: optional array of strategy group objects.
 - `rules`: optional array of routing rule objects.
+- `template_policy`: optional object that controls how generated sections are merged with templates.
 
 Unknown JSON keys are ignored by the current loader. Keep custom metadata under clearly named keys so future schema versions can reserve new names without ambiguity.
+
+## Template Policy
+
+`template_policy` is an advanced control surface for template composition.
+
+```json
+{
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "route.rules": "reject",
+          "outbounds": "merge"
+        }
+      }
+    }
+  }
+}
+```
+
+Actions:
+
+- `replace`: use generated field content only.
+- `append`: append generated items to template array.
+- `merge`: merge maps or keyed arrays (`tag`/`name` depending on target/path).
+- `reject`: preserve template field, skip generated write, and emit warning code `template_policy_reject_preserved`.
+
+### Supported target/path matrix
+
+- `mihomo`: `proxies`, `proxy-groups`, `rules`, `dns`, `dns.nameserver`, `dns.fallback`
+- `sing-box`: `outbounds`, `dns`, `dns.servers`, `dns.rules`, `route.rules`, `route.rule_set`
+- `xray`: `outbounds`, `dns`, `dns.servers`, `routing.rules`, `routing.balancers`
+
+`merge` is restricted to safe paths only:
+
+- `mihomo`: `proxies`, `proxy-groups`, `dns`
+- `sing-box`: `outbounds`, `dns`, `dns.servers`, `route.rule_set`
+- `xray`: `outbounds`, `routing.balancers`
+
+Unsupported action/path combinations fail `subcli profile validate`.
 
 ## DNS Object
 

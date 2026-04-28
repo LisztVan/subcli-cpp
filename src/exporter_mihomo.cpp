@@ -100,6 +100,132 @@ std::vector<std::string> valuesOrScalar(const std::vector<std::string>& values, 
     return {};
 }
 
+void applyMihomoSequencePolicy(
+    YAML::Node& parent,
+    const std::string& key,
+    const YAML::Node* templateValue,
+    bool templateHad,
+    const YAML::Node& generatedValue,
+    TemplatePolicyAction action,
+    const std::string& path,
+    const std::string& mergeKey,
+    std::vector<DiagnosticMessage>& warnings
+) {
+    if (action == TemplatePolicyAction::Reject) {
+        if (templateHad && templateValue != nullptr) {
+            parent[key] = *templateValue;
+            addTemplatePolicyRejectWarning(warnings, path);
+        } else {
+            parent.remove(key);
+        }
+        return;
+    }
+
+    if (action == TemplatePolicyAction::Replace) {
+        parent[key] = generatedValue;
+        return;
+    }
+
+    if (action == TemplatePolicyAction::Append) {
+        if (!templateHad || templateValue == nullptr || !templateValue->IsSequence() || !generatedValue.IsSequence()) {
+            parent[key] = generatedValue;
+            return;
+        }
+        YAML::Node merged(YAML::NodeType::Sequence);
+        for (const auto& item : *templateValue) {
+            merged.push_back(item);
+        }
+        for (const auto& item : generatedValue) {
+            merged.push_back(item);
+        }
+        parent[key] = merged;
+        return;
+    }
+
+    if (action == TemplatePolicyAction::Merge) {
+        if (!templateHad || templateValue == nullptr || !templateValue->IsSequence() || !generatedValue.IsSequence()) {
+            parent[key] = generatedValue;
+            return;
+        }
+        if (mergeKey.empty()) {
+            YAML::Node merged(YAML::NodeType::Sequence);
+            for (const auto& item : *templateValue) {
+                merged.push_back(item);
+            }
+            for (const auto& item : generatedValue) {
+                merged.push_back(item);
+            }
+            parent[key] = merged;
+            return;
+        }
+
+        YAML::Node merged(YAML::NodeType::Sequence);
+        std::map<std::string, size_t> indexByKey;
+        for (const auto item : *templateValue) {
+            YAML::Node itemNode = item;
+            if (itemNode.IsMap() && itemNode[mergeKey] && itemNode[mergeKey].IsScalar()) {
+                indexByKey[itemNode[mergeKey].as<std::string>()] = merged.size();
+            }
+            merged.push_back(itemNode);
+        }
+        for (const auto item : generatedValue) {
+            YAML::Node itemNode = item;
+            if (itemNode.IsMap() && itemNode[mergeKey] && itemNode[mergeKey].IsScalar()) {
+                const std::string value = itemNode[mergeKey].as<std::string>();
+                const auto existing = indexByKey.find(value);
+                if (existing != indexByKey.end()) {
+                    merged[existing->second] = itemNode;
+                } else {
+                    indexByKey[value] = merged.size();
+                    merged.push_back(itemNode);
+                }
+            } else {
+                merged.push_back(itemNode);
+            }
+        }
+        parent[key] = merged;
+    }
+}
+
+void applyMihomoMapPolicy(
+    YAML::Node& parent,
+    const std::string& key,
+    const YAML::Node* templateValue,
+    bool templateHad,
+    const YAML::Node& generatedValue,
+    TemplatePolicyAction action,
+    const std::string& path,
+    std::vector<DiagnosticMessage>& warnings
+) {
+    if (action == TemplatePolicyAction::Reject) {
+        if (templateHad && templateValue != nullptr) {
+            parent[key] = *templateValue;
+            addTemplatePolicyRejectWarning(warnings, path);
+        } else {
+            parent.remove(key);
+        }
+        return;
+    }
+    if (action == TemplatePolicyAction::Replace) {
+        parent[key] = generatedValue;
+        return;
+    }
+    if (action == TemplatePolicyAction::Merge) {
+        if (!templateHad || templateValue == nullptr || !templateValue->IsMap() || !generatedValue.IsMap()) {
+            parent[key] = generatedValue;
+            return;
+        }
+        YAML::Node merged(YAML::NodeType::Map);
+        for (const auto item : *templateValue) {
+            merged[item.first.as<std::string>()] = item.second;
+        }
+        for (const auto item : generatedValue) {
+            merged[item.first.as<std::string>()] = item.second;
+        }
+        parent[key] = merged;
+    }
+}
+
 void applyMihomoProfileDns(YAML::Node& root, const ResolvedProfile& profile) {
     if (!root["dns"] || !root["dns"].IsMap()) {
         root["dns"] = YAML::Node(YAML::NodeType::Map);
@@ -218,6 +344,38 @@ ExportResult exportMihomoImpl(
     }
 
     YAML::Node root = YAML::LoadFile(tpl);
+    YAML::Node proxiesTemplate;
+    const bool hasProxiesTemplate = root["proxies"] && root["proxies"].IsSequence();
+    if (hasProxiesTemplate) {
+        proxiesTemplate = YAML::Clone(root["proxies"]);
+    }
+    YAML::Node proxyGroupsTemplate;
+    const bool hasProxyGroupsTemplate = root["proxy-groups"] && root["proxy-groups"].IsSequence();
+    if (hasProxyGroupsTemplate) {
+        proxyGroupsTemplate = YAML::Clone(root["proxy-groups"]);
+    }
+    YAML::Node rulesTemplate;
+    const bool hasRulesTemplate = root["rules"] && root["rules"].IsSequence();
+    if (hasRulesTemplate) {
+        rulesTemplate = YAML::Clone(root["rules"]);
+    }
+    YAML::Node dnsTemplate;
+    const bool hasDnsTemplate = root["dns"] && root["dns"].IsMap();
+    if (hasDnsTemplate) {
+        dnsTemplate = YAML::Clone(root["dns"]);
+    }
+    YAML::Node dnsNameserverTemplate;
+    bool hasDnsNameserverTemplate = false;
+    YAML::Node dnsFallbackTemplate;
+    bool hasDnsFallbackTemplate = false;
+    if (hasDnsTemplate && dnsTemplate["nameserver"]) {
+        dnsNameserverTemplate = YAML::Clone(dnsTemplate["nameserver"]);
+        hasDnsNameserverTemplate = true;
+    }
+    if (hasDnsTemplate && dnsTemplate["fallback"]) {
+        dnsFallbackTemplate = YAML::Clone(dnsTemplate["fallback"]);
+        hasDnsFallbackTemplate = true;
+    }
     std::set<std::string> generatedNames;
     for (const auto& n : supported) {
         generatedNames.insert(n.name);
@@ -393,6 +551,31 @@ ExportResult exportMihomoImpl(
     if (profile != nullptr) {
         applyMihomoProfileDns(root, *profile);
         applyMihomoProfileRules(root, *profile);
+
+        TemplatePolicyAction explicitAction;
+        if (getExplicitTemplatePolicyAction(ExportTarget::Mihomo, profile, "proxies", explicitAction)) {
+            applyMihomoSequencePolicy(root, "proxies", hasProxiesTemplate ? &proxiesTemplate : nullptr, hasProxiesTemplate, root["proxies"], explicitAction, "proxies", "name", result.warnings);
+        }
+        if (getExplicitTemplatePolicyAction(ExportTarget::Mihomo, profile, "proxy-groups", explicitAction)) {
+            applyMihomoSequencePolicy(root, "proxy-groups", hasProxyGroupsTemplate ? &proxyGroupsTemplate : nullptr, hasProxyGroupsTemplate, root["proxy-groups"], explicitAction, "proxy-groups", "name", result.warnings);
+        }
+        if (getExplicitTemplatePolicyAction(ExportTarget::Mihomo, profile, "rules", explicitAction)) {
+            applyMihomoSequencePolicy(root, "rules", hasRulesTemplate ? &rulesTemplate : nullptr, hasRulesTemplate, root["rules"], explicitAction, "rules", "", result.warnings);
+        }
+        if (getExplicitTemplatePolicyAction(ExportTarget::Mihomo, profile, "dns", explicitAction)) {
+            applyMihomoMapPolicy(root, "dns", hasDnsTemplate ? &dnsTemplate : nullptr, hasDnsTemplate, root["dns"], explicitAction, "dns", result.warnings);
+        }
+        if (!root["dns"] || !root["dns"].IsMap()) {
+            root["dns"] = YAML::Node(YAML::NodeType::Map);
+        }
+        if (getExplicitTemplatePolicyAction(ExportTarget::Mihomo, profile, "dns.nameserver", explicitAction)) {
+            YAML::Node dnsRoot = root["dns"];
+            applyMihomoSequencePolicy(dnsRoot, "nameserver", hasDnsNameserverTemplate ? &dnsNameserverTemplate : nullptr, hasDnsNameserverTemplate, dnsRoot["nameserver"], explicitAction, "dns.nameserver", "", result.warnings);
+        }
+        if (getExplicitTemplatePolicyAction(ExportTarget::Mihomo, profile, "dns.fallback", explicitAction)) {
+            YAML::Node dnsRoot = root["dns"];
+            applyMihomoSequencePolicy(dnsRoot, "fallback", hasDnsFallbackTemplate ? &dnsFallbackTemplate : nullptr, hasDnsFallbackTemplate, dnsRoot["fallback"], explicitAction, "dns.fallback", "", result.warnings);
+        }
     } else if (!config.routingRules.empty()) {
         ensureMihomoCustomRoutingRules(root, config);
     } else if (config.profile == "bypass-cn") {

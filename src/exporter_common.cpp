@@ -404,6 +404,273 @@ bool hasMihomoRule(const YAML::Node& rules, const std::string& value) {
     return false;
 }
 
+bool parseTemplatePolicyAction(const std::string& value, TemplatePolicyAction& action) {
+    if (value == "replace") {
+        action = TemplatePolicyAction::Replace;
+        return true;
+    }
+    if (value == "append") {
+        action = TemplatePolicyAction::Append;
+        return true;
+    }
+    if (value == "merge") {
+        action = TemplatePolicyAction::Merge;
+        return true;
+    }
+    if (value == "reject") {
+        action = TemplatePolicyAction::Reject;
+        return true;
+    }
+    return false;
+}
+
+bool parseTemplatePolicyTarget(const std::string& value, ExportTarget& target) {
+    if (value == "mihomo") {
+        target = ExportTarget::Mihomo;
+        return true;
+    }
+    if (value == "sing-box") {
+        target = ExportTarget::SingBox;
+        return true;
+    }
+    if (value == "xray") {
+        target = ExportTarget::Xray;
+        return true;
+    }
+    return false;
+}
+
+std::string templatePolicyTargetKey(ExportTarget target) {
+    switch (target) {
+        case ExportTarget::Mihomo:
+            return "mihomo";
+        case ExportTarget::SingBox:
+            return "sing-box";
+        case ExportTarget::Xray:
+            return "xray";
+    }
+    return "";
+}
+
+bool isTemplatePolicyPathSupported(ExportTarget target, const std::string& path) {
+    switch (target) {
+        case ExportTarget::SingBox:
+            return path == "outbounds" || path == "dns" || path == "dns.servers" || path == "dns.rules" ||
+                   path == "route.rules" || path == "route.rule_set";
+        case ExportTarget::Xray:
+            return path == "outbounds" || path == "dns" || path == "dns.servers" || path == "routing.rules" ||
+                   path == "routing.balancers";
+        case ExportTarget::Mihomo:
+            return path == "proxies" || path == "proxy-groups" || path == "rules" || path == "dns" ||
+                   path == "dns.nameserver" || path == "dns.fallback";
+    }
+    return false;
+}
+
+bool isTemplatePolicyActionSupportedForPath(ExportTarget target, const std::string& path, TemplatePolicyAction action) {
+    if (!isTemplatePolicyPathSupported(target, path)) {
+        return false;
+    }
+    if (action == TemplatePolicyAction::Replace || action == TemplatePolicyAction::Reject) {
+        return true;
+    }
+    if (action == TemplatePolicyAction::Append) {
+        switch (target) {
+            case ExportTarget::SingBox:
+                return path == "outbounds" || path == "dns.servers" || path == "dns.rules" ||
+                       path == "route.rules" || path == "route.rule_set";
+            case ExportTarget::Xray:
+                return path == "outbounds" || path == "dns.servers" || path == "routing.rules" ||
+                       path == "routing.balancers";
+            case ExportTarget::Mihomo:
+                return path == "proxies" || path == "proxy-groups" || path == "rules" ||
+                       path == "dns.nameserver" || path == "dns.fallback";
+        }
+        return false;
+    }
+    switch (target) {
+        case ExportTarget::SingBox:
+            return path == "outbounds" || path == "dns" || path == "dns.servers" || path == "route.rule_set";
+        case ExportTarget::Xray:
+            return path == "outbounds" || path == "routing.balancers";
+        case ExportTarget::Mihomo:
+            return path == "proxies" || path == "proxy-groups" || path == "dns";
+    }
+    return false;
+}
+
+TemplatePolicyAction defaultTemplatePolicyAction(ExportTarget target, const std::string& path) {
+    switch (target) {
+        case ExportTarget::SingBox:
+            if (path == "outbounds" || path == "dns.servers" || path == "route.rule_set") {
+                return TemplatePolicyAction::Merge;
+            }
+            return TemplatePolicyAction::Replace;
+        case ExportTarget::Xray:
+            if (path == "outbounds" || path == "routing.balancers") {
+                return TemplatePolicyAction::Merge;
+            }
+            return TemplatePolicyAction::Replace;
+        case ExportTarget::Mihomo:
+            if (path == "proxies" || path == "proxy-groups" || path == "dns") {
+                return TemplatePolicyAction::Merge;
+            }
+            return TemplatePolicyAction::Replace;
+    }
+    return TemplatePolicyAction::Replace;
+}
+
+TemplatePolicyAction resolveTemplatePolicyAction(ExportTarget target, const ResolvedProfile* profile, const std::string& path) {
+    TemplatePolicyAction resolved = defaultTemplatePolicyAction(target, path);
+    if (profile == nullptr) {
+        return resolved;
+    }
+
+    const std::string targetKey = templatePolicyTargetKey(target);
+
+    const auto targetIt = profile->templatePolicy.targets.find(targetKey);
+    if (targetIt == profile->templatePolicy.targets.end()) {
+        return resolved;
+    }
+    const auto actionIt = targetIt->second.pathActions.find(path);
+    if (actionIt == targetIt->second.pathActions.end()) {
+        return resolved;
+    }
+
+    TemplatePolicyAction parsed = resolved;
+    if (parseTemplatePolicyAction(actionIt->second, parsed) && isTemplatePolicyActionSupportedForPath(target, path, parsed)) {
+        return parsed;
+    }
+    return resolved;
+}
+
+bool getExplicitTemplatePolicyAction(ExportTarget target, const ResolvedProfile* profile, const std::string& path, TemplatePolicyAction& action) {
+    if (profile == nullptr) {
+        return false;
+    }
+
+    const std::string targetKey = templatePolicyTargetKey(target);
+
+    const auto targetIt = profile->templatePolicy.targets.find(targetKey);
+    if (targetIt == profile->templatePolicy.targets.end()) {
+        return false;
+    }
+    const auto actionIt = targetIt->second.pathActions.find(path);
+    if (actionIt == targetIt->second.pathActions.end()) {
+        return false;
+    }
+    TemplatePolicyAction parsed;
+    if (!parseTemplatePolicyAction(actionIt->second, parsed)) {
+        return false;
+    }
+    if (!isTemplatePolicyActionSupportedForPath(target, path, parsed)) {
+        return false;
+    }
+    action = parsed;
+    return true;
+}
+
+void addTemplatePolicyRejectWarning(std::vector<DiagnosticMessage>& warnings, const std::string& path) {
+    warnings.push_back(
+        {"template_policy_reject_preserved", "template_policy rejected generated field '" + path + "'; preserved template content"}
+    );
+}
+
+void applyTemplatePolicyJsonField(
+    nlohmann::json& parent,
+    const std::string& key,
+    const nlohmann::json* templateValue,
+    bool templateHad,
+    const nlohmann::json& generatedValue,
+    TemplatePolicyAction action,
+    const std::string& path,
+    const std::string& mergeKey,
+    std::vector<DiagnosticMessage>& warnings
+) {
+    if (action == TemplatePolicyAction::Reject) {
+        if (templateHad) {
+            parent[key] = *templateValue;
+            addTemplatePolicyRejectWarning(warnings, path);
+        } else {
+            parent.erase(key);
+        }
+        return;
+    }
+
+    if (action == TemplatePolicyAction::Replace) {
+        parent[key] = generatedValue;
+        return;
+    }
+
+    if (action == TemplatePolicyAction::Append) {
+        if (!templateHad || templateValue == nullptr) {
+            parent[key] = generatedValue;
+            return;
+        }
+        if (!templateValue->is_array() || !generatedValue.is_array()) {
+            parent[key] = generatedValue;
+            return;
+        }
+        nlohmann::json merged = *templateValue;
+        for (const auto& item : generatedValue) {
+            merged.push_back(item);
+        }
+        parent[key] = merged;
+        return;
+    }
+
+    if (action == TemplatePolicyAction::Merge) {
+        if (!templateHad || templateValue == nullptr) {
+            parent[key] = generatedValue;
+            return;
+        }
+        if (templateValue->is_object() && generatedValue.is_object()) {
+            nlohmann::json merged = *templateValue;
+            for (auto it = generatedValue.begin(); it != generatedValue.end(); ++it) {
+                merged[it.key()] = it.value();
+            }
+            parent[key] = merged;
+            return;
+        }
+        if (templateValue->is_array() && generatedValue.is_array()) {
+            if (mergeKey.empty()) {
+                nlohmann::json merged = *templateValue;
+                for (const auto& item : generatedValue) {
+                    merged.push_back(item);
+                }
+                parent[key] = merged;
+                return;
+            }
+            nlohmann::json merged = nlohmann::json::array();
+            std::map<std::string, size_t> indexByKey;
+            for (const auto& item : *templateValue) {
+                if (item.is_object() && item.contains(mergeKey) && item[mergeKey].is_string()) {
+                    indexByKey[item[mergeKey].get<std::string>()] = merged.size();
+                }
+                merged.push_back(item);
+            }
+            for (const auto& item : generatedValue) {
+                if (item.is_object() && item.contains(mergeKey) && item[mergeKey].is_string()) {
+                    const std::string keyValue = item[mergeKey].get<std::string>();
+                    const auto existing = indexByKey.find(keyValue);
+                    if (existing != indexByKey.end()) {
+                        merged[existing->second] = item;
+                    } else {
+                        indexByKey[keyValue] = merged.size();
+                        merged.push_back(item);
+                    }
+                } else {
+                    merged.push_back(item);
+                }
+            }
+            parent[key] = merged;
+            return;
+        }
+        parent[key] = generatedValue;
+        return;
+    }
+}
+
 void applyMihomoStructuredProtocolFields(const Node& node, YAML::Node& p) {
     if (const auto* options = std::get_if<ShadowsocksOptions>(&node.options)) {
         if (!options->method.empty()) {

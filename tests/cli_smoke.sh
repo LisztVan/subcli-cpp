@@ -13,12 +13,46 @@ export XDG_STATE_HOME="$tmp/state"
 "$bin" init >/dev/null
 "$bin" template validate >/dev/null
 
+cp "$($bin template get mihomo normal)" "$tmp/valid-mihomo.yaml"
+cp "$($bin template get sing-box normal)" "$tmp/valid-singbox.json"
+cp "$($bin template get xray normal)" "$tmp/valid-xray.json"
+"$bin" template set mihomo normal "$tmp/valid-mihomo.yaml" >/dev/null
+"$bin" template set sing-box normal "$tmp/valid-singbox.json" >/dev/null
+"$bin" template set xray normal "$tmp/valid-xray.json" >/dev/null
+
+echo '{invalid json' >"$tmp/invalid-singbox.json"
+"$bin" template set sing-box normal "$tmp/invalid-singbox.json" >/dev/null
+"$bin" template validate >/dev/null 2>&1 && exit 1 || true
+template_validate_json="$($bin template validate --json 2>/dev/null || true)"
+if [[ "$template_validate_json" != *'"failed":1'* || "$template_validate_json" != *'"parse_ok":false'* || "$template_validate_json" != *'"error":"template JSON parse failed"'* ]]; then
+    printf '%s\n' "$template_validate_json"
+    exit 1
+fi
+"$bin" template set sing-box normal "$tmp/valid-singbox.json" >/dev/null
+
 profile_list="$($bin profile list)"
 if [[ "$profile_list" != *"bypass-cn"* || "$profile_list" != *"global"* || "$profile_list" != *"direct"* ]]; then
     printf '%s\n' "$profile_list"
     exit 1
 fi
 "$bin" profile validate profiles/bypass-cn.json >/dev/null
+invalid_profile="$tmp/invalid-template-policy.json"
+cat >"$invalid_profile" <<'JSON'
+{
+  "version": 1,
+  "name": "invalid-policy",
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "route.rules": "merge"
+        }
+      }
+    }
+  }
+}
+JSON
+"$bin" profile validate "$invalid_profile" >/dev/null 2>&1 && exit 1 || true
 profile_json="$($bin profile get bypass-cn)"
 if [[ "$profile_json" != *'"name"'* || "$profile_json" != *'"bypass-cn"'* ]]; then
     printf '%s\n' "$profile_json"

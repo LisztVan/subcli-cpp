@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "exporter_internal.hpp"
+
 namespace subcli {
 namespace {
 
@@ -13,6 +15,19 @@ using json = nlohmann::json;
 
 bool isBuiltInProfileName(const std::string& name) {
     return name == "bypass-cn" || name == "global" || name == "direct";
+}
+
+bool templatePolicyPathsConflict(const std::string& a, const std::string& b) {
+    if (a == b) {
+        return true;
+    }
+    if (a.size() < b.size() && b.compare(0, a.size(), a) == 0 && b[a.size()] == '.') {
+        return true;
+    }
+    if (b.size() < a.size() && a.compare(0, b.size(), b) == 0 && a[b.size()] == '.') {
+        return true;
+    }
+    return false;
 }
 
 std::string readString(const json& object, const char* key, const std::string& fallback = "") {
@@ -197,6 +212,71 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
                 return false;
             }
             parsed.rules.push_back(rule);
+        }
+    }
+
+    const auto templatePolicyIt = root.find("template_policy");
+    if (templatePolicyIt != root.end()) {
+        if (!templatePolicyIt->is_object()) {
+            error = "profile template_policy must be an object";
+            return false;
+        }
+        const auto targetsIt = templatePolicyIt->find("targets");
+        if (targetsIt != templatePolicyIt->end()) {
+            if (!targetsIt->is_object()) {
+                error = "profile template_policy.targets must be an object";
+                return false;
+            }
+            for (auto targetIt = targetsIt->begin(); targetIt != targetsIt->end(); ++targetIt) {
+                const std::string target = targetIt.key();
+                ExportTarget parsedTarget;
+                if (!parseTemplatePolicyTarget(target, parsedTarget)) {
+                    error = "unsupported template_policy target: " + target;
+                    return false;
+                }
+                if (!targetIt.value().is_object()) {
+                    error = "profile template_policy.targets." + target + " must be an object";
+                    return false;
+                }
+                const auto pathsIt = targetIt.value().find("paths");
+                if (pathsIt == targetIt.value().end()) {
+                    continue;
+                }
+                if (!pathsIt->is_object()) {
+                    error = "profile template_policy.targets." + target + ".paths must be an object";
+                    return false;
+                }
+                std::vector<std::string> seenPaths;
+                for (auto pathIt = pathsIt->begin(); pathIt != pathsIt->end(); ++pathIt) {
+                    const std::string path = pathIt.key();
+                    for (const auto& seenPath : seenPaths) {
+                        if (templatePolicyPathsConflict(path, seenPath)) {
+                            error = "conflicting template_policy paths for " + target + ": " + seenPath + " and " + path;
+                            return false;
+                        }
+                    }
+                    if (!isTemplatePolicyPathSupported(parsedTarget, path)) {
+                        error = "unsupported template_policy path for " + target + ": " + path;
+                        return false;
+                    }
+                    if (!pathIt.value().is_string()) {
+                        error = "template_policy action must be a string for path: " + path;
+                        return false;
+                    }
+                    const std::string action = pathIt.value().get<std::string>();
+                    TemplatePolicyAction parsedAction;
+                    if (!parseTemplatePolicyAction(action, parsedAction)) {
+                        error = "unsupported template_policy action: " + action;
+                        return false;
+                    }
+                    if (!isTemplatePolicyActionSupportedForPath(parsedTarget, path, parsedAction)) {
+                        error = "unsupported template_policy action for " + target + " path " + path + ": " + action;
+                        return false;
+                    }
+                    parsed.templatePolicy.targets[target].pathActions[path] = action;
+                    seenPaths.push_back(path);
+                }
+            }
         }
     }
 

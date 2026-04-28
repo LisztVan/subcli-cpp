@@ -16,6 +16,7 @@
 #include <system_error>
 
 #include <yaml-cpp/yaml.h>
+#include <nlohmann/json.hpp>
 
 #include "subcli/assets.hpp"
 #include "subcli/core_check.hpp"
@@ -30,6 +31,7 @@
 #include "subcli/profile.hpp"
 #include "subcli/store.hpp"
 #include "subcli/util.hpp"
+#include "exporter_internal.hpp"
 
 using namespace subcli;
 
@@ -2324,11 +2326,46 @@ int doTemplateCommand(const std::vector<std::string>& args) {
             const auto path = getTemplateValue(cfg, item.first, item.second);
             std::error_code ec;
             const bool exists = std::filesystem::is_regular_file(path, ec) && !ec;
-            templates.push_back({{"target", item.first}, {"kind", item.second}, {"path", path}, {"exists", exists}});
-            if (!exists) {
+            bool parseOk = false;
+            std::string parseError;
+            if (exists) {
+                try {
+                    if (item.first == "mihomo") {
+                        YAML::Node root = YAML::LoadFile(path);
+                        if (!root || !root.IsMap()) {
+                            parseError = "template root must be YAML map";
+                        } else {
+                            parseOk = true;
+                        }
+                    } else {
+                        auto root = nlohmann::json::parse(readFile(path), nullptr, false);
+                        if (root.is_discarded()) {
+                            parseError = "template JSON parse failed";
+                        } else if (!root.is_object()) {
+                            parseError = "template root must be JSON object";
+                        } else {
+                            parseOk = true;
+                        }
+                    }
+                } catch (const std::exception& ex) {
+                    parseError = ex.what();
+                }
+            }
+
+            templates.push_back(
+                {{"target", item.first}, {"kind", item.second}, {"path", path}, {"exists", exists}, {"parse_ok", parseOk}, {"error", parseError}}
+            );
+
+            if (!exists || !parseOk) {
                 ++failed;
                 if (!jsonOutput) {
-                    std::cout << "[FAIL] " << item.first << "." << item.second << "=" << path << "\n";
+                    std::cout << "[FAIL] " << item.first << "." << item.second << "=" << path;
+                    if (!exists) {
+                        std::cout << " (missing file)";
+                    } else if (!parseError.empty()) {
+                        std::cout << " (" << parseError << ")";
+                    }
+                    std::cout << "\n";
                 }
             } else {
                 if (!jsonOutput) {
@@ -2502,6 +2539,30 @@ int doProfileCommand(const std::vector<std::string>& args) {
         if (!loadProfile(path, profile, error)) {
             std::cerr << "profile validation failed: " << error << "\n";
             return ExitError;
+        }
+        for (const auto& targetEntry : profile.templatePolicy.targets) {
+            ExportTarget parsedTarget;
+            if (!parseTemplatePolicyTarget(targetEntry.first, parsedTarget)) {
+                std::cerr << "profile validation failed: unsupported template_policy target: " << targetEntry.first << "\n";
+                return ExitError;
+            }
+            for (const auto& pathEntry : targetEntry.second.pathActions) {
+                TemplatePolicyAction parsedAction;
+                if (!parseTemplatePolicyAction(pathEntry.second, parsedAction)) {
+                    std::cerr << "profile validation failed: unsupported template_policy action: " << pathEntry.second << "\n";
+                    return ExitError;
+                }
+                if (!isTemplatePolicyPathSupported(parsedTarget, pathEntry.first)) {
+                    std::cerr << "profile validation failed: unsupported template_policy path for "
+                              << targetEntry.first << ": " << pathEntry.first << "\n";
+                    return ExitError;
+                }
+                if (!isTemplatePolicyActionSupportedForPath(parsedTarget, pathEntry.first, parsedAction)) {
+                    std::cerr << "profile validation failed: unsupported template_policy action for "
+                              << targetEntry.first << " path " << pathEntry.first << ": " << pathEntry.second << "\n";
+                    return ExitError;
+                }
+            }
         }
         std::cout << "profile valid: " << profile.name << "\n";
         return ExitOk;

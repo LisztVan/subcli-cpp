@@ -153,6 +153,10 @@ Supported group types:
 - `REGION:*`: expands to all generated region groups in configured region order.
 - `REGION:<name>`: expands to one generated region group if present. If the region is absent, it remains a literal member for targets that can use literal tags.
 - `NODE:*`: expands to all generated node names selected for the export target.
+- `SOURCE:*`: expands to all generated node names selected for the export target.
+- `SOURCE:<id>`: expands to generated node names from one subscription source id.
+- `TAG:<tag>`: expands to generated node names from subscriptions carrying that tag.
+- `PROTOCOL:<name>`: expands to generated node names matching that protocol (canonical name; aliases such as `hy2` and `hysteria2` are treated equivalently).
 
 Any other string is preserved as a literal member. Use literal strings for profile group tags such as `AUTO`, generated outbounds such as `DIRECT`, or target-specific outbounds that already exist in the template.
 

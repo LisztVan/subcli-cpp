@@ -20,6 +20,7 @@
 #include "subcli/node.hpp"
 #include "subcli/parser.hpp"
 #include "subcli/profile.hpp"
+#include "subcli/profile_explain.hpp"
 #include "subcli/protocol_registry.hpp"
 #include "subcli/store.hpp"
 #include "subcli/util.hpp"
@@ -557,6 +558,68 @@ void testLoadProfileRejectsTemplatePolicyParentChildConflict() {
     std::string error;
     require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject template_policy parent-child conflict");
     require(error.find("conflicting template_policy paths") != std::string::npos, "parent-child conflict should return clear error");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileWithBuiltInExtendsMergesOverrides() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-extends-built-in-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "custom-bypass",
+  "extends": "bypass-cn",
+  "default_outbound": "DIRECT",
+  "dns": {
+    "strategy": "prefer_ipv6"
+  },
+  "template_policy": {
+    "targets": {
+      "sing-box": {
+        "paths": {
+          "route.rules": "reject"
+        }
+      }
+    }
+  }
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(subcli::loadProfile(path.string(), profile, error), "loadProfile should support built-in extends: " + error);
+    require(profile.name == "custom-bypass", "extended profile should keep child name");
+    require(profile.defaultOutbound == "DIRECT", "extended profile should override default_outbound");
+    require(profile.dns.strategy == "prefer_ipv6", "extended profile should override dns strategy");
+    require(!profile.groups.empty(), "extended profile should inherit base groups when child omits groups");
+    require(!profile.rules.empty(), "extended profile should inherit base rules when child omits rules");
+    require(profile.templatePolicy.targets.at("sing-box").pathActions.at("route.rules") == "reject", "extended profile should keep child template policy");
+
+    fs::remove_all(dir);
+}
+
+void testLoadProfileRejectsUnknownExtendsBase() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-profile-extends-unknown-tests";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    const fs::path path = dir / "profile.json";
+    {
+        std::ofstream out(path);
+        out << R"json({
+  "version": 1,
+  "name": "bad-extends",
+  "extends": "unknown-base"
+})json";
+    }
+
+    subcli::ResolvedProfile profile;
+    std::string error;
+    require(!subcli::loadProfile(path.string(), profile, error), "loadProfile should reject unknown extends base");
+    require(error.find("unsupported profile extends") != std::string::npos, "unknown extends should return clear error");
 
     fs::remove_all(dir);
 }
@@ -1324,6 +1387,77 @@ void testTemplatePolicyExportsRemainParseableForAllTargets() {
     require(!xrayJson.is_discarded() && xrayJson.is_object(), "xray export output should parse as JSON object");
 
     fs::remove_all(outDir);
+}
+
+void testProfileExplainTextShowsDnsGroupsRulesAndPolicy() {
+    subcli::ResolvedProfile profile;
+    profile.name = "explain-test";
+    profile.description = "demo";
+    profile.extends = "bypass-cn";
+    profile.defaultOutbound = "PROXY";
+    profile.dns.mode = "fake-ip";
+    profile.dns.strategy = "prefer_ipv4";
+    profile.dns.directServers = {"223.5.5.5"};
+    profile.dns.remoteServers = {"1.1.1.1"};
+
+    subcli::ProfileGroup group;
+    group.tag = "PROXY";
+    group.type = "select";
+    group.members = {"AUTO", "DIRECT", "REGION:*"};
+    profile.groups.push_back(group);
+
+    profile.rules.push_back({"geosite", "cn", "DIRECT", {}, {}, {}, {}});
+    profile.templatePolicy.targets["sing-box"].pathActions["route.rules"] = "reject";
+
+    subcli::ProfileExplainOptions options;
+    const std::string text = subcli::explainProfileText(profile, options);
+    require(text.find("profile: explain-test") != std::string::npos, "profile explain should include profile name");
+    require(text.find("extends: bypass-cn") != std::string::npos, "profile explain should include extends base");
+    require(text.find("dns:") != std::string::npos, "profile explain should include dns section");
+    require(text.find("groups:") != std::string::npos, "profile explain should include groups section");
+    require(text.find("PROXY select -> AUTO, DIRECT, REGION:*") != std::string::npos, "profile explain should include group members");
+    require(text.find("TAG:<tag> => expand nodes from subscriptions carrying that tag") != std::string::npos, "profile explain should include member selector guidance");
+    require(text.find("rules:") != std::string::npos, "profile explain should include rules section");
+    require(text.find("geosite cn -> DIRECT") != std::string::npos, "profile explain should include rendered rule");
+    require(text.find("sing-box.route.rules = reject") != std::string::npos, "profile explain should include template policy entries");
+}
+
+void testProfileExplainTargetShowsSingBoxRequiredAssets() {
+    subcli::ResolvedProfile profile;
+    profile.name = "asset-test";
+    profile.rules.push_back({"geosite", "cn", "DIRECT", {}, {}, {}, {}});
+    profile.rules.push_back({"geoip", "cn", "DIRECT", {}, {}, {}, {}});
+
+    subcli::ProfileExplainOptions options;
+    options.hasTarget = true;
+    options.target = subcli::ExportTarget::SingBox;
+
+    const std::string text = subcli::explainProfileText(profile, options);
+    require(text.find("target: sing-box") != std::string::npos, "target explain should include target name");
+    require(text.find("sing-box.geosite-cn") != std::string::npos, "target explain should include required geosite asset");
+    require(text.find("sing-box.geoip-cn") != std::string::npos, "target explain should include required geoip asset");
+}
+
+void testProfileExplainJsonIncludesProfileDnsGroupsRules() {
+    subcli::ResolvedProfile profile;
+    profile.name = "json-test";
+    profile.extends = "global";
+    profile.defaultOutbound = "PROXY";
+    profile.dns.strategy = "prefer_ipv4";
+    subcli::ProfileGroup group;
+    group.tag = "PROXY";
+    group.type = "select";
+    group.members = {"AUTO"};
+    profile.groups.push_back(group);
+    profile.rules.push_back({"final", "", "PROXY", {}, {}, {}, {}});
+
+    subcli::ProfileExplainOptions options;
+    const auto json = subcli::explainProfileJson(profile, options);
+    require(json.contains("profile") && json["profile"].value("name", "") == "json-test", "profile explain json should include profile name");
+    require(json["profile"].value("extends", "") == "global", "profile explain json should include extends base");
+    require(json.contains("dns") && json["dns"].value("strategy", "") == "prefer_ipv4", "profile explain json should include dns strategy");
+    require(json.contains("groups") && json["groups"].is_array() && json["groups"].size() == 1, "profile explain json should include groups array");
+    require(json.contains("rules") && json["rules"].is_array() && json["rules"].size() == 1, "profile explain json should include rules array");
 }
 
 void testBuiltInAutoGroupsDoNotReferenceProxy() {
@@ -2951,6 +3085,46 @@ void testXrayProfileGroupsRenderBalancersWithManagedTags() {
         hasFinalAuto = hasFinalAuto || (rule.value("balancerTag", "") == "AUTO" && rule.value("network", "") == "tcp,udp");
     }
     require(hasFinalAuto, "xray profile default outbound should render catch-all balancer rule");
+}
+
+void testXrayProfileGroupsExpandTagSelectorToManagedTags() {
+    auto config = makeConfig();
+    config.strategyGroups.clear();
+
+    subcli::ResolvedProfile profile;
+    profile.name = "xray-tag-selector";
+    profile.defaultOutbound = "PROXY";
+    subcli::ProfileGroup premium;
+    premium.tag = "PREMIUM";
+    premium.type = "select";
+    premium.members = {"TAG:premium"};
+    profile.groups.push_back(premium);
+
+    auto hk = makeExportReadyShadowsocksNode("HK Node");
+    hk.sourceTags = {"premium", "hk"};
+    auto jp = makeExportReadyShadowsocksNode("JP Node");
+    jp.server = "5.6.7.8";
+    jp.region = "JP";
+    jp.sourceTags = {"jp"};
+    jp.normalize();
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-profile-groups-xray-tag";
+    fs::create_directories(outDir);
+    std::string error;
+    auto result = subcli::exportForTarget(subcli::ExportTarget::Xray, {hk, jp}, config, false, &profile, (outDir / "xray-tag.json").string(), error);
+    require(result.ok, "xray TAG selector export should succeed: " + error);
+
+    std::ifstream in(outDir / "xray-tag.json");
+    const auto json = nlohmann::json::parse(in);
+    const auto* premiumBalancer = static_cast<const nlohmann::json*>(nullptr);
+    for (const auto& balancer : json["routing"]["balancers"]) {
+        if (balancer.value("tag", "") == "PREMIUM") {
+            premiumBalancer = &balancer;
+        }
+    }
+    require(premiumBalancer != nullptr, "xray TAG selector should render target balancer");
+    require((*premiumBalancer)["selector"].size() == 1, "xray TAG selector should include only matching subscription tags");
+    require((*premiumBalancer)["selector"][0].get<std::string>() == "SUBCLI_00001", "xray TAG selector should map node names to managed outbound tags");
 }
 
 void testXrayProfileFallbackWarnsWhenLossy() {
@@ -5044,6 +5218,75 @@ void testExpandProfileMembersKeepsLiteralMembersAndDedupes() {
     require(expanded[6] == "CUSTOM", "custom literal should be preserved");
 }
 
+void testExpandProfileMembersExpandsSourceWildcardAndSpecificSource() {
+    subcli::GroupData groups;
+    groups.regionOrder = {"HK", "JP", "OTHER"};
+
+    subcli::ProxyNode a;
+    a.name = "HK Node";
+    a.sourceId = "airport-a";
+    subcli::ProxyNode b;
+    b.name = "JP Node";
+    b.sourceId = "airport-b";
+    const std::vector<subcli::ProxyNode> exportNodes = {a, b};
+
+    auto wildcard = subcli::expandProfileMembers({"SOURCE:*"}, groups, exportNodes);
+    require(wildcard.size() == 2, "SOURCE:* should expand to all node names");
+    require(wildcard[0] == "HK Node", "SOURCE:* should preserve node order");
+    require(wildcard[1] == "JP Node", "SOURCE:* should preserve node order");
+
+    auto specific = subcli::expandProfileMembers({"SOURCE:airport-b"}, groups, exportNodes);
+    require(specific.size() == 1, "SOURCE:<id> should expand matching source nodes");
+    require(specific[0] == "JP Node", "SOURCE:<id> should map to matching node names");
+
+    auto missing = subcli::expandProfileMembers({"SOURCE:missing"}, groups, exportNodes);
+    require(missing.size() == 1 && missing[0] == "SOURCE:missing", "missing SOURCE:<id> should remain literal");
+}
+
+void testExpandProfileMembersExpandsProtocolSelector() {
+    subcli::GroupData groups;
+    groups.regionOrder = {"HK", "JP", "OTHER"};
+
+    subcli::ProxyNode a;
+    a.name = "VLESS Node";
+    a.type = "vless";
+    subcli::ProxyNode b;
+    b.name = "HY2 Node";
+    b.type = "hy2";
+    subcli::ProxyNode c;
+    c.name = "Trojan Node";
+    c.type = "trojan";
+    const std::vector<subcli::ProxyNode> exportNodes = {a, b, c};
+
+    auto vless = subcli::expandProfileMembers({"PROTOCOL:vless"}, groups, exportNodes);
+    require(vless.size() == 1 && vless[0] == "VLESS Node", "PROTOCOL:vless should expand matching nodes");
+
+    auto hy2Alias = subcli::expandProfileMembers({"PROTOCOL:hysteria2"}, groups, exportNodes);
+    require(hy2Alias.size() == 1 && hy2Alias[0] == "HY2 Node", "PROTOCOL aliases should map by canonical protocol name");
+
+    auto unknown = subcli::expandProfileMembers({"PROTOCOL:wireguard"}, groups, exportNodes);
+    require(unknown.size() == 1 && unknown[0] == "PROTOCOL:wireguard", "unmatched PROTOCOL selector should remain literal");
+}
+
+void testExpandProfileMembersExpandsTagSelector() {
+    subcli::GroupData groups;
+    groups.regionOrder = {"HK", "JP", "OTHER"};
+
+    subcli::ProxyNode a;
+    a.name = "HK Premium";
+    a.sourceTags = {"hk", "premium"};
+    subcli::ProxyNode b;
+    b.name = "US Basic";
+    b.sourceTags = {"us"};
+    const std::vector<subcli::ProxyNode> exportNodes = {a, b};
+
+    const auto matched = subcli::expandProfileMembers({"TAG:premium"}, groups, exportNodes);
+    require(matched.size() == 1 && matched[0] == "HK Premium", "TAG selector should expand matching source tags");
+
+    const auto missing = subcli::expandProfileMembers({"TAG:missing"}, groups, exportNodes);
+    require(missing.size() == 1 && missing[0] == "TAG:missing", "unmatched TAG selector should remain literal");
+}
+
 void testInvalidRegexIsIgnored() {
     auto config = makeConfig();
     config.includeRegex = "(";
@@ -5169,6 +5412,8 @@ int main() {
     testLoadProfileRejectsAppendOnMihomoDns();
     testLoadProfileAcceptsMergeOnMihomoDns();
     testLoadProfileRejectsTemplatePolicyParentChildConflict();
+    testLoadProfileWithBuiltInExtendsMergesOverrides();
+    testLoadProfileRejectsUnknownExtendsBase();
     testBuiltInProfilesExistAndLoad();
     testExportProfileResolverLoadsBuiltInProfile();
     testExportProfileResolverOverrideLoadsBuiltInProfile();
@@ -5186,6 +5431,9 @@ int main() {
     testMihomoTemplatePolicyMergeProxiesByNameKeepsTemplateProxy();
     testMihomoTemplatePolicyRejectDnsPreservesTemplateWithWarning();
     testTemplatePolicyExportsRemainParseableForAllTargets();
+    testProfileExplainTextShowsDnsGroupsRulesAndPolicy();
+    testProfileExplainTargetShowsSingBoxRequiredAssets();
+    testProfileExplainJsonIncludesProfileDnsGroupsRules();
     testBuiltInAutoGroupsDoNotReferenceProxy();
     testProtocolRegistryCoversOfficialTargets();
     testCliOutputStatusJson();
@@ -5239,6 +5487,7 @@ int main() {
     testXrayExportIncludesBypassCnProfileRules();
     testXrayProfileDnsAndRulesRenderFromProfile();
     testXrayProfileGroupsRenderBalancersWithManagedTags();
+    testXrayProfileGroupsExpandTagSelectorToManagedTags();
     testXrayProfileFallbackWarnsWhenLossy();
     testXrayProfileGroupsSynthesizeMissingProxyAndAuto();
     testXrayProfileBalancerReferencesAreResolvedAndWarnWhenLossy();
@@ -5251,6 +5500,9 @@ int main() {
     testExpandProfileMembersExpandsSingleRegionOnlyWhenPresent();
     testExpandProfileMembersExpandsNodeWildcard();
     testExpandProfileMembersKeepsLiteralMembersAndDedupes();
+    testExpandProfileMembersExpandsSourceWildcardAndSpecificSource();
+    testExpandProfileMembersExpandsProtocolSelector();
+    testExpandProfileMembersExpandsTagSelector();
     testInvalidRegexIsIgnored();
     testWriteFileCreatesParentDirectories();
     testLoadConfigMalformedYamlThrows();

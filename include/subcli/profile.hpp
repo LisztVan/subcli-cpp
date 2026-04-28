@@ -46,6 +46,7 @@ struct ProfileTemplatePolicy {
 struct ResolvedProfile {
     int version = 1;
     std::string name;
+    std::string extends;
     std::string description;
     std::string defaultOutbound = "PROXY";
     ProfileDns dns;

@@ -265,6 +265,54 @@ std::vector<std::string> expandProfileMembers(
             }
             continue;
         }
+        if (member == "SOURCE:*") {
+            for (const auto& node : exportNodes) {
+                appendUnique(node.name);
+            }
+            continue;
+        }
+        if (member.rfind("SOURCE:", 0) == 0) {
+            const auto source = member.substr(std::string("SOURCE:").size());
+            bool matched = false;
+            for (const auto& node : exportNodes) {
+                if (node.sourceId == source) {
+                    appendUnique(node.name);
+                    matched = true;
+                }
+            }
+            if (!matched) {
+                appendUnique(member);
+            }
+            continue;
+        }
+        if (member.rfind("PROTOCOL:", 0) == 0) {
+            const auto protocol = canonicalProtocolName(member.substr(std::string("PROTOCOL:").size()));
+            bool matched = false;
+            for (const auto& node : exportNodes) {
+                if (canonicalProtocolName(node.type) == protocol) {
+                    appendUnique(node.name);
+                    matched = true;
+                }
+            }
+            if (!matched) {
+                appendUnique(member);
+            }
+            continue;
+        }
+        if (member.rfind("TAG:", 0) == 0) {
+            const auto tag = member.substr(std::string("TAG:").size());
+            bool matched = false;
+            for (const auto& node : exportNodes) {
+                if (std::find(node.sourceTags.begin(), node.sourceTags.end(), tag) != node.sourceTags.end()) {
+                    appendUnique(node.name);
+                    matched = true;
+                }
+            }
+            if (!matched) {
+                appendUnique(member);
+            }
+            continue;
+        }
         appendUnique(member);
     }
 

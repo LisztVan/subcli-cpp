@@ -53,6 +53,38 @@ cat >"$invalid_profile" <<'JSON'
 }
 JSON
 "$bin" profile validate "$invalid_profile" >/dev/null 2>&1 && exit 1 || true
+profile_explain="$($bin profile explain bypass-cn)"
+if [[ "$profile_explain" != *"profile: bypass-cn"* || "$profile_explain" != *"rules:"* ]]; then
+    printf '%s\n' "$profile_explain"
+    exit 1
+fi
+profile_explain_target="$($bin profile explain bypass-cn --target sing-box)"
+if [[ "$profile_explain_target" != *"target: sing-box"* || "$profile_explain_target" != *"required_assets:"* ]]; then
+    printf '%s\n' "$profile_explain_target"
+    exit 1
+fi
+profile_explain_json="$($bin profile explain bypass-cn --json)"
+if [[ "$profile_explain_json" != *'"profile"'* || "$profile_explain_json" != *'"name":"bypass-cn"'* ]]; then
+    printf '%s\n' "$profile_explain_json"
+    exit 1
+fi
+"$bin" profile explain bypass-cn --target unknown >/dev/null 2>&1 && exit 1 || true
+
+extends_profile="$tmp/extends-profile.json"
+cat >"$extends_profile" <<'JSON'
+{
+  "version": 1,
+  "name": "extends-check",
+  "extends": "bypass-cn",
+  "default_outbound": "DIRECT"
+}
+JSON
+extends_explain="$($bin profile explain "$extends_profile")"
+if [[ "$extends_explain" != *"extends: bypass-cn"* ]]; then
+    printf '%s\n' "$extends_explain"
+    exit 1
+fi
+
 profile_json="$($bin profile get bypass-cn)"
 if [[ "$profile_json" != *'"name"'* || "$profile_json" != *'"bypass-cn"'* ]]; then
     printf '%s\n' "$profile_json"
@@ -61,7 +93,7 @@ fi
 "$bin" profile get unknown >/dev/null 2>&1 && exit 1 || true
 
 export_help="$($bin export --help)"
-if [[ "$export_help" != *"--profile"* || "$export_help" != *"--download-assets"* ]]; then
+if [[ "$export_help" != *"--profile"* || "$export_help" != *"--download-assets"* || "$export_help" != *"--explain-policy"* ]]; then
     printf '%s\n' "$export_help"
     exit 1
 fi
@@ -133,5 +165,13 @@ if [[ "$out" == *"no subscriptions selected"* ]]; then
 fi
 if [[ "$out" != *"update failed for tagged"* ]]; then
     printf '%s\n' "$out"
+    exit 1
+fi
+
+printf '%s\n' 'trojan://password@1.2.3.4:443#HK-Node' > "$tmp/valid-sub.txt"
+"$bin" sub add --name explain --url "file://$tmp/valid-sub.txt" --force >/dev/null
+explain_export="$({ "$bin" export mihomo --profile bypass-cn --sub explain --explain-policy; } 2>&1 || true)"
+if [[ "$explain_export" != *"policy explain: profile=bypass-cn"* || "$explain_export" != *"policy explain: target=mihomo"* ]]; then
+    printf '%s\n' "$explain_export"
     exit 1
 fi

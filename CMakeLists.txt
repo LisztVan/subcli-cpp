@@ -90,6 +90,7 @@ set(SUBCLI_SOURCES
     src/exporter_singbox.cpp
     src/exporter_xray.cpp
     src/profile.cpp
+    src/profile_explain.cpp
     src/protocol_registry.cpp
     src/node.cpp
     src/capabilities.cpp

@@ -17,6 +17,15 @@ bool isBuiltInProfileName(const std::string& name) {
     return name == "bypass-cn" || name == "global" || name == "direct";
 }
 
+std::string resolveBuiltInProfilePath(const std::filesystem::path& profilePath, const std::string& profileName) {
+    const auto sourceBuiltIn = std::filesystem::path(SUBCLI_SOURCE_DIR) / "profiles" / (profileName + ".json");
+    std::error_code ec;
+    if (std::filesystem::exists(sourceBuiltIn, ec) && !ec) {
+        return sourceBuiltIn.string();
+    }
+    return (profilePath.parent_path() / "profiles" / (profileName + ".json")).string();
+}
+
 bool templatePolicyPathsConflict(const std::string& a, const std::string& b) {
     if (a == b) {
         return true;
@@ -127,6 +136,25 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
 
     ResolvedProfile parsed;
 
+    if (root.contains("extends")) {
+        if (!root["extends"].is_string()) {
+            error = "profile extends must be a string";
+            return false;
+        }
+        const std::string extendsName = root["extends"].get<std::string>();
+        if (!isBuiltInProfileName(extendsName)) {
+            error = "unsupported profile extends: " + extendsName;
+            return false;
+        }
+        std::string extendsError;
+        const auto extendsPath = resolveBuiltInProfilePath(std::filesystem::path(path), extendsName);
+        if (!loadProfile(extendsPath, parsed, extendsError)) {
+            error = "failed to load extended profile " + extendsName + ": " + extendsError;
+            return false;
+        }
+        parsed.extends = extendsName;
+    }
+
     if (root.contains("version")) {
         if (!root["version"].is_number_integer()) {
             error = "profile version must be 1";
@@ -144,8 +172,12 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
         error = "profile name is required";
         return false;
     }
-    parsed.description = readString(root, "description");
-    parsed.defaultOutbound = readString(root, "default_outbound", parsed.defaultOutbound);
+    if (root.contains("description") && root["description"].is_string()) {
+        parsed.description = root["description"].get<std::string>();
+    }
+    if (root.contains("default_outbound") && root["default_outbound"].is_string()) {
+        parsed.defaultOutbound = root["default_outbound"].get<std::string>();
+    }
 
     const auto dnsIt = root.find("dns");
     if (dnsIt != root.end()) {
@@ -153,10 +185,18 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
             error = "profile dns must be an object";
             return false;
         }
-        parsed.dns.mode = readString(*dnsIt, "mode");
-        parsed.dns.strategy = readString(*dnsIt, "strategy");
-        parsed.dns.directServers = readStringArray(*dnsIt, "direct_servers");
-        parsed.dns.remoteServers = readStringArray(*dnsIt, "remote_servers");
+        if (dnsIt->contains("mode") && (*dnsIt)["mode"].is_string()) {
+            parsed.dns.mode = (*dnsIt)["mode"].get<std::string>();
+        }
+        if (dnsIt->contains("strategy") && (*dnsIt)["strategy"].is_string()) {
+            parsed.dns.strategy = (*dnsIt)["strategy"].get<std::string>();
+        }
+        if (dnsIt->contains("direct_servers")) {
+            parsed.dns.directServers = readStringArray(*dnsIt, "direct_servers");
+        }
+        if (dnsIt->contains("remote_servers")) {
+            parsed.dns.remoteServers = readStringArray(*dnsIt, "remote_servers");
+        }
     }
 
     const auto groupsIt = root.find("groups");
@@ -165,6 +205,7 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
             error = "profile groups must be an array";
             return false;
         }
+        parsed.groups.clear();
         for (const auto& item : *groupsIt) {
             if (!item.is_object()) {
                 error = "profile group must be an object";
@@ -194,6 +235,7 @@ bool loadProfile(const std::string& path, ResolvedProfile& profile, std::string&
             error = "profile rules must be an array";
             return false;
         }
+        parsed.rules.clear();
         for (const auto& item : *rulesIt) {
             if (!item.is_object()) {
                 error = "profile rule must be an object";

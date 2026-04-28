@@ -146,6 +146,7 @@ struct ProxyNode {
     std::string shortId;
     std::string spiderX;
     std::string sourceId;
+    std::vector<std::string> sourceTags;
     std::string region = "OTHER";
     std::vector<DiagnosticMessage> parseWarnings;
     std::vector<DiagnosticMessage> exportWarnings;

@@ -29,6 +29,7 @@
 #include "subcli/fetch.hpp"
 #include "subcli/parser.hpp"
 #include "subcli/profile.hpp"
+#include "subcli/profile_explain.hpp"
 #include "subcli/store.hpp"
 #include "subcli/util.hpp"
 #include "exporter_internal.hpp"
@@ -489,15 +490,55 @@ void printAssetUsage() {
 }
 
 void printProfileUsage() {
-    std::cout << "usage: subcli profile <list|get|validate> ...\n"
+    std::cout << "usage: subcli profile <list|get|validate|explain> ...\n"
               << "  subcli profile list\n"
               << "  subcli profile get <bypass-cn|global|direct>\n"
-              << "  subcli profile validate <path>\n";
+              << "  subcli profile validate <path>\n"
+              << "  subcli profile explain <path-or-name> [--target <mihomo|sing-box|xray>] [--json]\n";
 }
 
 void printExportUsage() {
     std::cout << "usage: subcli export <all|mihomo|sing-box|xray> [--tun] [--check] [--check-timeout SEC]\n"
-              << "       [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network] [--download-assets]\n";
+              << "       [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network] [--download-assets] [--explain-policy]\n";
+}
+
+std::vector<std::string> templatePolicyPathsForTarget(ExportTarget target) {
+    if (target == ExportTarget::SingBox) {
+        return {"outbounds", "dns", "dns.servers", "dns.rules", "route.rules", "route.rule_set"};
+    }
+    if (target == ExportTarget::Xray) {
+        return {"outbounds", "dns", "dns.servers", "routing.rules", "routing.balancers"};
+    }
+    return {"proxies", "proxy-groups", "rules", "dns", "dns.nameserver", "dns.fallback"};
+}
+
+std::string templatePolicyActionName(TemplatePolicyAction action) {
+    switch (action) {
+        case TemplatePolicyAction::Replace:
+            return "replace";
+        case TemplatePolicyAction::Append:
+            return "append";
+        case TemplatePolicyAction::Merge:
+            return "merge";
+        case TemplatePolicyAction::Reject:
+            return "reject";
+    }
+    return "replace";
+}
+
+void printExportPolicyExplainForTarget(ExportTarget target, const ResolvedProfile* profile) {
+    const std::string targetName = templatePolicyTargetKey(target);
+    std::cout << "policy explain: target=" << targetName << "\n";
+    const auto paths = templatePolicyPathsForTarget(target);
+    for (const auto& path : paths) {
+        TemplatePolicyAction explicitAction;
+        const bool hasExplicit = getExplicitTemplatePolicyAction(target, profile, path, explicitAction);
+        if (hasExplicit) {
+            std::cout << "  " << path << ": " << templatePolicyActionName(explicitAction) << " (explicit)\n";
+        } else {
+            std::cout << "  " << path << ": default exporter behavior\n";
+        }
+    }
 }
 
 void printDaemonUsage() {
@@ -2568,6 +2609,50 @@ int doProfileCommand(const std::vector<std::string>& args) {
         return ExitOk;
     }
 
+    if (cmd == "explain") {
+        if (!validateOptions(args, 3, {"--target", "--json"}, {"--target"})) {
+            return ExitUsage;
+        }
+        if (!ensureNoExtraPositionals(args, 3, {"--target"}, "profile explain requires one <path-or-name> and options")) {
+            return ExitUsage;
+        }
+
+        std::string explainPath;
+        if (isBuiltInProfileNameForCli(args[2])) {
+            AppConfig builtInConfig;
+            if (!resolveExportProfilePath(builtInConfig, gPaths.profileDir.string(), args[2], explainPath)) {
+                std::cerr << "profile explain failed: unable to resolve built-in profile: " << args[2] << "\n";
+                return ExitError;
+            }
+        } else {
+            explainPath = resolveProfileFileArg(args[2]);
+        }
+
+        ResolvedProfile profile;
+        std::string error;
+        if (!loadProfile(explainPath, profile, error)) {
+            std::cerr << "profile explain failed: " << error << "\n";
+            return ExitError;
+        }
+
+        ProfileExplainOptions options;
+        if (hasOption(args, "--target")) {
+            const auto value = argValue(args, "--target");
+            if (!parseTemplatePolicyTarget(value, options.target)) {
+                std::cerr << "invalid --target value: " << value << "\n";
+                return ExitUsage;
+            }
+            options.hasTarget = true;
+        }
+
+        if (hasFlag(args, "--json")) {
+            printJsonLine(explainProfileJson(profile, options));
+        } else {
+            std::cout << explainProfileText(profile, options);
+        }
+        return ExitOk;
+    }
+
     std::cerr << "unknown profile command: " << cmd << "\n";
     return ExitUsage;
 }
@@ -2590,7 +2675,7 @@ int doExportCommand(const std::vector<std::string>& args) {
     if (!validateOptions(
             args,
             2,
-            {"--tun", "--check", "--check-timeout", "--output-dir", "--profile", "--sub", "--tag", "--strict-network", "--download-assets"},
+            {"--tun", "--check", "--check-timeout", "--output-dir", "--profile", "--sub", "--tag", "--strict-network", "--download-assets", "--explain-policy"},
             {"--check-timeout", "--output-dir", "--profile", "--sub", "--tag"}
         )) {
         return ExitUsage;
@@ -2715,6 +2800,9 @@ int doExportCommand(const std::vector<std::string>& args) {
             std::cerr << "warning: " << s.id << " used cached subscription content (" << fr.cacheReason << ")\n";
         }
         auto parsed = parseSubscriptionForSub(s, fr.content, cfg);
+        for (auto& node : parsed.nodes) {
+            node.sourceTags = s.tags;
+        }
         skippedNodes += parsed.skipped;
         for (const auto& warning : parsed.warnings) {
             std::cerr << "warning: " << s.id << " - " << warning.message << "\n";
@@ -2745,6 +2833,24 @@ int doExportCommand(const std::vector<std::string>& args) {
         return 1;
     }
     const ResolvedProfile* exportProfile = profileLoaded ? &resolvedProfile : nullptr;
+    if (hasFlag(args, "--explain-policy")) {
+        if (exportProfile == nullptr) {
+            std::cout << "policy explain: no export profile loaded; using legacy/default exporter behavior\n";
+        } else {
+            std::cout << "policy explain: profile=" << exportProfile->name << "\n";
+            if (target == "all") {
+                printExportPolicyExplainForTarget(ExportTarget::Mihomo, exportProfile);
+                printExportPolicyExplainForTarget(ExportTarget::SingBox, exportProfile);
+                printExportPolicyExplainForTarget(ExportTarget::Xray, exportProfile);
+            } else if (target == "mihomo") {
+                printExportPolicyExplainForTarget(ExportTarget::Mihomo, exportProfile);
+            } else if (target == "sing-box") {
+                printExportPolicyExplainForTarget(ExportTarget::SingBox, exportProfile);
+            } else if (target == "xray") {
+                printExportPolicyExplainForTarget(ExportTarget::Xray, exportProfile);
+            }
+        }
+    }
 
     auto runMihomo = [&]() {
         auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, exportProfile, outputDir + "/mihomo.yaml", error);

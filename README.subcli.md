@@ -198,6 +198,16 @@ Built-in profiles:
 
 For custom authoring, see [`docs/profile-schema.md`](docs/profile-schema.md). Advanced routing and strategy behavior should now live in profile JSON, not in `config.yaml`. Keep `config.yaml` focused on subcli software settings such as paths, timeouts, core locations, assets, templates, and selected profile path/name.
 
+Profile group member selectors support generated expansion tokens:
+
+- `REGION:*`, `REGION:<name>`
+- `NODE:*`
+- `SOURCE:*`, `SOURCE:<id>`
+- `TAG:<tag>`
+- `PROTOCOL:<name>`
+
+Use `subcli profile explain <path-or-name> [--target <mihomo|sing-box|xray>]` to inspect effective profile behavior and selector semantics.
+
 Advanced template merge behavior is also profile-driven via `template_policy`.
 
 Example:

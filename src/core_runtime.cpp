@@ -1,13 +1,46 @@
 #include "subcli/core_runtime.hpp"
 
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+
+namespace subcli {
+
+bool startCoreRuntime(
+    const std::filesystem::path&,
+    const std::string&,
+    const std::string&,
+    const std::vector<std::string>&,
+    const std::string&,
+    std::string& error
+) {
+    error = "runtime management is not supported on Windows yet";
+    return false;
+}
+
+RuntimeStatus inspectCoreRuntime(const std::filesystem::path&, const std::string& target, std::string& error) {
+    error.clear();
+    RuntimeStatus status;
+    status.target = target;
+    return status;
+}
+
+bool stopCoreRuntime(const std::filesystem::path&, const std::string&, int, std::string& error) {
+    error = "runtime management is not supported on Windows yet";
+    return false;
+}
+
+} // namespace subcli
+
+#else
+
 #include <chrono>
 #include <csignal>
 #include <fcntl.h>
 #include <nlohmann/json.hpp>
-#include <string>
 #include <thread>
 #include <unistd.h>
-#include <vector>
 #include <sys/types.h>
 #include <sys/wait.h>
 
@@ -202,3 +235,5 @@ bool stopCoreRuntime(const std::filesystem::path& stateDir, const std::string& t
 }
 
 } // namespace subcli
+
+#endif

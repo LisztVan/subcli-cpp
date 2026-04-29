@@ -1,10 +1,15 @@
 #include "subcli/core_discovery.hpp"
 
 #include <cstdlib>
+#include <cctype>
 #include <filesystem>
 #include <sstream>
 
+#ifdef _WIN32
+#include <algorithm>
+#else
 #include <unistd.h>
+#endif
 
 namespace subcli {
 
@@ -15,7 +20,13 @@ std::string findExecutableInPath(const std::string& name) {
     }
     std::stringstream ss(raw);
     std::string dir;
-    while (std::getline(ss, dir, ':')) {
+    const char pathSeparator =
+#ifdef _WIN32
+        ';';
+#else
+        ':';
+#endif
+    while (std::getline(ss, dir, pathSeparator)) {
         if (dir.empty()) {
             continue;
         }
@@ -35,7 +46,16 @@ bool isExecutableFile(const std::filesystem::path& path) {
     if (!std::filesystem::is_regular_file(path, ec) || ec) {
         return false;
     }
+#ifdef _WIN32
+    const std::string ext = path.extension().string();
+    std::string lowerExt = ext;
+    std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return lowerExt == ".exe" || lowerExt == ".bat" || lowerExt == ".cmd";
+#else
     return access(path.c_str(), X_OK) == 0;
+#endif
 }
 
 CorePaths discoverCorePaths(const AppConfig& cfg) {

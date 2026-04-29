@@ -1,12 +1,14 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#ifndef _WIN32
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
+#endif
 #include <thread>
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
 
 #include "exporter_internal.hpp"
 #include "subcli/assets.hpp"
@@ -2394,6 +2396,9 @@ void testParseMihomoRemoteProxyProvider() {
 }
 
 void testParseMihomoRemoteProxyProviderWithHttpFields() {
+#ifdef _WIN32
+    return;
+#else
     const int serverFd = ::socket(AF_INET, SOCK_STREAM, 0);
     require(serverFd >= 0, "test server socket should create");
 
@@ -2467,6 +2472,7 @@ void testParseMihomoRemoteProxyProviderWithHttpFields() {
     require(result.nodes[0].server == "header-provider.example.com", "remote provider node server should parse with http fields");
     require(request.find("Authorization: Bearer provider-token\r\n") != std::string::npos, "provider request should include Authorization header");
     require(request.find("User-Agent: SubCLI-Provider-UA/1.0\r\n") != std::string::npos, "provider request should include user-agent");
+#endif
 }
 
 void testParseMihomoHighFrequencyOptionalFields() {

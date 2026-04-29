@@ -1,5 +1,27 @@
 #include "subcli/core_check.hpp"
 
+#include <string>
+
+#ifdef _WIN32
+
+namespace subcli {
+
+CoreCheckResult runMihomoConfigCheck(const std::string&, const std::string&, int) {
+    return {false, -1, "core config check is not supported on Windows yet"};
+}
+
+CoreCheckResult runSingBoxConfigCheck(const std::string&, const std::string&, int) {
+    return {false, -1, "core config check is not supported on Windows yet"};
+}
+
+CoreCheckResult runXrayConfigCheck(const std::string&, const std::string&, int) {
+    return {false, -1, "core config check is not supported on Windows yet"};
+}
+
+} // namespace subcli
+
+#else
+
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -9,7 +31,6 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <string>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -160,3 +181,5 @@ CoreCheckResult runXrayConfigCheck(const std::string& binaryPath, const std::str
 }
 
 } // namespace subcli
+
+#endif

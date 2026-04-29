@@ -1,6 +1,105 @@
 #include "subcli/daemon.hpp"
 
 #include <chrono>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+
+namespace subcli {
+
+std::vector<std::string> buildDaemonSubUpdateArgs(const DaemonOptions& options) {
+    std::vector<std::string> args = {"sub", "update"};
+    if (options.strictNetwork) {
+        args.push_back("--strict-network");
+    }
+    return args;
+}
+
+std::vector<std::string> buildDaemonExportArgs(const DaemonOptions& options) {
+    std::vector<std::string> args = {"export", options.exportTarget.empty() ? "all" : options.exportTarget};
+    if (options.strictNetwork) {
+        args.push_back("--strict-network");
+    }
+    if (options.updateAssets) {
+        args.push_back("--download-assets");
+    }
+    if (options.check) {
+        args.push_back("--check");
+    }
+    return args;
+}
+
+std::vector<std::string> buildDaemonRunArgs(const DaemonOptions& options) {
+    std::vector<std::string> args = {
+        "daemon", "run", "--interval", std::to_string(options.intervalSec > 0 ? options.intervalSec : 3600),
+        "--target", options.exportTarget.empty() ? "all" : options.exportTarget,
+    };
+    if (options.updateAssets) args.push_back("--update-assets");
+    if (options.strictNetwork) args.push_back("--strict-network");
+    if (options.check) args.push_back("--check");
+    if (!options.restartRunning) args.push_back("--no-restart");
+    if (!options.pidFile.empty()) {
+        args.push_back("--pid-file");
+        args.push_back(options.pidFile);
+    }
+    if (!options.logFile.empty()) {
+        args.push_back("--log-file");
+        args.push_back(options.logFile);
+    }
+    return args;
+}
+
+std::vector<std::string> daemonTargetsForExportTarget(const std::string& exportTarget) {
+    if (exportTarget == "mihomo" || exportTarget == "sing-box" || exportTarget == "xray") {
+        return {exportTarget};
+    }
+    return {"mihomo", "sing-box", "xray"};
+}
+
+int runDaemonCycle(const DaemonOptions& options, const DaemonCallbacks& callbacks) {
+    if (!callbacks.runSubCommand || !callbacks.runExportCommand || !callbacks.isCoreRunning || !callbacks.runRestartCommand) {
+        return 1;
+    }
+    const int subRc = callbacks.runSubCommand(buildDaemonSubUpdateArgs(options));
+    if (subRc != 0) return subRc;
+    const int exportRc = callbacks.runExportCommand(buildDaemonExportArgs(options));
+    if (exportRc != 0) return exportRc;
+    if (!options.restartRunning) return 0;
+    for (const auto& target : daemonTargetsForExportTarget(options.exportTarget)) {
+        std::string error;
+        const bool running = callbacks.isCoreRunning(target, error);
+        if (!error.empty()) return 1;
+        if (!running) continue;
+        const int restartRc = callbacks.runRestartCommand({"restart", target});
+        if (restartRc != 0) return restartRc;
+    }
+    return 0;
+}
+
+bool startDaemonProcess(const std::filesystem::path&, const std::string&, const std::vector<std::string>&, const DaemonOptions&, std::string& error) {
+    error = "daemon process management is not supported on Windows yet";
+    return false;
+}
+
+DaemonProcessStatus inspectDaemonProcess(const std::filesystem::path&, std::string& error) {
+    error.clear();
+    return {};
+}
+
+bool stopDaemonProcess(const std::filesystem::path&, int, std::string& error) {
+    error = "daemon process management is not supported on Windows yet";
+    return false;
+}
+
+int runDaemonCycleWithState(const std::filesystem::path&, const DaemonOptions& options, const DaemonCallbacks& callbacks) {
+    return runDaemonCycle(options, callbacks);
+}
+
+} // namespace subcli
+
+#else
+
 #include <csignal>
 #include <cerrno>
 #include <cstring>
@@ -476,3 +575,5 @@ int runDaemonCycleWithState(const std::filesystem::path& stateDir, const DaemonO
 }
 
 } // namespace subcli
+
+#endif

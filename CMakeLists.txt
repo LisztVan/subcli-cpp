@@ -25,12 +25,6 @@ FetchContent_Declare(
 )
 
 FetchContent_Declare(
-    openssl
-    GIT_REPOSITORY https://github.com/janbar/openssl-cmake.git
-    GIT_TAG 1.1.1w-20231130
-)
-
-FetchContent_Declare(
     curl
     GIT_REPOSITORY https://github.com/curl/curl.git
     GIT_TAG curl-8_10_1
@@ -39,19 +33,21 @@ FetchContent_Declare(
 set(WITH_APPS OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(openssl)
+if(NOT WIN32)
+    FetchContent_Declare(
+        openssl
+        GIT_REPOSITORY https://github.com/janbar/openssl-cmake.git
+        GIT_TAG 1.1.1w-20231130
+    )
+    FetchContent_MakeAvailable(openssl)
 
-if(TARGET ssl AND TARGET crypto)
-    add_library(OpenSSL::SSL ALIAS ssl)
-    add_library(OpenSSL::Crypto ALIAS crypto)
-endif()
+    if(TARGET ssl AND TARGET crypto)
+        add_library(OpenSSL::SSL ALIAS ssl)
+        add_library(OpenSSL::Crypto ALIAS crypto)
+    endif()
 
-set(OPENSSL_ROOT_DIR "${openssl_BINARY_DIR}" CACHE PATH "" FORCE)
-set(OPENSSL_INCLUDE_DIR "${openssl_BINARY_DIR}/include" CACHE PATH "" FORCE)
-if(WIN32)
-    set(OPENSSL_SSL_LIBRARY "${openssl_BINARY_DIR}/ssl/libssl${CMAKE_STATIC_LIBRARY_SUFFIX}" CACHE FILEPATH "" FORCE)
-    set(OPENSSL_CRYPTO_LIBRARY "${openssl_BINARY_DIR}/crypto/libcrypto${CMAKE_STATIC_LIBRARY_SUFFIX}" CACHE FILEPATH "" FORCE)
-else()
+    set(OPENSSL_ROOT_DIR "${openssl_BINARY_DIR}" CACHE PATH "" FORCE)
+    set(OPENSSL_INCLUDE_DIR "${openssl_BINARY_DIR}/include" CACHE PATH "" FORCE)
     set(OPENSSL_SSL_LIBRARY "${openssl_BINARY_DIR}/ssl/libssl${CMAKE_STATIC_LIBRARY_SUFFIX}" CACHE FILEPATH "" FORCE)
     set(OPENSSL_CRYPTO_LIBRARY "${openssl_BINARY_DIR}/crypto/libcrypto${CMAKE_STATIC_LIBRARY_SUFFIX}" CACHE FILEPATH "" FORCE)
 endif()
@@ -62,12 +58,17 @@ set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(CURL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
 set(CURL_ENABLE_EXPORT_TARGET OFF CACHE BOOL "" FORCE)
-set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+if(WIN32)
+    set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+    set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+else()
+    set(CURL_USE_OPENSSL ON CACHE BOOL "" FORCE)
+    set(CURL_USE_SCHANNEL OFF CACHE BOOL "" FORCE)
+endif()
 set(CURL_USE_MBEDTLS OFF CACHE BOOL "" FORCE)
 set(CURL_USE_BEARSSL OFF CACHE BOOL "" FORCE)
 set(CURL_USE_GNUTLS OFF CACHE BOOL "" FORCE)
 set(CURL_USE_RUSTLS OFF CACHE BOOL "" FORCE)
-set(CURL_USE_SCHANNEL OFF CACHE BOOL "" FORCE)
 set(CURL_USE_SECTRANSP OFF CACHE BOOL "" FORCE)
 set(CURL_ENABLE_SSL ON CACHE BOOL "" FORCE)
 set(CURL_USE_LIBPSL OFF CACHE BOOL "" FORCE)

@@ -469,84 +469,260 @@ bool hasHelp(const std::vector<std::string>& args) {
 }
 
 void printRootUsage() {
-    std::cout << "subcli [--workspace DIR] <init|doctor|sub|config|template|asset|profile|export|daemon|run|stop|status|restart|check|completion|workspace> ...\n"
+    std::cout << "Usage:\n"
+              << "  subcli [--workspace DIR] <command> [args...]\n"
               << "\n"
-              << "Primary flow (cross-platform guarantee):\n"
+              << "Global Options:\n"
+              << "  --workspace DIR  Use a workspace for this invocation.\n"
+              << "\n"
+              << "Core Workflow:\n"
+              << "  init      Create config/data/cache/state/output directories.\n"
+              << "  doctor    Check dirs, templates, assets, and core paths.\n"
+              << "  sub       Add/list/update/validate/enable/disable subscriptions.\n"
+              << "  profile   List/get/validate/explain export profiles.\n"
+              << "  template  List/get/set/reset/validate export templates.\n"
+              << "  asset     List/status/validate/update geo and rule assets.\n"
+              << "  export    Export Mihomo, sing-box, and Xray configs.\n"
+              << "\n"
+              << "Workspace:\n"
+              << "  workspace  Init/use/status/migrate/doctor workspace roots.\n"
+              << "\n"
+              << "Runtime Helpers (optional):\n"
+              << "  check     Validate exported config with installed core.\n"
+              << "  run       Run one core with an exported config.\n"
+              << "  daemon    Periodic update/export helper.\n"
+              << "  status    Show helper process status.\n"
+              << "  stop      Stop a helper process.\n"
+              << "  restart   Restart a helper process.\n"
+              << "\n"
+              << "Shell:\n"
+              << "  completion  Generate shell completion scripts.\n"
+              << "\n"
+              << "Examples:\n"
               << "  subcli init\n"
               << "  subcli doctor\n"
-              << "  subcli sub add --name NAME --url URL\n"
+              << "  subcli template list\n"
+              << "  subcli profile list\n"
+              << "  subcli sub add --name airport-a --url https://example/sub\n"
               << "  subcli sub update\n"
-              << "  subcli export all --check\n"
+              << "  subcli export all --profile bypass-cn --check\n"
               << "\n"
-              << "Workspace mode:\n"
-              << "  subcli --workspace DIR ...\n"
-              << "  subcli workspace init [DIR]\n"
-              << "  subcli workspace use DIR\n"
-              << "  subcli workspace unset\n"
-              << "  subcli workspace migrate --to DIR\n"
-              << "\n"
-              << "Optional runtime helpers:\n"
-              << "  subcli daemon once --target all\n"
-              << "  subcli run sing-box\n"
-              << "\n"
-              << "Use 'subcli <command> --help' for command details.\n";
+              << "Help:\n"
+              << "  subcli <command> --help\n"
+              << "  subcli template --help\n"
+              << "  subcli export --help\n";
 }
 
 void printInitUsage() {
-    std::cout << "usage: subcli init\n"
-              << "Initializes config, data, cache, state, and output directories.\n";
+    std::cout << "Usage:\n"
+              << "  subcli init\n"
+              << "\n"
+              << "Initialize config, data, cache, state, template, and output directories.\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli init\n"
+              << "\n"
+              << "Next:\n"
+              << "  subcli doctor\n"
+              << "  subcli sub add --name airport-a --url https://example/sub\n";
 }
 
 void printDoctorUsage() {
-    std::cout << "usage: subcli doctor\n"
-              << "Checks config/data/cache/output dirs, templates, and configured external cores.\n";
+    std::cout << "Usage:\n"
+              << "  subcli doctor [--json]\n"
+              << "\n"
+              << "Check config/data/cache/output dirs, templates, assets, and core paths.\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli doctor\n"
+              << "  subcli doctor --json\n"
+              << "\n"
+              << "Next:\n"
+              << "  subcli template list\n"
+              << "  subcli asset status\n";
 }
 
 void printSubUsage() {
-    std::cout << "usage: subcli sub <add|remove|list|update|enable|disable|edit|validate> ...\n"
-              << "  subcli sub add --name NAME --url URL [--force] [--tag TAG] [--header 'Key: Value']\n"
+    std::cout << "Usage:\n"
+              << "  subcli sub list [--json]\n"
+              << "  subcli sub add --name NAME --url URL [options]\n"
+              << "  subcli sub edit <id|name> [options]\n"
               << "  subcli sub remove <id|name>\n"
-              << "  subcli sub list\n"
+              << "  subcli sub enable <id|name>\n"
+              << "  subcli sub disable <id|name>\n"
               << "  subcli sub update [id-or-name ...] [--tag TAG] [--strict-network]\n"
               << "  subcli sub validate [id-or-name]\n"
-              << "  subcli sub enable <id|name> | disable <id|name>\n"
-              << "  subcli sub edit <id|name> [--name NAME] [--url URL] [--header 'Key: Value'] [--remove-header Key]\n";
+              << "\n"
+              << "Add/Edit Options:\n"
+              << "  --id ID\n"
+              << "  --name NAME\n"
+              << "  --url URL\n"
+              << "  --group GROUP\n"
+              << "  --format-hint auto|mihomo|sing-box|xray|uri\n"
+              << "  --user-agent VALUE\n"
+              << "  --timeout SEC\n"
+              << "  --retry N\n"
+              << "  --priority N\n"
+              << "  --update-interval SEC\n"
+              << "  --tag TAG\n"
+              << "  --tags a,b\n"
+              << "  --header 'Key: Value'\n"
+              << "  --remove-header Key\n"
+              << "  --clear-headers\n"
+              << "  --force\n"
+              << "  --enable\n"
+              << "  --disable\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli sub list\n"
+              << "  subcli sub add --name airport-a --url https://example/sub\n"
+              << "  subcli sub edit airport-a --tag hk --priority 20\n"
+              << "  subcli sub update --tag hk\n"
+              << "  subcli sub validate airport-a\n";
 }
 
 void printConfigUsage() {
-    std::cout << "usage: subcli config <list|get|set|remove> ...\n"
-              << "Core path keys: core_paths.mihomo, core_paths.sing_box, core_paths.xray\n"
-              << "Template paths are easier to manage with 'subcli template --help'.\n";
+    std::cout << "Usage:\n"
+              << "  subcli config list [--json]\n"
+              << "  subcli config get <key>\n"
+              << "  subcli config set <key> <value>\n"
+              << "  subcli config remove <key>\n"
+              << "\n"
+              << "Common Keys:\n"
+              << "  tun\n"
+              << "  profile\n"
+              << "  profile_path\n"
+              << "  output_dir\n"
+              << "  template_dir\n"
+              << "  asset_dir\n"
+              << "  parallelism\n"
+              << "  timeout\n"
+              << "  retry\n"
+              << "  fetch_max_bytes\n"
+              << "  log_level\n"
+              << "  core_paths.mihomo\n"
+              << "  core_paths.sing_box\n"
+              << "  core_paths.xray\n"
+              << "  node_management.dedupe\n"
+              << "  node_management.rename_template\n"
+              << "  node_management.include_regex\n"
+              << "  node_management.exclude_regex\n"
+              << "  node_management.sort_by\n"
+              << "  grouping.region_rules.<REGION>\n"
+              << "  assets.paths.<asset-key>\n"
+              << "  assets.urls.<asset-key>\n"
+              << "  templates.<target>.<normal|tun>\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli config list\n"
+              << "  subcli config get core_paths.sing_box\n"
+              << "  subcli config set profile bypass-cn\n"
+              << "\n"
+              << "Note:\n"
+              << "  Template paths are easier to manage with 'subcli template --help'.\n";
 }
 
 void printTemplateUsage() {
-    std::cout << "usage: subcli template <list|get|set|reset|validate> ...\n"
+    std::cout << "Usage:\n"
+              << "  subcli template list [--json]\n"
+              << "  subcli template get <target> <kind>\n"
+              << "  subcli template set <target> <kind> <path>\n"
+              << "  subcli template reset [target] [kind]\n"
+              << "  subcli template validate [--json]\n"
+              << "\n"
+              << "Targets:\n"
+              << "  mihomo\n"
+              << "  sing-box\n"
+              << "  xray\n"
+              << "\n"
+              << "Kinds:\n"
+              << "  normal\n"
+              << "  tun\n"
+              << "\n"
+              << "Commands:\n"
+              << "  list      Show template paths and whether files exist.\n"
+              << "  get       Print one configured template path.\n"
+              << "  set       Set one template path from a local file path.\n"
+              << "  reset     Reset all templates, one target, or one target kind.\n"
+              << "  validate  Check that template files exist and parse correctly.\n"
+              << "\n"
+              << "Examples:\n"
               << "  subcli template list\n"
-              << "  subcli template get <mihomo|sing-box|xray> <normal|tun>\n"
-              << "  subcli template set <mihomo|sing-box|xray> <normal|tun> <path>\n"
-              << "  subcli template reset [mihomo|sing-box|xray] [normal|tun]\n"
-              << "  subcli template validate\n";
+              << "  subcli template list --json\n"
+              << "  subcli template get sing-box normal\n"
+              << "  subcli template set sing-box normal ./templates/singbox_base.json\n"
+              << "  subcli template reset xray tun\n"
+              << "  subcli template validate\n"
+              << "\n"
+              << "Next:\n"
+              << "  subcli config list\n"
+              << "  subcli export all --profile bypass-cn\n";
 }
 
 void printAssetUsage() {
-    std::cout << "usage: subcli asset <list|status|validate|update>\n"
+    std::cout << "Usage:\n"
               << "  subcli asset list\n"
               << "  subcli asset status\n"
               << "  subcli asset validate\n"
-              << "  subcli asset update [asset-key]\n";
+              << "  subcli asset update [asset-key]\n"
+              << "\n"
+              << "Commands:\n"
+              << "  list      Show configured asset key/path/url entries.\n"
+              << "  status    Show local status, size, update time, and source.\n"
+              << "  validate  Fail if required assets are missing.\n"
+              << "  update    Download all assets or one specified asset key.\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli asset list\n"
+              << "  subcli asset status\n"
+              << "  subcli asset update\n"
+              << "  subcli asset update xray.geoip\n";
 }
 
 void printProfileUsage() {
-    std::cout << "usage: subcli profile <list|get|validate|explain> ...\n"
+    std::cout << "Usage:\n"
               << "  subcli profile list\n"
               << "  subcli profile get <bypass-cn|global|direct>\n"
               << "  subcli profile validate <path>\n"
-              << "  subcli profile explain <path-or-name> [--target <all|mihomo|sing-box|xray>] [--json]\n";
+              << "  subcli profile explain <path-or-name> [--target <all|mihomo|sing-box|xray>] [--json]\n"
+              << "\n"
+              << "Built-in Profiles:\n"
+              << "  bypass-cn\n"
+              << "  global\n"
+              << "  direct\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli profile list\n"
+              << "  subcli profile get bypass-cn\n"
+              << "  subcli profile validate ./profiles/bypass-cn.json\n"
+              << "  subcli profile explain bypass-cn --target all\n"
+              << "  subcli profile explain ./profiles/custom.json --json\n";
 }
 
 void printExportUsage() {
-    std::cout << "usage: subcli export <all|mihomo|sing-box|xray> [--tun] [--check] [--check-timeout SEC]\n"
-              << "       [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network] [--strict-capabilities] [--download-assets] [--explain-policy] [--json]\n";
+    std::cout << "Usage:\n"
+              << "  subcli export <all|mihomo|sing-box|xray> [options]\n"
+              << "\n"
+              << "Options:\n"
+              << "  --tun\n"
+              << "  --check\n"
+              << "  --check-timeout SEC\n"
+              << "  --output-dir DIR\n"
+              << "  --profile PATH_OR_NAME\n"
+              << "  --sub ID_OR_NAME\n"
+              << "  --tag TAG\n"
+              << "  --strict-network\n"
+              << "  --strict-capabilities\n"
+              << "  --download-assets\n"
+              << "  --explain-policy\n"
+              << "  --json\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli export all\n"
+              << "  subcli export all --profile bypass-cn --check\n"
+              << "  subcli export sing-box --output-dir ./outputs --check --check-timeout 30\n"
+              << "  subcli export mihomo --tag hk --strict-network\n"
+              << "  subcli export xray --profile /path/to/custom-profile.json --json\n";
 }
 
 std::vector<std::string> templatePolicyPathsForTarget(ExportTarget target) {
@@ -589,12 +765,19 @@ void printExportPolicyExplainForTarget(ExportTarget target, const ResolvedProfil
 }
 
 void printWorkspaceUsage() {
-    std::cout << "usage: subcli workspace <init|status|use|unset|migrate|doctor> ...\n"
+    std::cout << "Usage:\n"
               << "  subcli workspace init [DIR]\n"
               << "  subcli workspace status [--json]\n"
               << "  subcli workspace use DIR\n"
               << "  subcli workspace unset\n"
               << "  subcli workspace migrate [--to DIR] [--from DIR] [--dry-run] [--overwrite]\n"
+              << "  subcli workspace doctor\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli workspace init ./ws\n"
+              << "  subcli workspace use ./ws\n"
+              << "  subcli workspace status --json\n"
+              << "  subcli workspace migrate --to ./ws --dry-run\n"
               << "  subcli workspace doctor\n";
 }
 
@@ -679,33 +862,69 @@ std::vector<WorkspaceDoctorFinding> buildWorkspaceDoctorFindings(const std::file
 }
 
 void printDaemonUsage() {
-    std::cout << "usage: subcli daemon <once|run|start|stop|status> [--interval SEC] [--target all|mihomo|sing-box|xray]\n"
-              << "       [--update-assets] [--strict-network] [--check] [--no-restart] [--pid-file PATH] [--log-file PATH]\n"
-              << "Optional helper for local process hosting; config generation remains the primary product workflow.\n";
+    std::cout << "Usage:\n"
+              << "  subcli daemon <once|run|start|stop|status> [--interval SEC] [--target all|mihomo|sing-box|xray]\n"
+              << "               [--update-assets] [--strict-network] [--check] [--no-restart]\n"
+              << "               [--pid-file PATH] [--log-file PATH]\n"
+              << "\n"
+              << "Optional helper for local process hosting.\n"
+              << "Primary product workflow is config generation with 'subcli export ...'.\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli daemon once --target all\n"
+              << "  subcli daemon run --interval 3600 --target all --update-assets\n";
 }
 
 void printCheckUsage() {
-    std::cout << "usage: subcli check <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR] [--timeout SEC]\n";
+    std::cout << "Usage:\n"
+              << "  subcli check <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR] [--timeout SEC]\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli check sing-box --file ./outputs/sing-box.json --timeout 30\n"
+              << "  subcli check mihomo --output-dir ./outputs\n";
 }
 
 void printRunUsage() {
-    std::cout << "usage: subcli run <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR]\n";
+    std::cout << "Usage:\n"
+              << "  subcli run <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR]\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli run sing-box\n"
+              << "  subcli run xray --file ./outputs/xray.json\n";
 }
 
 void printStopUsage() {
-    std::cout << "usage: subcli stop <mihomo|sing-box|xray>\n";
+    std::cout << "Usage:\n"
+              << "  subcli stop <mihomo|sing-box|xray>\n"
+              << "\n"
+              << "Example:\n"
+              << "  subcli stop sing-box\n";
 }
 
 void printStatusUsage() {
-    std::cout << "usage: subcli status [mihomo|sing-box|xray]\n";
+    std::cout << "Usage:\n"
+              << "  subcli status [mihomo|sing-box|xray]\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli status\n"
+              << "  subcli status sing-box\n";
 }
 
 void printRestartUsage() {
-    std::cout << "usage: subcli restart <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR]\n";
+    std::cout << "Usage:\n"
+              << "  subcli restart <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR]\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli restart sing-box\n"
+              << "  subcli restart xray --output-dir ./outputs\n";
 }
 
 void printCompletionUsage() {
-    std::cout << "usage: subcli completion bash\n";
+    std::cout << "Usage:\n"
+              << "  subcli completion bash\n"
+              << "\n"
+              << "Example:\n"
+              << "  subcli completion bash > ~/.local/share/bash-completion/completions/subcli\n";
 }
 
 bool hasOption(const std::vector<std::string>& args, const std::string& key) {
@@ -2013,6 +2232,7 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     std::cerr << "unknown sub command: " << cmd << "\n";
+    std::cerr << "Run 'subcli sub --help' to see available subscription commands.\n";
     return 1;
 }
 
@@ -2081,6 +2301,7 @@ int doConfigCommand(const std::vector<std::string>& args) {
     if (cmd == "get") {
         if (args.size() != 3) {
             std::cerr << "config get requires <key>\n";
+            std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
         const auto& key = args[2];
@@ -2207,6 +2428,7 @@ int doConfigCommand(const std::vector<std::string>& args) {
     if (cmd == "set") {
         if (args.size() != 4) {
             std::cerr << "config set requires <key> <value>\n";
+            std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
         const auto& key = args[2];
@@ -2329,6 +2551,7 @@ int doConfigCommand(const std::vector<std::string>& args) {
     if (cmd == "remove") {
         if (args.size() != 3) {
             std::cerr << "config remove requires <key>\n";
+            std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
         const auto& key = args[2];
@@ -2411,6 +2634,7 @@ int doConfigCommand(const std::vector<std::string>& args) {
         return 0;
     }
     std::cerr << "unknown config command: " << cmd << "\n";
+    std::cerr << "Run 'subcli config --help' to see available config commands.\n";
     return 1;
 }
 
@@ -2435,6 +2659,7 @@ int doTemplateCommand(const std::vector<std::string>& args) {
         }
         if ((!jsonOutput && args.size() != 2) || (jsonOutput && args.size() != 3)) {
             std::cerr << "template list does not accept arguments\n";
+            std::cerr << "Run 'subcli template --help' for valid template usage.\n";
             return 1;
         }
         nlohmann::json templates = nlohmann::json::array();
@@ -2457,6 +2682,7 @@ int doTemplateCommand(const std::vector<std::string>& args) {
     if (cmd == "get") {
         if (args.size() != 4) {
             std::cerr << "template get requires <target> <normal|tun>\n";
+            std::cerr << "Run 'subcli template --help' for valid template usage.\n";
             return 1;
         }
         std::string error;
@@ -2471,6 +2697,7 @@ int doTemplateCommand(const std::vector<std::string>& args) {
     if (cmd == "set") {
         if (args.size() != 5) {
             std::cerr << "template set requires <target> <normal|tun> <path>\n";
+            std::cerr << "Run 'subcli template --help' for valid template usage.\n";
             return 1;
         }
         std::string error;
@@ -2525,6 +2752,7 @@ int doTemplateCommand(const std::vector<std::string>& args) {
         }
         if ((!jsonOutput && args.size() != 2) || (jsonOutput && args.size() != 3)) {
             std::cerr << "template validate does not accept arguments\n";
+            std::cerr << "Run 'subcli template --help' for valid template usage.\n";
             return 1;
         }
         int failed = 0;
@@ -2587,6 +2815,7 @@ int doTemplateCommand(const std::vector<std::string>& args) {
     }
 
     std::cerr << "unknown template command: " << cmd << "\n";
+    std::cerr << "Run 'subcli template --help' to see available template commands.\n";
     return 1;
 }
 
@@ -2682,6 +2911,7 @@ int doAssetCommand(const std::vector<std::string>& args) {
     }
 
     std::cerr << "unknown asset command: " << cmd << "\n";
+    std::cerr << "Run 'subcli asset --help' to see available asset commands.\n";
     return ExitUsage;
 }
 
@@ -2832,6 +3062,7 @@ int doProfileCommand(const std::vector<std::string>& args) {
     }
 
     std::cerr << "unknown profile command: " << cmd << "\n";
+    std::cerr << "Run 'subcli profile --help' to see available profile commands.\n";
     return ExitUsage;
 }
 
@@ -3797,6 +4028,7 @@ int main(int argc, char** argv) {
         }
 
         std::cerr << "unknown command: " << cmd << "\n";
+        std::cerr << "Run 'subcli --help' to see available commands.\n";
         return ExitUsage;
     } catch (const std::exception& ex) {
         std::cerr << "error: " << ex.what() << "\n";

@@ -25,6 +25,12 @@ FetchContent_Declare(
 )
 
 FetchContent_Declare(
+    CLI11
+    GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+    GIT_TAG v2.4.2
+)
+
+FetchContent_Declare(
     openssl
     GIT_REPOSITORY https://github.com/janbar/openssl-cmake.git
     GIT_TAG 1.1.1w-20231130
@@ -73,7 +79,7 @@ set(USE_LIBIDN2 OFF CACHE BOOL "" FORCE)
 set(USE_LIBSSH2 OFF CACHE BOOL "" FORCE)
 set(HTTP_ONLY ON CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(yaml-cpp nlohmann_json curl)
+FetchContent_MakeAvailable(yaml-cpp nlohmann_json CLI11 curl)
 
 set(SUBCLI_SOURCES
     src/store.cpp
@@ -110,7 +116,7 @@ set(SUBCLI_SOURCES
 add_executable(subcli src/main.cpp ${SUBCLI_SOURCES})
 
 target_include_directories(subcli PRIVATE include)
-target_link_libraries(subcli PRIVATE yaml-cpp nlohmann_json::nlohmann_json libcurl)
+target_link_libraries(subcli PRIVATE yaml-cpp nlohmann_json::nlohmann_json CLI11::CLI11 libcurl)
 target_compile_definitions(subcli PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 install(TARGETS subcli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

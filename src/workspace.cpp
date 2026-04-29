@@ -98,6 +98,27 @@ bool ensureDefaultFiles(const fs::path& root, std::string& error) {
         if (!ensureMetadataFile(root, error)) {
             return false;
         }
+        const fs::path sourceProfiles = fs::path(SUBCLI_SOURCE_DIR) / "profiles";
+        const fs::path sourceTemplates = fs::path(SUBCLI_SOURCE_DIR) / "templates";
+        const fs::path workspaceProfiles = root / "profiles";
+        const fs::path workspaceTemplates = root / "templates";
+
+        std::error_code ec;
+        if (fs::is_empty(workspaceProfiles, ec) && !ec) {
+            fs::copy(sourceProfiles, workspaceProfiles, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                error = "failed to populate default profiles";
+                return false;
+            }
+        }
+        ec.clear();
+        if (fs::is_empty(workspaceTemplates, ec) && !ec) {
+            fs::copy(sourceTemplates, workspaceTemplates, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                error = "failed to populate default templates";
+                return false;
+            }
+        }
         return true;
     } catch (const std::exception& ex) {
         error = ex.what();

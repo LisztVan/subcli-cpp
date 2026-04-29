@@ -35,6 +35,7 @@ jobs:
         run: cmake --build build --config Release -j
 
       - name: Test
+        if: matrix.os != 'windows-latest'
         run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: Package

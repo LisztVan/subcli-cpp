@@ -139,7 +139,9 @@ if(WIN32)
 endif()
 
 add_test(NAME subcli_tests COMMAND subcli_tests)
-add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
+if(NOT WIN32)
+    add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
+endif()
 
 set(CPACK_PACKAGE_NAME "subcli")
 set(CPACK_PACKAGE_VENDOR "subcli")

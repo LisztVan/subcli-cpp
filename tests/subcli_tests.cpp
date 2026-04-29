@@ -16,6 +16,7 @@
 #include "subcli/cli_output.hpp"
 #include "subcli/daemon.hpp"
 #include "subcli/core_runtime.hpp"
+#include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
 #include "subcli/node.hpp"
@@ -25,6 +26,7 @@
 #include "subcli/protocol_registry.hpp"
 #include "subcli/store.hpp"
 #include "subcli/util.hpp"
+#include "subcli/workspace.hpp"
 
 namespace fs = std::filesystem;
 
@@ -60,6 +62,14 @@ bool containsProtocol(const std::vector<std::string>& protocols, const std::stri
         }
     }
     return false;
+}
+
+fs::path makeUniqueTestDir(const std::string& name) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path dir = fs::temp_directory_path() / (name + "-" + std::to_string(now));
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    return dir;
 }
 
 subcli::ProxyNode makeExportReadyShadowsocksNode(const std::string& name);
@@ -1572,7 +1582,7 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
-    require(script.find("init doctor sub config template asset profile export daemon run stop status restart check completion") != std::string::npos, "completion should include root commands");
+    require(script.find("init doctor sub config template asset profile export daemon run stop status restart check completion workspace") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
     require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
     require(script.find("--profile") != std::string::npos, "completion should include export profile option");
@@ -5649,6 +5659,192 @@ void testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets() {
     require(hasUnsupported(xray), "xray should not support hysteria2");
 }
 
+void testEnvironmentResolutionPrefersCliWorkspaceOverEnvAndPersisted() {
+    const fs::path base = makeUniqueTestDir("subcli-env-cli-priority");
+    const fs::path cli = base / "ws-cli";
+    const fs::path env = base / "ws-env";
+    const fs::path persisted = base / "ws-persisted";
+    fs::create_directories(cli);
+    fs::create_directories(env);
+    fs::create_directories(persisted);
+
+    subcli::EnvironmentResolveInput input;
+    input.cliWorkspace = cli.string();
+    input.envWorkspace = env.string();
+    input.persistedWorkspace = persisted.string();
+    input.cwd = base.string();
+    input.platform = subcli::PlatformKind::Linux;
+
+    const auto out = subcli::resolveEnvironment(input);
+    require(out.ok, "environment resolve should succeed for valid explicit cli workspace");
+    require(out.source == subcli::EnvironmentSource::CliOption, "cli workspace should win over env and persisted");
+    require(fs::path(out.root) == fs::absolute(cli).lexically_normal(), "resolved root should equal cli workspace");
+
+    fs::remove_all(base);
+}
+
+void testEnvironmentResolutionFailsForInvalidExplicitCliWorkspace() {
+    const fs::path base = makeUniqueTestDir("subcli-env-cli-invalid");
+    const fs::path missing = base / "does-not-exist";
+
+    subcli::EnvironmentResolveInput input;
+    input.cliWorkspace = missing.string();
+    input.cwd = base.string();
+    input.platform = subcli::PlatformKind::Linux;
+
+    const auto out = subcli::resolveEnvironment(input);
+    require(!out.ok, "invalid explicit cli workspace must fail");
+    require(!out.error.empty(), "invalid explicit cli workspace should provide error");
+
+    fs::remove_all(base);
+}
+
+void testEnvironmentResolutionUsesEnvWorkspaceWhenCliWorkspaceMissing() {
+    const fs::path base = makeUniqueTestDir("subcli-env-var-priority");
+    const fs::path env = base / "ws-env";
+    const fs::path persisted = base / "ws-persisted";
+    fs::create_directories(env);
+    fs::create_directories(persisted);
+
+    subcli::EnvironmentResolveInput input;
+    input.envWorkspace = env.string();
+    input.persistedWorkspace = persisted.string();
+    input.cwd = base.string();
+    input.platform = subcli::PlatformKind::Linux;
+
+    const auto out = subcli::resolveEnvironment(input);
+    require(out.ok, "environment resolve should succeed for valid SUBCLI_WORKSPACE");
+    require(out.source == subcli::EnvironmentSource::EnvVar, "SUBCLI_WORKSPACE should win when --workspace is absent");
+    require(fs::path(out.root) == fs::absolute(env).lexically_normal(), "resolved root should equal SUBCLI_WORKSPACE directory");
+
+    fs::remove_all(base);
+}
+
+void testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault() {
+    const fs::path base = makeUniqueTestDir("subcli-env-marker-priority");
+    const fs::path markerRoot = base / "workspace-root";
+    const fs::path nested = markerRoot / "nested" / "deeper";
+    const fs::path persisted = base / "persisted";
+    fs::create_directories(nested);
+    fs::create_directories(persisted);
+    {
+        std::ofstream out(markerRoot / ".subcli-workspace", std::ios::trunc);
+        out << "marker\n";
+    }
+
+    subcli::EnvironmentResolveInput input;
+    input.cwd = nested.string();
+    input.persistedWorkspace = persisted.string();
+    input.platform = subcli::PlatformKind::Linux;
+
+    const auto out = subcli::resolveEnvironment(input);
+    require(out.ok, "environment resolve should succeed for marker discovery");
+    require(out.source == subcli::EnvironmentSource::MarkerDiscovery, "marker-discovered workspace should win over persisted default");
+    require(fs::path(out.root) == fs::absolute(markerRoot).lexically_normal(), "resolved root should equal discovered marker directory");
+
+    fs::remove_all(base);
+}
+
+void testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker() {
+    const fs::path base = makeUniqueTestDir("subcli-env-persisted-default");
+    const fs::path cwd = base / "cwd";
+    const fs::path persisted = base / "persisted-root";
+    fs::create_directories(cwd);
+    fs::create_directories(persisted);
+
+    subcli::EnvironmentResolveInput input;
+    input.cwd = cwd.string();
+    input.persistedWorkspace = persisted.string();
+    input.platform = subcli::PlatformKind::Linux;
+
+    const auto out = subcli::resolveEnvironment(input);
+    require(out.ok, "environment resolve should succeed for valid persisted default workspace");
+    require(out.source == subcli::EnvironmentSource::PersistedDefault, "persisted default should be used without cli/env/marker");
+    require(fs::path(out.root) == fs::absolute(persisted).lexically_normal(), "resolved root should equal persisted default workspace");
+
+    fs::remove_all(base);
+}
+
+void testWorkspaceInitCreatesExpectedTree() {
+    const fs::path root = fs::temp_directory_path() / "subcli-workspace-init-tests";
+    fs::remove_all(root);
+
+    const subcli::WorkspaceInitResult r = subcli::workspaceInit(root.string());
+    require(r.ok, "workspace init should succeed: " + r.error);
+    require(fs::exists(root / "profiles"), "profiles dir should exist");
+    require(fs::exists(root / "templates"), "templates dir should exist");
+    require(fs::exists(root / "assets"), "assets dir should exist");
+    require(fs::exists(root / "cache"), "cache dir should exist");
+    require(fs::exists(root / "outputs"), "outputs dir should exist");
+    require(fs::exists(root / "state"), "state dir should exist");
+    require(fs::exists(root / ".subcli-workspace"), "marker should exist");
+    require(fs::exists(root / "config.yaml"), "config.yaml should exist");
+    require(fs::exists(root / "sub.yaml"), "sub.yaml should exist");
+
+    fs::remove_all(root);
+}
+
+void testWorkspaceMigrateCopiesDurableDataOnly() {
+    const fs::path from = fs::temp_directory_path() / "subcli-workspace-migrate-from-tests";
+    const fs::path to = fs::temp_directory_path() / "subcli-workspace-migrate-to-tests";
+    fs::remove_all(from);
+    fs::remove_all(to);
+
+    require(subcli::workspaceInit(from.string()).ok, "source workspace init should succeed");
+
+    {
+        std::ofstream cfg(from / "config.yaml", std::ios::trunc);
+        cfg << "log_level: debug\n";
+    }
+    {
+        std::ofstream subs(from / "sub.yaml", std::ios::trunc);
+        subs << "version: 1\nsubscriptions: []\n";
+    }
+    fs::create_directories(from / "profiles");
+    {
+        std::ofstream p(from / "profiles/custom.json");
+        p << "{\"version\":1,\"name\":\"custom\"}";
+    }
+    fs::create_directories(from / "templates");
+    {
+        std::ofstream t(from / "templates/custom.yaml");
+        t << "proxies: []\n";
+    }
+    fs::create_directories(from / "assets");
+    {
+        std::ofstream a(from / "assets/sample.dat");
+        a << "asset\n";
+    }
+    fs::create_directories(from / "cache");
+    {
+        std::ofstream c(from / "cache/temp.cache");
+        c << "cache\n";
+    }
+    fs::create_directories(from / "state");
+    {
+        std::ofstream s(from / "state/pid");
+        s << "123\n";
+    }
+
+    subcli::WorkspaceMigrateOptions options;
+    options.fromRoot = from.string();
+    options.toRoot = to.string();
+    const subcli::WorkspaceMigrateResult result = subcli::workspaceMigrate(options);
+    require(result.ok, "workspace migrate should succeed: " + result.error);
+
+    require(fs::exists(to / "config.yaml"), "config.yaml should be migrated");
+    require(fs::exists(to / "sub.yaml"), "sub.yaml should be migrated");
+    require(fs::exists(to / "profiles/custom.json"), "profiles should be migrated");
+    require(fs::exists(to / "templates/custom.yaml"), "templates should be migrated");
+    require(fs::exists(to / "assets/sample.dat"), "assets should be migrated");
+
+    require(!fs::exists(to / "cache/temp.cache"), "cache data should be skipped by default");
+    require(!fs::exists(to / "state/pid"), "state data should be skipped by default");
+
+    fs::remove_all(from);
+    fs::remove_all(to);
+}
+
 } // namespace
 
 int main() {
@@ -5773,6 +5969,13 @@ int main() {
     testCapabilityMatrixDeduplicatesRequiresAssetFindingsByAssetKey();
     testProfileExplainAllTargetsJsonIncludesRequiresAssetFindingFromConfig();
     testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets();
+    testEnvironmentResolutionPrefersCliWorkspaceOverEnvAndPersisted();
+    testEnvironmentResolutionFailsForInvalidExplicitCliWorkspace();
+    testEnvironmentResolutionUsesEnvWorkspaceWhenCliWorkspaceMissing();
+    testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault();
+    testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker();
+    testWorkspaceInitCreatesExpectedTree();
+    testWorkspaceMigrateCopiesDurableDataOnly();
     testStorePersistsOverrideFlags();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();

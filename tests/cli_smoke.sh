@@ -5,6 +5,8 @@ bin="$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+repo_root="$(dirname "$(dirname "$bin")")"
+
 export XDG_CONFIG_HOME="$tmp/config"
 export XDG_DATA_HOME="$tmp/data"
 export XDG_CACHE_HOME="$tmp/cache"
@@ -35,7 +37,7 @@ if [[ "$profile_list" != *"bypass-cn"* || "$profile_list" != *"global"* || "$pro
     printf '%s\n' "$profile_list"
     exit 1
 fi
-"$bin" profile validate profiles/bypass-cn.json >/dev/null
+"$bin" profile validate "$repo_root/profiles/bypass-cn.json" >/dev/null
 invalid_profile="$tmp/invalid-template-policy.json"
 cat >"$invalid_profile" <<'JSON'
 {
@@ -140,6 +142,39 @@ if [[ "$doctor_json" != *'"checks"'* ]]; then
     printf '%s\n' "$doctor_json"
     exit 1
 fi
+if [[ "$doctor_json" != *'"environment"'* || "$doctor_json" != *'"resolution_source"'* || "$doctor_json" != *'"resolved_path_map"'* ]]; then
+    printf 'doctor --json missing environment fields: %s\n' "$doctor_json"
+    exit 1
+fi
+
+workspace_root="$tmp/workspace-env"
+"$bin" workspace init "$workspace_root" >/dev/null
+doctor_env_json="$({ SUBCLI_WORKSPACE="$workspace_root" "$bin" doctor --json; } 2>&1 || true)"
+python3 - "$workspace_root" <<'PY' <<<"$doctor_env_json"
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1]).resolve()
+raw = sys.stdin.read()
+try:
+    doc = json.loads(raw)
+except Exception as exc:
+    raise SystemExit(f"doctor --json should be valid JSON under SUBCLI_WORKSPACE: {exc}: {raw}")
+
+env = doc.get("environment", {})
+if env.get("resolution_source") != "env_var":
+    raise SystemExit(f"expected resolution_source env_var, got: {env.get('resolution_source')}")
+
+active = pathlib.Path(env.get("active_workspace_root", "")).resolve()
+if active != workspace:
+    raise SystemExit(f"active_workspace_root mismatch: expected {workspace}, got {active}")
+
+resolved = env.get("resolved_path_map", {})
+config_path = pathlib.Path(resolved.get("config_path", "")).resolve()
+if config_path.parent != workspace:
+    raise SystemExit(f"config_path should resolve under workspace root: {config_path} (workspace={workspace})")
+PY
 
 completion="$($bin completion bash)"
 if [[ "$completion" != *"_subcli_completion"* ]]; then
@@ -204,3 +239,27 @@ if [[ "$check_export_json" != *'"check"'* || "$check_export_json" != *'"requeste
 fi
 
 "$bin" export all --profile bypass-cn --sub explain --strict-capabilities >/dev/null 2>&1 && exit 1 || true
+
+workspace_init="$("$bin" workspace init "$tmp/ws-test")"
+if [[ "$workspace_init" != *"workspace initialized:"* ]]; then
+    printf '%s\n' "$workspace_init"
+    exit 1
+fi
+if [[ ! -d "$tmp/ws-test" || ! -f "$tmp/ws-test/.subcli-workspace" ]]; then
+    printf 'workspace init did not create expected tree\n'
+    exit 1
+fi
+
+workspace_status="$("$bin" workspace status --json)"
+if [[ "$workspace_status" != *'"has_default"'* ]]; then
+    printf 'workspace status --json missing fields: %s\n' "$workspace_status"
+    exit 1
+fi
+
+workspace_help="$("$bin" workspace --help)"
+if [[ "$workspace_help" != *"init"* || "$workspace_help" != *"status"* || "$workspace_help" != *"migrate"* ]]; then
+    printf 'workspace --help incomplete: %s\n' "$workspace_help"
+    exit 1
+fi
+
+echo "all smoke tests passed"

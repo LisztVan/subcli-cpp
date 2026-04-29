@@ -40,6 +40,8 @@ cmake --build build --target package
 
 ```bash
 subcli init
+subcli workspace init .
+subcli workspace use "$(pwd)"
 subcli doctor --json
 subcli completion bash > ~/.local/share/bash-completion/completions/subcli
 subcli config set core_paths.mihomo /path/to/mihomo
@@ -72,6 +74,35 @@ On Linux, `subcli` uses XDG directories:
 - Cache: `${XDG_CACHE_HOME:-~/.cache}/subcli/`
 - State: `${XDG_STATE_HOME:-~/.local/state}/subcli/`
 - Outputs: `${XDG_DATA_HOME:-~/.local/share}/subcli/outputs/`
+
+When a workspace is active via `--workspace DIR` or a persisted default, paths are resolved from the workspace root instead.
+
+## Workspace Mode
+
+`subcli` supports project-scoped workspace data roots for isolation and reproducibility.
+
+```bash
+subcli workspace init ./my-subcli
+subcli workspace use ./my-subcli
+subcli workspace status --json
+subcli workspace unset
+```
+
+One-off per-command override:
+
+```bash
+subcli --workspace ./my-subcli export all --profile bypass-cn --check
+```
+
+## Migration
+
+Migrate existing XDG data into a workspace:
+
+```bash
+subcli workspace migrate --to ./my-subcli
+subcli workspace use ./my-subcli
+subcli doctor --json
+```
 
 ## Verification
 

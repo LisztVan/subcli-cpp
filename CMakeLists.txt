@@ -101,7 +101,9 @@ set(SUBCLI_SOURCES
     src/daemon.cpp
     src/cli_completion.cpp
     src/cli_output.cpp
+    src/environment.cpp
     src/assets.cpp
+    src/workspace.cpp
     src/util.cpp
 )
 

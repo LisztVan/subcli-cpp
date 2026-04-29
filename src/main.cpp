@@ -28,6 +28,7 @@
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
 #include "subcli/capability_matrix.hpp"
+#include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
 #include "subcli/parser.hpp"
@@ -35,6 +36,7 @@
 #include "subcli/profile_explain.hpp"
 #include "subcli/store.hpp"
 #include "subcli/util.hpp"
+#include "subcli/workspace.hpp"
 #include "exporter_internal.hpp"
 
 using namespace subcli;
@@ -60,6 +62,41 @@ struct RuntimePaths {
 
 RuntimePaths gPaths;
 std::string gExecutablePath;
+EnvironmentResolveResult gEnvResult;
+
+PlatformKind detectPlatformKind() {
+#ifdef _WIN32
+    return PlatformKind::Windows;
+#elif defined(__APPLE__)
+    return PlatformKind::MacOS;
+#else
+    return PlatformKind::Linux;
+#endif
+}
+
+std::string environmentSourceToString(EnvironmentSource source) {
+    switch (source) {
+    case EnvironmentSource::CliOption:
+        return "cli_option";
+    case EnvironmentSource::EnvVar:
+        return "env_var";
+    case EnvironmentSource::MarkerDiscovery:
+        return "marker_discovery";
+    case EnvironmentSource::PersistedDefault:
+        return "persisted_default";
+    case EnvironmentSource::PlatformDefault:
+        return "platform_default";
+    }
+    return "unknown";
+}
+
+std::string readPersistedDefaultWorkspace() {
+    const auto status = workspaceStatus();
+    if (!status.ok || !status.hasDefault) {
+        return "";
+    }
+    return status.defaultRoot;
+}
 
 std::filesystem::path normalizeAbsolutePath(const std::filesystem::path& path) {
     std::error_code ec;
@@ -432,7 +469,7 @@ bool hasHelp(const std::vector<std::string>& args) {
 }
 
 void printRootUsage() {
-    std::cout << "subcli <init|doctor|sub|config|template|asset|profile|export|daemon|run|stop|status|restart|check|completion> ...\n"
+    std::cout << "subcli [--workspace DIR] <init|doctor|sub|config|template|asset|profile|export|daemon|run|stop|status|restart|check|completion|workspace> ...\n"
               << "\n"
               << "Primary flow (cross-platform guarantee):\n"
               << "  subcli init\n"
@@ -440,6 +477,13 @@ void printRootUsage() {
               << "  subcli sub add --name NAME --url URL\n"
               << "  subcli sub update\n"
               << "  subcli export all --check\n"
+              << "\n"
+              << "Workspace mode:\n"
+              << "  subcli --workspace DIR ...\n"
+              << "  subcli workspace init [DIR]\n"
+              << "  subcli workspace use DIR\n"
+              << "  subcli workspace unset\n"
+              << "  subcli workspace migrate --to DIR\n"
               << "\n"
               << "Optional runtime helpers:\n"
               << "  subcli daemon once --target all\n"
@@ -542,6 +586,16 @@ void printExportPolicyExplainForTarget(ExportTarget target, const ResolvedProfil
             std::cout << "  " << path << ": default exporter behavior\n";
         }
     }
+}
+
+void printWorkspaceUsage() {
+    std::cout << "usage: subcli workspace <init|status|use|unset|migrate|doctor> ...\n"
+              << "  subcli workspace init [DIR]\n"
+              << "  subcli workspace status [--json]\n"
+              << "  subcli workspace use DIR\n"
+              << "  subcli workspace unset\n"
+              << "  subcli workspace migrate [--to DIR] [--from DIR] [--dry-run] [--overwrite]\n"
+              << "  subcli workspace doctor\n";
 }
 
 void printDaemonUsage() {
@@ -1297,7 +1351,25 @@ int doDoctorCommand(const std::vector<std::string>& args) {
     checkCore("core.xray", cores.xray);
 
     if (jsonOutput) {
-        printJsonLine({{"failed", failed}, {"checks", checks}});
+        nlohmann::json envJson = {
+            {"resolution_source", environmentSourceToString(gEnvResult.source)},
+            {"active_workspace_root", gEnvResult.root.empty() ? gPaths.root.string() : gEnvResult.root},
+            {"resolved_path_map", {
+                {"config_dir", gPaths.configDir.string()},
+                {"data_dir", gPaths.dataDir.string()},
+                {"cache_dir", gPaths.cacheDir.string()},
+                {"state_dir", gPaths.stateDir.string()},
+                {"output_dir", gPaths.outputDir.string()},
+                {"template_dir", gPaths.templateDir.string()},
+                {"profile_dir", gPaths.profileDir.string()},
+                {"sub_path", gPaths.subPath.string()},
+                {"config_path", gPaths.configPath.string()},
+            }},
+        };
+        if (!gEnvResult.trace.empty()) {
+            envJson["trace"] = gEnvResult.trace;
+        }
+        printJsonLine({{"failed", failed}, {"checks", checks}, {"environment", envJson}});
     } else {
         std::cout << "doctor summary: failed=" << failed << "\n";
     }
@@ -3175,6 +3247,168 @@ int doExportCommand(const std::vector<std::string>& args) {
     return failed > 0 ? 1 : (success > 0 ? 0 : 1);
 }
 
+int doWorkspaceCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printWorkspaceUsage();
+        return ExitOk;
+    }
+    if (args.size() < 2) {
+        printWorkspaceUsage();
+        return ExitUsage;
+    }
+    const std::string mode = args[1];
+    const bool jsonOutput = hasFlag(args, "--json");
+
+    if (mode == "init") {
+        if (!validateOptions(args, 2, {}, {})) {
+            return ExitUsage;
+        }
+        std::string initRoot;
+        if (args.size() >= 3 && args[2].rfind("--", 0) != 0) {
+            initRoot = args[2];
+        } else {
+            initRoot = normalizeAbsolutePath(std::filesystem::current_path()).string() + "/subcli-workspace";
+        }
+        const auto r = workspaceInit(initRoot);
+        if (!r.ok) {
+            std::cerr << "workspace init failed: " << r.error << "\n";
+            return ExitError;
+        }
+        std::cout << "workspace initialized: " << r.root << "\n";
+        return ExitOk;
+    }
+
+    if (mode == "status") {
+        if (!validateOptions(args, 2, {"--json"}, {})) {
+            return ExitUsage;
+        }
+        if ((!jsonOutput && args.size() != 2) || (jsonOutput && args.size() != 3)) {
+            std::cerr << "workspace status does not accept positional arguments\n";
+            return ExitUsage;
+        }
+        const auto status = workspaceStatus();
+        if (!status.ok) {
+            std::cerr << "workspace status failed: " << status.error << "\n";
+            return ExitError;
+        }
+        if (jsonOutput) {
+            printJsonLine({{"has_default", status.hasDefault}, {"default_root", status.defaultRoot}, {"default_root_exists", status.defaultRootExists}, {"default_root_has_marker", status.defaultRootHasMarker}, {"persisted_path", status.persistedPath}});
+            return ExitOk;
+        }
+        if (!status.hasDefault) {
+            std::cout << "no persisted default workspace\n";
+        } else {
+            std::cout << "persisted default workspace: " << status.defaultRoot
+                      << " (exists=" << (status.defaultRootExists ? "true" : "false")
+                      << " marker=" << (status.defaultRootHasMarker ? "true" : "false") << ")\n";
+        }
+        return ExitOk;
+    }
+
+    if (mode == "use") {
+        if (!validateOptions(args, 2, {}, {})) {
+            return ExitUsage;
+        }
+        if (args.size() != 3) {
+            std::cerr << "workspace use requires DIR\n";
+            return ExitUsage;
+        }
+        std::string error;
+        if (!workspaceUse(args[2], error)) {
+            std::cerr << "workspace use failed: " << error << "\n";
+            return ExitError;
+        }
+        std::cout << "default workspace set to: " << args[2] << "\n";
+        return ExitOk;
+    }
+
+    if (mode == "unset") {
+        if (!validateOptions(args, 2, {}, {})) {
+            return ExitUsage;
+        }
+        if (args.size() != 2) {
+            std::cerr << "workspace unset does not accept arguments\n";
+            return ExitUsage;
+        }
+        std::string error;
+        if (!workspaceUnset(error)) {
+            std::cerr << "workspace unset failed: " << error << "\n";
+            return ExitError;
+        }
+        std::cout << "default workspace removed\n";
+        return ExitOk;
+    }
+
+    if (mode == "migrate") {
+        if (!validateOptions(args, 2, {"--to", "--from", "--dry-run", "--overwrite"}, {"--to", "--from"})) {
+            return ExitUsage;
+        }
+        WorkspaceMigrateOptions options;
+        if (hasOption(args, "--from")) {
+            options.fromRoot = argValue(args, "--from");
+        } else {
+            options.fromRoot = gPaths.root.string();
+        }
+        options.toRoot = argValue(args, "--to");
+        if (options.toRoot.empty()) {
+            std::cerr << "workspace migrate requires --to DIR\n";
+            return ExitUsage;
+        }
+        options.dryRun = hasFlag(args, "--dry-run");
+        options.overwrite = hasFlag(args, "--overwrite");
+
+        const auto result = workspaceMigrate(options);
+        if (!result.ok) {
+            std::cerr << "workspace migrate failed: " << result.error << "\n";
+            return ExitError;
+        }
+        if (options.dryRun) {
+            std::cout << "migrate dry-run\n";
+        }
+        std::cout << "workspace migrated: " << result.copied.size() << " items copied, " << result.skipped.size() << " items skipped\n";
+        for (const auto& item : result.copied) {
+            std::cout << "  copied: " << item << "\n";
+        }
+        for (const auto& item : result.skipped) {
+            std::cout << "  skipped: " << item << "\n";
+        }
+        return ExitOk;
+    }
+
+    if (mode == "doctor") {
+        if (!validateOptions(args, 2, {}, {})) {
+            return ExitUsage;
+        }
+        if (args.size() != 2) {
+            std::cerr << "workspace doctor does not accept arguments\n";
+            return ExitUsage;
+        }
+        const auto status = workspaceStatus();
+        if (!status.ok) {
+            std::cerr << "workspace doctor failed: " << status.error << "\n";
+            return ExitError;
+        }
+        int issues = 0;
+        if (!status.hasDefault) {
+            std::cout << "[WARN] no persisted default workspace\n";
+            ++issues;
+        } else if (!status.defaultRootExists) {
+            std::cout << "[FAIL] default workspace root missing: " << status.defaultRoot << "\n";
+            ++issues;
+        } else if (!status.defaultRootHasMarker) {
+            std::cout << "[WARN] default workspace missing marker: " << status.defaultRoot << "\n";
+            ++issues;
+        } else {
+            std::cout << "[ OK ] default workspace: " << status.defaultRoot << "\n";
+        }
+        std::cout << "workspace doctor summary: issues=" << issues << "\n";
+        return issues > 0 ? ExitError : ExitOk;
+    }
+
+    std::cerr << "unknown workspace mode: " << mode << "\n";
+    return ExitUsage;
+}
+
 int doDaemonCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         printDaemonUsage();
@@ -3352,6 +3586,50 @@ int main(int argc, char** argv) {
             args.emplace_back(argv[i]);
         }
 
+        std::string cliWorkspace;
+        std::vector<std::string> filteredArgs;
+        filteredArgs.reserve(args.size());
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (args[i] == "--workspace" && i + 1 < args.size()) {
+                cliWorkspace = args[i + 1];
+                ++i;
+                continue;
+            }
+            filteredArgs.push_back(args[i]);
+        }
+        args = std::move(filteredArgs);
+
+        const std::string envWorkspace = [&]() {
+            const char* raw = std::getenv("SUBCLI_WORKSPACE");
+            return raw && *raw ? std::string(raw) : "";
+        }();
+
+        EnvironmentResolveInput input;
+        input.cliWorkspace = cliWorkspace;
+        input.envWorkspace = envWorkspace;
+        input.cwd = std::filesystem::current_path().string();
+        input.persistedWorkspace = readPersistedDefaultWorkspace();
+        input.platform = detectPlatformKind();
+
+        gEnvResult = resolveEnvironment(input);
+        if (!gEnvResult.ok) {
+            std::cerr << "environment resolution failed: " << gEnvResult.error << "\n";
+            return ExitError;
+        }
+
+        if (gEnvResult.source != EnvironmentSource::PlatformDefault) {
+            gPaths.root = gEnvResult.paths.root;
+            gPaths.configDir = gEnvResult.paths.configDir;
+            gPaths.dataDir = gEnvResult.paths.dataDir;
+            gPaths.cacheDir = gEnvResult.paths.cacheDir;
+            gPaths.stateDir = gEnvResult.paths.stateDir;
+            gPaths.outputDir = gEnvResult.paths.outputDir;
+            gPaths.templateDir = gEnvResult.paths.templateDir;
+            gPaths.profileDir = gEnvResult.paths.profileDir;
+            gPaths.subPath = gEnvResult.paths.subPath;
+            gPaths.configPath = gEnvResult.paths.configPath;
+        }
+
         if (args.size() < 2) {
             printRootUsage();
             return 0;
@@ -3407,6 +3685,9 @@ int main(int argc, char** argv) {
         }
         if (cmd == "completion") {
             return doCompletionCommand(tail);
+        }
+        if (cmd == "workspace") {
+            return doWorkspaceCommand(tail);
         }
 
         std::cerr << "unknown command: " << cmd << "\n";

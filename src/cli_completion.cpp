@@ -12,7 +12,7 @@ std::string generateBashCompletion() {
     subcmd="${COMP_WORDS[2]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "init doctor sub config template asset profile export daemon run stop status restart check completion" -- "$cur") )
+        COMPREPLY=( $(compgen -W "init doctor sub config template asset profile export daemon run stop status restart check completion workspace" -- "$cur") )
         return 0
     fi
 
@@ -81,6 +81,9 @@ std::string generateBashCompletion() {
             ;;
         completion)
             COMPREPLY=( $(compgen -W "bash" -- "$cur") )
+            ;;
+        workspace)
+            COMPREPLY=( $(compgen -W "init status use unset migrate doctor" -- "$cur") )
             ;;
     esac
 }

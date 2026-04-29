@@ -476,7 +476,7 @@ void printRootUsage() {
               << "Global Options:\n"
               << "  --workspace DIR  Use a workspace for this invocation.\n"
               << "\n"
-              << "Core Workflow:\n"
+              << "Commands:\n"
               << "  init      Create config/data/cache/state/output directories.\n"
               << "  doctor    Check dirs, templates, assets, and core paths.\n"
               << "  sub       Add/list/update/validate/enable/disable subscriptions.\n"

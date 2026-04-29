@@ -14,10 +14,12 @@ export XDG_STATE_HOME="$tmp/state"
 
 "$bin" init >/dev/null
 root_help="$($bin --help)"
-if [[ "$root_help" != *"  config"* ]]; then
-    printf '%s\n' "$root_help"
-    exit 1
-fi
+for cmd in init doctor sub config profile template asset export workspace check run daemon status stop restart completion; do
+    if [[ "$root_help" != *"  $cmd"* ]]; then
+        printf 'root help missing command: %s\n%s\n' "$cmd" "$root_help"
+        exit 1
+    fi
+done
 "$bin" template validate >/dev/null
 
 cp "$($bin template get mihomo normal)" "$tmp/valid-mihomo.yaml"

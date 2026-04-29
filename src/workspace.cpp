@@ -4,7 +4,9 @@
 #include <filesystem>
 #include <fstream>
 #include <system_error>
+#include <ctime>
 
+#include <yaml-cpp/yaml.h>
 #include "subcli/store.hpp"
 
 namespace subcli {
@@ -20,6 +22,51 @@ fs::path normalizeRoot(const std::string& root) {
 
 fs::path markerPath(const fs::path& root) {
     return root / ".subcli-workspace";
+}
+
+fs::path metadataPath(const fs::path& root) {
+    return root / "subcli.env.yaml";
+}
+
+std::string nowUtcIso8601() {
+    std::time_t now = std::time(nullptr);
+    std::tm tmUtc{};
+#ifdef _WIN32
+    gmtime_s(&tmUtc, &now);
+#else
+    gmtime_r(&now, &tmUtc);
+#endif
+    char buf[32] = {0};
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tmUtc);
+    return std::string(buf);
+}
+
+bool ensureMetadataFile(const fs::path& root, std::string& error) {
+    const fs::path meta = metadataPath(root);
+    std::error_code ec;
+    if (fs::exists(meta, ec)) {
+        if (ec) {
+            error = "failed to inspect workspace metadata";
+            return false;
+        }
+        return true;
+    }
+
+    YAML::Node node;
+    node["env_version"] = 2;
+    node["name"] = root.filename().string();
+    node["created_at"] = nowUtcIso8601();
+    node["description"] = "";
+
+    YAML::Emitter out;
+    out << node;
+    std::ofstream file(meta);
+    if (!file) {
+        error = "failed to create workspace metadata";
+        return false;
+    }
+    file << out.c_str() << "\n";
+    return true;
 }
 
 fs::path persistedDefaultFilePath() {
@@ -48,11 +95,62 @@ bool ensureDefaultFiles(const fs::path& root, std::string& error) {
         if (!fs::exists(subPath)) {
             saveSubscriptions(subPath.string(), {});
         }
+        if (!ensureMetadataFile(root, error)) {
+            return false;
+        }
         return true;
     } catch (const std::exception& ex) {
         error = ex.what();
         return false;
     }
+}
+
+WorkspaceMetadata parseMetadata(const fs::path& root) {
+    WorkspaceMetadata out;
+    const fs::path metaPath = metadataPath(root);
+    std::error_code ec;
+    if (!fs::exists(metaPath, ec)) {
+        return out;
+    }
+    if (ec) {
+        out.error = "failed to inspect workspace metadata";
+        return out;
+    }
+
+    out.exists = true;
+    try {
+        const YAML::Node rootNode = YAML::LoadFile(metaPath.string());
+        if (!rootNode || !rootNode.IsMap()) {
+            out.error = "workspace metadata is not a YAML mapping";
+            return out;
+        }
+
+        const YAML::Node envVersion = rootNode["env_version"];
+        if (!envVersion || !envVersion.IsScalar()) {
+            out.error = "workspace metadata missing env_version";
+            return out;
+        }
+        out.envVersion = envVersion.as<int>();
+        if (out.envVersion != 2) {
+            out.error = "unsupported env_version: " + std::to_string(out.envVersion);
+            return out;
+        }
+
+        const YAML::Node name = rootNode["name"];
+        const YAML::Node createdAt = rootNode["created_at"];
+        const YAML::Node description = rootNode["description"];
+        if (!name || !name.IsScalar() || !createdAt || !createdAt.IsScalar() || !description || !description.IsScalar()) {
+            out.error = "workspace metadata requires scalar name/created_at/description";
+            return out;
+        }
+        out.name = name.as<std::string>();
+        out.createdAt = createdAt.as<std::string>();
+        out.description = description.as<std::string>();
+        out.valid = true;
+    } catch (const std::exception& ex) {
+        out.error = ex.what();
+    }
+    return out;
 }
 
 bool copyItem(const fs::path& from, const fs::path& to, bool overwrite, bool dryRun, std::string& error) {
@@ -248,7 +346,7 @@ WorkspaceMigrateResult workspaceMigrate(const WorkspaceMigrateOptions& options) 
     }
 
     const std::vector<std::string> durableItems = {
-        "config.yaml", "sub.yaml", "profiles", "templates", "assets", ".subcli-workspace"};
+        "config.yaml", "sub.yaml", "profiles", "templates", "assets", ".subcli-workspace", "subcli.env.yaml"};
 
     for (const std::string& item : durableItems) {
         const fs::path src = from / item;
@@ -273,6 +371,15 @@ WorkspaceMigrateResult workspaceMigrate(const WorkspaceMigrateOptions& options) 
 
     out.ok = true;
     return out;
+}
+
+WorkspaceMetadata workspaceReadMetadata(const std::string& root) {
+    if (root.empty()) {
+        WorkspaceMetadata out;
+        out.error = "workspace root is empty";
+        return out;
+    }
+    return parseMetadata(normalizeRoot(root));
 }
 
 } // namespace subcli

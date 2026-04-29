@@ -56,8 +56,17 @@ Persisted relative paths in `config.yaml` are resolved relative to the config di
 
 ```bash
 subcli --help
+subcli --workspace /path/to/ws status
 subcli init
 subcli doctor
+
+subcli workspace init ./ws
+subcli workspace status
+subcli workspace use ./ws
+subcli workspace unset
+subcli workspace migrate --from-legacy --dry-run
+subcli workspace migrate --from-legacy --overwrite
+subcli workspace doctor
 
 subcli sub add --name airport-a --url https://example/sub
 subcli sub add --name local --url file:///abs/path/sub.txt --force
@@ -118,6 +127,32 @@ subcli completion bash
 ```
 
 ## Subscription Management
+
+## Workspace Management
+
+`subcli` supports workspace-scoped runtime/config/data layout, so multiple independent environments can coexist.
+
+- `subcli workspace init [DIR]`: initialize a workspace layout.
+- `subcli workspace status`: show the active workspace and key paths.
+- `subcli workspace use <DIR>`: set the active workspace.
+- `subcli workspace unset`: clear workspace override and fall back to default XDG layout.
+- `subcli workspace migrate [--dry-run] [--overwrite]`: migrate legacy/default files into the active workspace.
+- `subcli workspace doctor`: validate workspace structure and required files.
+
+Global workspace selection is also available on any command:
+
+- `--workspace <DIR>`: use a specific workspace for this invocation only.
+
+Environment variable override:
+
+- `SUBCLI_WORKSPACE=<DIR>`: default workspace when `--workspace` is not provided.
+
+Migration notes:
+
+- `--dry-run` prints planned file moves/copies without writing changes.
+- `--overwrite` allows replacing existing destination files during migration.
+
+Precedence for workspace selection is `--workspace` > `SUBCLI_WORKSPACE` > default XDG paths.
 
 Subscriptions support normal CRUD through `sub add`, `sub list`, `sub edit`, and `sub remove`. Subscription ids and names must be unique; `sub add` will not overwrite an existing subscription. Use `sub edit <id|name>` for changes.
 

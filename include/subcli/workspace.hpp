@@ -21,6 +21,16 @@ struct WorkspaceStatusResult {
     std::string error;
 };
 
+struct WorkspaceMetadata {
+    bool exists = false;
+    bool valid = false;
+    int envVersion = 0;
+    std::string name;
+    std::string createdAt;
+    std::string description;
+    std::string error;
+};
+
 struct WorkspaceMigrateOptions {
     std::string fromRoot;
     std::string toRoot;
@@ -40,5 +50,6 @@ bool workspaceUse(const std::string& root, std::string& error);
 bool workspaceUnset(std::string& error);
 WorkspaceStatusResult workspaceStatus();
 WorkspaceMigrateResult workspaceMigrate(const WorkspaceMigrateOptions& options);
+WorkspaceMetadata workspaceReadMetadata(const std::string& root);
 
 } // namespace subcli

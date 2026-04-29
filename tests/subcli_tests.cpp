@@ -5778,8 +5778,54 @@ void testWorkspaceInitCreatesExpectedTree() {
     require(fs::exists(root / "outputs"), "outputs dir should exist");
     require(fs::exists(root / "state"), "state dir should exist");
     require(fs::exists(root / ".subcli-workspace"), "marker should exist");
+    require(fs::exists(root / "subcli.env.yaml"), "subcli.env.yaml should exist");
     require(fs::exists(root / "config.yaml"), "config.yaml should exist");
     require(fs::exists(root / "sub.yaml"), "sub.yaml should exist");
+
+    const auto metadata = subcli::workspaceReadMetadata(root.string());
+    require(metadata.exists, "workspace metadata should be present after init");
+    require(metadata.valid, "workspace metadata should be valid after init");
+    require(metadata.envVersion == 2, "workspace metadata env_version should be 2");
+    require(metadata.name == root.filename().string(), "workspace metadata name should default to directory name");
+    require(!metadata.createdAt.empty(), "workspace metadata created_at should be populated");
+    require(metadata.description.empty(), "workspace metadata description should default to empty");
+
+    fs::remove_all(root);
+}
+
+void testWorkspaceReadMetadataRejectsUnsupportedEnvVersion() {
+    const fs::path root = makeUniqueTestDir("subcli-workspace-metadata-version");
+    const fs::path metadataPath = root / "subcli.env.yaml";
+
+    {
+        std::ofstream out(metadataPath, std::ios::trunc);
+        out << "env_version: 1\n";
+        out << "name: legacy\n";
+        out << "created_at: 2025-01-01T00:00:00Z\n";
+        out << "description: old\n";
+    }
+
+    const auto metadata = subcli::workspaceReadMetadata(root.string());
+    require(metadata.exists, "metadata parser should detect existing metadata file");
+    require(!metadata.valid, "unsupported env_version metadata should be invalid");
+    require(metadata.envVersion == 1, "metadata parser should read env_version value");
+    require(metadata.error.find("unsupported env_version") != std::string::npos, "unsupported env_version should produce explicit error");
+
+    fs::remove_all(root);
+}
+
+void testWorkspaceReadMetadataSupportsLegacyMarkerWithoutMetadata() {
+    const fs::path root = makeUniqueTestDir("subcli-workspace-legacy-marker");
+
+    {
+        std::ofstream out(root / ".subcli-workspace", std::ios::trunc);
+        out << "subcli-workspace\n";
+    }
+
+    const auto metadata = subcli::workspaceReadMetadata(root.string());
+    require(!metadata.exists, "legacy marker-only workspace should report missing metadata file");
+    require(!metadata.valid, "legacy marker-only workspace should not report metadata as valid");
+    require(metadata.error.empty(), "legacy marker-only workspace should not raise metadata parse errors");
 
     fs::remove_all(root);
 }
@@ -5975,6 +6021,8 @@ int main() {
     testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault();
     testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker();
     testWorkspaceInitCreatesExpectedTree();
+    testWorkspaceReadMetadataRejectsUnsupportedEnvVersion();
+    testWorkspaceReadMetadataSupportsLegacyMarkerWithoutMetadata();
     testWorkspaceMigrateCopiesDurableDataOnly();
     testStorePersistsOverrideFlags();
     testStorePersistsFetchMaxBytes();

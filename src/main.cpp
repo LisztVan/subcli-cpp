@@ -598,6 +598,86 @@ void printWorkspaceUsage() {
               << "  subcli workspace doctor\n";
 }
 
+struct WorkspaceDoctorFinding {
+    std::string level;
+    std::string code;
+    std::string detail;
+};
+
+bool canWritePath(const std::filesystem::path& path) {
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+        const auto perms = std::filesystem::status(path, ec).permissions();
+        if (ec) {
+            return false;
+        }
+        using p = std::filesystem::perms;
+        return (perms & p::owner_write) != p::none || (perms & p::group_write) != p::none || (perms & p::others_write) != p::none;
+    }
+
+    std::ofstream out(path, std::ios::app);
+    if (!out) {
+        return false;
+    }
+    out.close();
+    std::filesystem::remove(path, ec);
+    return true;
+}
+
+std::vector<WorkspaceDoctorFinding> buildWorkspaceDoctorFindings(const std::filesystem::path& root) {
+    std::vector<WorkspaceDoctorFinding> findings;
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec) || !std::filesystem::is_directory(root, ec)) {
+        findings.push_back({"fail", "root_missing", "workspace root is missing or not a directory: " + root.string()});
+        return findings;
+    }
+
+    const bool hasLegacyMarker = std::filesystem::exists(root / ".subcli-workspace", ec) && !ec;
+    const auto metadata = workspaceReadMetadata(root.string());
+    if (!hasLegacyMarker && !metadata.exists) {
+        findings.push_back({"warn", "marker_missing", "workspace has neither .subcli-workspace nor subcli.env.yaml marker"});
+    } else {
+        findings.push_back({"ok", "marker_present", hasLegacyMarker ? "legacy marker present (.subcli-workspace)" : "metadata marker present (subcli.env.yaml)"});
+    }
+
+    if (metadata.exists) {
+        if (metadata.valid) {
+            findings.push_back({"ok", "metadata_valid", "subcli.env.yaml is valid (env_version=2, required fields present)"});
+        } else {
+            findings.push_back({"fail", "metadata_invalid", "subcli.env.yaml is invalid: " + metadata.error});
+        }
+    } else {
+        findings.push_back({"warn", "metadata_missing", "subcli.env.yaml missing (legacy workspace still supported)"});
+    }
+
+    for (const char* dir : {"profiles", "templates", "assets", "cache", "outputs", "state"}) {
+        const auto path = root / dir;
+        if (!std::filesystem::exists(path, ec) || !std::filesystem::is_directory(path, ec)) {
+            findings.push_back({"fail", "required_dir_missing", "missing required directory: " + path.string()});
+        } else {
+            findings.push_back({"ok", "required_dir_ok", "directory exists: " + path.string()});
+        }
+    }
+
+    for (const char* file : {"config.yaml", "sub.yaml"}) {
+        const auto path = root / file;
+        if (!std::filesystem::exists(path, ec) || !std::filesystem::is_regular_file(path, ec)) {
+            findings.push_back({"fail", "required_file_missing", "missing required file: " + path.string()});
+        } else {
+            findings.push_back({"ok", "required_file_ok", "file exists: " + path.string()});
+        }
+    }
+
+    for (const auto& writablePath : {root, root / "config.yaml", root / "sub.yaml", root / "outputs", root / "cache", root / "state"}) {
+        if (canWritePath(writablePath)) {
+            findings.push_back({"ok", "writable", "writeable: " + writablePath.string()});
+        } else {
+            findings.push_back({"fail", "not_writable", "not writeable: " + writablePath.string()});
+        }
+    }
+    return findings;
+}
+
 void printDaemonUsage() {
     std::cout << "usage: subcli daemon <once|run|start|stop|status> [--interval SEC] [--target all|mihomo|sing-box|xray]\n"
               << "       [--update-assets] [--strict-network] [--check] [--no-restart] [--pid-file PATH] [--log-file PATH]\n"
@@ -3291,9 +3371,37 @@ int doWorkspaceCommand(const std::vector<std::string>& args) {
             std::cerr << "workspace status failed: " << status.error << "\n";
             return ExitError;
         }
+        const auto metadata = workspaceReadMetadata(gPaths.root.string());
         if (jsonOutput) {
-            printJsonLine({{"has_default", status.hasDefault}, {"default_root", status.defaultRoot}, {"default_root_exists", status.defaultRootExists}, {"default_root_has_marker", status.defaultRootHasMarker}, {"persisted_path", status.persistedPath}});
+            nlohmann::json metadataJson = {
+                {"exists", metadata.exists},
+                {"valid", metadata.valid},
+                {"env_version", metadata.envVersion},
+                {"name", metadata.name},
+                {"created_at", metadata.createdAt},
+                {"description", metadata.description},
+                {"error", metadata.error},
+            };
+            printJsonLine({
+                {"active_root", gPaths.root.string()},
+                {"active_root_has_legacy_marker", std::filesystem::exists(gPaths.root / ".subcli-workspace")},
+                {"metadata", metadataJson},
+                {"has_default", status.hasDefault},
+                {"default_root", status.defaultRoot},
+                {"default_root_exists", status.defaultRootExists},
+                {"default_root_has_marker", status.defaultRootHasMarker},
+                {"persisted_path", status.persistedPath},
+            });
             return ExitOk;
+        }
+        std::cout << "active workspace: " << gPaths.root.string() << "\n";
+        if (!metadata.exists) {
+            std::cout << "metadata: missing (legacy workspace is still supported)\n";
+        } else if (!metadata.valid) {
+            std::cout << "metadata: invalid (" << metadata.error << ")\n";
+        } else {
+            std::cout << "metadata: env_version=" << metadata.envVersion << " name=" << metadata.name << " created_at=" << metadata.createdAt
+                      << " description=" << metadata.description << "\n";
         }
         if (!status.hasDefault) {
             std::cout << "no persisted default workspace\n";
@@ -3383,26 +3491,24 @@ int doWorkspaceCommand(const std::vector<std::string>& args) {
             std::cerr << "workspace doctor does not accept arguments\n";
             return ExitUsage;
         }
-        const auto status = workspaceStatus();
-        if (!status.ok) {
-            std::cerr << "workspace doctor failed: " << status.error << "\n";
-            return ExitError;
+        const auto findings = buildWorkspaceDoctorFindings(gPaths.root);
+        int okCount = 0;
+        int warnCount = 0;
+        int failCount = 0;
+        for (const auto& finding : findings) {
+            if (finding.level == "ok") {
+                ++okCount;
+                std::cout << "[ OK ] " << finding.detail << "\n";
+            } else if (finding.level == "warn") {
+                ++warnCount;
+                std::cout << "[WARN] " << finding.detail << "\n";
+            } else {
+                ++failCount;
+                std::cout << "[FAIL] " << finding.detail << "\n";
+            }
         }
-        int issues = 0;
-        if (!status.hasDefault) {
-            std::cout << "[WARN] no persisted default workspace\n";
-            ++issues;
-        } else if (!status.defaultRootExists) {
-            std::cout << "[FAIL] default workspace root missing: " << status.defaultRoot << "\n";
-            ++issues;
-        } else if (!status.defaultRootHasMarker) {
-            std::cout << "[WARN] default workspace missing marker: " << status.defaultRoot << "\n";
-            ++issues;
-        } else {
-            std::cout << "[ OK ] default workspace: " << status.defaultRoot << "\n";
-        }
-        std::cout << "workspace doctor summary: issues=" << issues << "\n";
-        return issues > 0 ? ExitError : ExitOk;
+        std::cout << "workspace doctor summary: root=" << gPaths.root.string() << " ok=" << okCount << " warn=" << warnCount << " fail=" << failCount << "\n";
+        return failCount > 0 ? ExitError : ExitOk;
     }
 
     std::cerr << "unknown workspace mode: " << mode << "\n";

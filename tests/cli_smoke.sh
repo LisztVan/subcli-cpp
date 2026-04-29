@@ -251,8 +251,30 @@ if [[ ! -d "$tmp/ws-test" || ! -f "$tmp/ws-test/.subcli-workspace" ]]; then
 fi
 
 workspace_status="$("$bin" workspace status --json)"
-if [[ "$workspace_status" != *'"has_default"'* ]]; then
+if [[ "$workspace_status" != *'"has_default"'* || "$workspace_status" != *'"metadata"'* || "$workspace_status" != *'"env_version"'* ]]; then
     printf 'workspace status --json missing fields: %s\n' "$workspace_status"
+    exit 1
+fi
+WORKSPACE_STATUS_JSON="$workspace_status" python3 - <<'PY'
+import json
+import os
+
+raw = os.environ.get("WORKSPACE_STATUS_JSON", "")
+doc = json.loads(raw)
+metadata = doc.get("metadata", {})
+if "exists" not in metadata or "valid" not in metadata or "env_version" not in metadata:
+    raise SystemExit(f"workspace status metadata fields missing: {doc}")
+if metadata.get("exists") and metadata.get("valid") and metadata.get("env_version") != 2:
+    raise SystemExit(f"workspace status env_version should be 2 when metadata is valid: {doc}")
+PY
+
+workspace_doctor_out="$({ SUBCLI_WORKSPACE="$tmp/ws-test" "$bin" workspace doctor; } 2>&1 || true)"
+if [[ "$workspace_doctor_out" != *"workspace doctor summary: root=$tmp/ws-test"* ]]; then
+    printf 'workspace doctor should report active workspace root, got: %s\n' "$workspace_doctor_out"
+    exit 1
+fi
+if [[ "$workspace_doctor_out" != *"subcli.env.yaml is valid"* ]]; then
+    printf 'workspace doctor should validate metadata in active workspace, got: %s\n' "$workspace_doctor_out"
     exit 1
 fi
 

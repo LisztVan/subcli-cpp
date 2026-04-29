@@ -480,6 +480,7 @@ void printRootUsage() {
               << "  init      Create config/data/cache/state/output directories.\n"
               << "  doctor    Check dirs, templates, assets, and core paths.\n"
               << "  sub       Add/list/update/validate/enable/disable subscriptions.\n"
+              << "  config    List/get/set/remove application settings.\n"
               << "  profile   List/get/validate/explain export profiles.\n"
               << "  template  List/get/set/reset/validate export templates.\n"
               << "  asset     List/status/validate/update geo and rule assets.\n"

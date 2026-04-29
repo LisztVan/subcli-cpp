@@ -13,6 +13,11 @@ export XDG_CACHE_HOME="$tmp/cache"
 export XDG_STATE_HOME="$tmp/state"
 
 "$bin" init >/dev/null
+root_help="$($bin --help)"
+if [[ "$root_help" != *"  config"* ]]; then
+    printf '%s\n' "$root_help"
+    exit 1
+fi
 "$bin" template validate >/dev/null
 
 cp "$($bin template get mihomo normal)" "$tmp/valid-mihomo.yaml"

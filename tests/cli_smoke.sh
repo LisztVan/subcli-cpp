@@ -20,6 +20,20 @@ for cmd in init doctor sub config profile template asset export workspace check 
         exit 1
     fi
 done
+for summary in \
+    "sub       list/add/edit/remove/enable/disable/update/validate" \
+    "config    list/get/set/remove" \
+    "profile   list/get/validate/explain" \
+    "template  list/get/set/reset/validate" \
+    "asset     list/status/validate/update" \
+    "export    all/mihomo/sing-box/xray" \
+    "workspace init/status/use/unset/migrate/doctor" \
+    "daemon    once/run/start/stop/status"; do
+    if [[ "$root_help" != *"$summary"* ]]; then
+        printf 'root help missing summary: %s\n%s\n' "$summary" "$root_help"
+        exit 1
+    fi
+done
 "$bin" template validate >/dev/null
 
 cp "$($bin template get mihomo normal)" "$tmp/valid-mihomo.yaml"

@@ -1,9 +1,9 @@
 #include "subcli/core_runtime.hpp"
 
 #include <chrono>
+#include <cerrno>
 #include <csignal>
 #include <fcntl.h>
-#include <nlohmann/json.hpp>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -11,71 +11,22 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include "subcli/runtime_process.hpp"
 #include "subcli/util.hpp"
 
 namespace subcli {
-
-namespace {
-
-std::string normalizeTarget(std::string target) {
-    for (char& ch : target) {
-        if (ch == '-') {
-            ch = '_';
-        }
-    }
-    return target;
-}
-
-std::filesystem::path runtimeStatePath(const std::filesystem::path& stateDir, const std::string& target) {
-    return stateDir / "runtime" / (normalizeTarget(target) + ".json");
-}
-
-bool isPidRunning(pid_t pid) {
-    if (pid <= 0) {
-        return false;
-    }
-    if (kill(pid, 0) == 0) {
-        return true;
-    }
-    return errno != ESRCH;
-}
-
-bool writeRuntimeState(const std::filesystem::path& statePath, const RuntimeStatus& status, std::string& error) {
-    nlohmann::json state = {
-        {"pid", status.pid},
-        {"target", status.target},
-        {"binary_path", status.binaryPath},
-        {"config_path", status.configPath},
-    };
-    return writeFile(statePath.string(), state.dump(2), error);
-}
-
-} // namespace
 
 RuntimeStatus inspectCoreRuntime(const std::filesystem::path& stateDir, const std::string& target, std::string& error) {
     error.clear();
     RuntimeStatus status;
     status.target = target;
 
-    const auto statePath = runtimeStatePath(stateDir, target);
-    if (!fileExists(statePath.string())) {
+    if (!cleanupStaleRuntimeState(stateDir, target, &status, error)) {
         return status;
     }
-
-    const auto parsed = nlohmann::json::parse(readFile(statePath.string()), nullptr, false);
-    if (parsed.is_discarded() || !parsed.is_object()) {
-        error = "invalid runtime state file: " + statePath.string();
-        return status;
-    }
-
-    status.hasState = true;
-    status.pid = parsed.value("pid", 0);
-    status.binaryPath = parsed.value("binary_path", "");
-    status.configPath = parsed.value("config_path", "");
     if (status.target.empty()) {
-        status.target = parsed.value("target", target);
+        status.target = target;
     }
-    status.running = isPidRunning(static_cast<pid_t>(status.pid));
     return status;
 }
 
@@ -92,8 +43,7 @@ bool startCoreRuntime(
         error = "runtime target is empty";
         return false;
     }
-    if (binaryPath.empty()) {
-        error = "runtime binary path is empty";
+    if (!validateRuntimeLaunchBinary(binaryPath, error)) {
         return false;
     }
 
@@ -106,7 +56,7 @@ bool startCoreRuntime(
         return false;
     }
 
-    const auto statePath = runtimeStatePath(stateDir, target);
+    const auto statePath = runtimeStatePathForTarget(stateDir, target);
     std::error_code ec;
     std::filesystem::create_directories(statePath.parent_path(), ec);
     if (ec) {
@@ -148,7 +98,7 @@ bool startCoreRuntime(
     state.target = target;
     state.binaryPath = binaryPath;
     state.configPath = configPath;
-    if (!writeRuntimeState(statePath, state, error)) {
+    if (!saveRuntimeState(statePath, state, error)) {
         kill(pid, SIGTERM);
         return false;
     }
@@ -165,11 +115,9 @@ bool stopCoreRuntime(const std::filesystem::path& stateDir, const std::string& t
         return true;
     }
 
-    const auto statePath = runtimeStatePath(stateDir, target);
+    const auto statePath = runtimeStatePathForTarget(stateDir, target);
     if (!status.running || status.pid <= 0) {
-        std::error_code ec;
-        std::filesystem::remove(statePath, ec);
-        return true;
+        return removeRuntimeStateFile(statePath, error);
     }
 
     const pid_t pid = static_cast<pid_t>(status.pid);
@@ -180,13 +128,13 @@ bool stopCoreRuntime(const std::filesystem::path& stateDir, const std::string& t
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(1, timeoutSec));
     while (std::chrono::steady_clock::now() < deadline) {
-        if (!isPidRunning(pid)) {
+        if (!isRuntimePidRunning(pid)) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
-    if (isPidRunning(pid)) {
+    if (isRuntimePidRunning(pid)) {
         if (kill(pid, SIGKILL) != 0 && errno != ESRCH) {
             error = "failed to send SIGKILL";
             return false;
@@ -196,9 +144,7 @@ bool stopCoreRuntime(const std::filesystem::path& stateDir, const std::string& t
     int waitStatus = 0;
     (void)waitpid(pid, &waitStatus, WNOHANG);
 
-    std::error_code ec;
-    std::filesystem::remove(statePath, ec);
-    return true;
+    return removeRuntimeStateFile(statePath, error);
 }
 
 } // namespace subcli

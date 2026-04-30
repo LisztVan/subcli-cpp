@@ -50,7 +50,7 @@ The primary workflow ends at exported config files. If you have a local core ins
 - State: `${XDG_STATE_HOME:-~/.local/state}/subcli/`
 - Outputs: `${XDG_DATA_HOME:-~/.local/share}/subcli/outputs/`
 
-Persisted relative paths in `config.yaml` are resolved relative to the config directory. CLI path arguments such as `--output-dir` and `--file` are resolved relative to the current shell directory.
+Persisted relative paths in `config.yaml` are resolved relative to the config directory. CLI path arguments such as `--output-dir`, `--file`, and path-valued `--profile` are resolved relative to the current shell directory.
 
 ## Commands
 
@@ -152,7 +152,7 @@ Migration notes:
 - `--dry-run` prints planned file moves/copies without writing changes.
 - `--overwrite` allows replacing existing destination files during migration.
 
-Precedence for workspace selection is `--workspace` > `SUBCLI_WORKSPACE` > default XDG paths.
+Precedence for workspace selection is `--workspace` > `SUBCLI_WORKSPACE` > persisted workspace selection > default XDG paths.
 
 Subscriptions support normal CRUD through `sub add`, `sub list`, `sub edit`, and `sub remove`. Subscription ids and names must be unique; `sub add` will not overwrite an existing subscription. Use `sub edit <id|name>` for changes.
 
@@ -180,6 +180,8 @@ subcli sub edit airport-a --clear-headers
 ## Config Management
 
 `config list`, `config get`, `config set`, and `config remove` manage stored config values.
+
+For a dedicated `config.yaml` reference (file responsibilities, path resolution, workspace precedence, common key prefixes, and minimal YAML example), see [`docs/config-file.md`](docs/config-file.md).
 
 Common keys:
 

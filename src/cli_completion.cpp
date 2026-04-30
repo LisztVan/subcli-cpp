@@ -29,7 +29,13 @@ std::string generateBashCompletion() {
                 COMPREPLY=( $(compgen -W "list get set remove" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "tun profile output_dir template_dir asset_dir parallelism timeout retry log_level core_paths.mihomo core_paths.sing_box core_paths.xray node_management.dedupe node_management.rename_template node_management.include_regex node_management.exclude_regex node_management.sort_by fetch_max_bytes --json" -- "$cur") )
+            if [[ "$subcmd" == "list" ]]; then
+                COMPREPLY=( $(compgen -W "tun profile profile_path output_dir template_dir asset_dir parallelism timeout retry log_level core_paths.mihomo core_paths.sing_box core_paths.xray node_management.dedupe node_management.rename_template node_management.include_regex node_management.exclude_regex node_management.sort_by fetch_max_bytes --json" -- "$cur") )
+            elif [[ "$subcmd" == "get" || "$subcmd" == "set" || "$subcmd" == "remove" ]]; then
+                COMPREPLY=( $(compgen -W "tun profile profile_path output_dir template_dir asset_dir parallelism timeout retry log_level core_paths.mihomo core_paths.sing_box core_paths.xray node_management.dedupe node_management.rename_template node_management.include_regex node_management.exclude_regex node_management.sort_by fetch_max_bytes" -- "$cur") )
+            else
+                COMPREPLY=()
+            fi
             ;;
         template)
             if [[ $COMP_CWORD -eq 2 ]]; then
@@ -43,17 +49,25 @@ std::string generateBashCompletion() {
             ;;
         profile)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "list get validate" -- "$cur") )
+                COMPREPLY=( $(compgen -W "list get validate explain" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "bypass-cn global direct" -- "$cur") )
+            if [[ "$cmd $subcmd" == "profile explain" ]]; then
+                if [[ "$prev" == "--target" ]]; then
+                    COMPREPLY=( $(compgen -W "all mihomo sing-box xray" -- "$cur") )
+                else
+                    COMPREPLY=( $(compgen -W "--target --json" -- "$cur") )
+                fi
+                return 0
+            fi
+            COMPREPLY=()
             ;;
         export)
             if [[ $COMP_CWORD -eq 2 ]]; then
                 COMPREPLY=( $(compgen -W "all mihomo sing-box xray" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "--tun --check --check-timeout --output-dir --profile --sub --tag --strict-network --download-assets" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--tun --check --check-timeout --output-dir --profile --sub --tag --strict-network --download-assets --strict-capabilities --explain-policy --json" -- "$cur") )
             ;;
         daemon)
             if [[ $COMP_CWORD -eq 2 ]]; then

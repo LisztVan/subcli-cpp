@@ -5,7 +5,6 @@
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <algorithm>
 #include <thread>
 
@@ -15,94 +14,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "subcli/daemon_process.hpp"
 #include "subcli/util.hpp"
 
 namespace subcli {
 
 namespace {
-
-std::filesystem::path daemonStatePath(const std::filesystem::path& stateDir) {
-    return stateDir / "daemon" / "daemon.json";
-}
-
-std::filesystem::path defaultDaemonPidPath(const std::filesystem::path& stateDir) {
-    return stateDir / "daemon" / "daemon.pid";
-}
-
-std::filesystem::path daemonLogPath(const std::filesystem::path& stateDir) {
-    return stateDir / "daemon" / "daemon.log";
-}
-
-std::filesystem::path configuredDaemonPidPath(const std::filesystem::path& stateDir, const DaemonOptions& options) {
-    return options.pidFile.empty() ? defaultDaemonPidPath(stateDir) : std::filesystem::path(options.pidFile);
-}
-
-std::filesystem::path configuredDaemonLogPath(const std::filesystem::path& stateDir, const DaemonOptions& options) {
-    return options.logFile.empty() ? daemonLogPath(stateDir) : std::filesystem::path(options.logFile);
-}
-
-bool isPidRunning(pid_t pid) {
-    if (pid <= 0) {
-        return false;
-    }
-    if (kill(pid, 0) == 0) {
-        return true;
-    }
-    return errno != ESRCH;
-}
-
-bool ensureDaemonDir(const std::filesystem::path& stateDir, std::string& error) {
-    std::error_code ec;
-    std::filesystem::create_directories((stateDir / "daemon"), ec);
-    if (ec) {
-        error = "failed to create daemon state dir: " + ec.message();
-        return false;
-    }
-    return true;
-}
-
-bool writeDaemonState(const std::filesystem::path& stateDir, const DaemonProcessStatus& status, std::string& error) {
-    const nlohmann::json state = {
-        {"pid", status.pid},
-        {"binary_path", status.binaryPath},
-        {"interval_sec", status.options.intervalSec},
-        {"export_target", status.options.exportTarget},
-        {"update_assets", status.options.updateAssets},
-        {"strict_network", status.options.strictNetwork},
-        {"check", status.options.check},
-        {"restart_running", status.options.restartRunning},
-        {"pid_file", status.options.pidFile},
-        {"log_file", status.options.logFile},
-        {"last_cycle_at", status.lastCycleAt},
-        {"last_cycle_exit_code", status.lastCycleExitCode},
-        {"last_cycle_message", status.lastCycleMessage},
-    };
-    const auto path = daemonStatePath(stateDir);
-    std::ofstream out(path);
-    if (!out) {
-        error = "failed to write daemon state file: " + path.string();
-        return false;
-    }
-    out << state.dump(2);
-    return true;
-}
-
-bool writeDaemonPidFile(const std::filesystem::path& stateDir, const DaemonProcessStatus& status, std::string& error) {
-    const auto pidPath = configuredDaemonPidPath(stateDir, status.options);
-    std::error_code ec;
-    std::filesystem::create_directories(pidPath.parent_path(), ec);
-    if (ec) {
-        error = "failed to create daemon pid dir: " + ec.message();
-        return false;
-    }
-    std::ofstream out(pidPath);
-    if (!out) {
-        error = "failed to write daemon pid file: " + pidPath.string();
-        return false;
-    }
-    out << status.pid;
-    return true;
-}
 
 bool updateDaemonCycleSummary(const std::filesystem::path& stateDir, const DaemonOptions& options, int exitCode, const std::string& message) {
     std::string error;
@@ -120,17 +37,7 @@ bool updateDaemonCycleSummary(const std::filesystem::path& stateDir, const Daemo
     state.lastCycleAt = nowIso8601();
     state.lastCycleExitCode = exitCode;
     state.lastCycleMessage = message;
-    return writeDaemonState(stateDir, state, error);
-}
-
-void removeDaemonState(const std::filesystem::path& stateDir) {
-    std::error_code ec;
-    std::filesystem::remove(daemonStatePath(stateDir), ec);
-}
-
-void removeDaemonPidFile(const std::filesystem::path& stateDir, const DaemonOptions& options) {
-    std::error_code ec;
-    std::filesystem::remove(configuredDaemonPidPath(stateDir, options), ec);
+    return writeDaemonStateFile(stateDir, state, error);
 }
 
 } // namespace
@@ -239,42 +146,10 @@ DaemonProcessStatus inspectDaemonProcess(const std::filesystem::path& stateDir, 
     error.clear();
     DaemonProcessStatus status;
 
-    const auto path = daemonStatePath(stateDir);
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(path, ec) || ec) {
+    if (!readDaemonStateFile(stateDir, status, error)) {
         return status;
     }
-
-    std::ifstream in(path);
-    if (!in) {
-        error = "failed to read daemon state file: " + path.string();
-        return status;
-    }
-
-    nlohmann::json parsed;
-    in >> parsed;
-    if (!parsed.is_object()) {
-        error = "invalid daemon state file";
-        return status;
-    }
-
-    status.hasState = true;
-    status.pid = parsed.value("pid", 0);
-    status.binaryPath = parsed.value("binary_path", "");
-    status.intervalSec = parsed.value("interval_sec", 3600);
-    status.exportTarget = parsed.value("export_target", "all");
-    status.options.intervalSec = status.intervalSec;
-    status.options.exportTarget = status.exportTarget;
-    status.options.updateAssets = parsed.value("update_assets", false);
-    status.options.strictNetwork = parsed.value("strict_network", false);
-    status.options.check = parsed.value("check", false);
-    status.options.restartRunning = parsed.value("restart_running", true);
-    status.options.pidFile = parsed.value("pid_file", "");
-    status.options.logFile = parsed.value("log_file", "");
-    status.lastCycleAt = parsed.value("last_cycle_at", "");
-    status.lastCycleExitCode = parsed.value("last_cycle_exit_code", 0);
-    status.lastCycleMessage = parsed.value("last_cycle_message", "");
-    status.running = isPidRunning(static_cast<pid_t>(status.pid));
+    status.running = isPidRunning(status.pid);
     return status;
 }
 
@@ -303,7 +178,7 @@ bool startDaemonProcess(
         return false;
     }
     if (current.hasState && !current.running) {
-        removeDaemonState(stateDir);
+        cleanupDaemonStateAndPid(stateDir, current.options);
     }
 
     int pipeFd[2] = {-1, -1};
@@ -377,13 +252,13 @@ bool startDaemonProcess(
     state.intervalSec = options.intervalSec;
     state.exportTarget = options.exportTarget;
     state.options = options;
-    if (!writeDaemonState(stateDir, state, error)) {
+    if (!writeDaemonStateFile(stateDir, state, error)) {
         kill(pid, SIGTERM);
         return false;
     }
     if (!writeDaemonPidFile(stateDir, state, error)) {
         kill(pid, SIGTERM);
-        removeDaemonState(stateDir);
+        removeDaemonStateFile(stateDir);
         return false;
     }
     return true;
@@ -399,8 +274,7 @@ bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, st
         return true;
     }
     if (!state.running || state.pid <= 0) {
-        removeDaemonPidFile(stateDir, state.options);
-        removeDaemonState(stateDir);
+        cleanupDaemonStateAndPid(stateDir, state.options);
         return true;
     }
 
@@ -412,13 +286,13 @@ bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, st
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(1, timeoutSec));
     while (std::chrono::steady_clock::now() < deadline) {
-        if (!isPidRunning(pid)) {
+        if (!isPidRunning(static_cast<int>(pid))) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
-    if (isPidRunning(pid)) {
+    if (isPidRunning(static_cast<int>(pid))) {
         if (kill(pid, SIGKILL) != 0 && errno != ESRCH) {
             error = "failed to send SIGKILL to daemon";
             return false;
@@ -427,8 +301,7 @@ bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, st
 
     int waitStatus = 0;
     (void)waitpid(pid, &waitStatus, WNOHANG);
-    removeDaemonPidFile(stateDir, state.options);
-    removeDaemonState(stateDir);
+    cleanupDaemonStateAndPid(stateDir, state.options);
     return true;
 }
 

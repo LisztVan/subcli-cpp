@@ -2390,6 +2390,17 @@ void testParseModernUdpUriLinks() {
     require(wg.protocol.values.at("peer_allowed_ips") == "0.0.0.0/0", "wireguard URI should parse allowed IPs");
 }
 
+void testUriClientFingerprintPreservedForTlsNodes() {
+    const std::string content =
+        "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls&fp=chrome#FP%20Node\n";
+
+    auto result = subcli::parseSubscription(content, "fixture", "uri", makeConfig());
+    require(result.nodes.size() == 1, "vless tls uri with fp should parse");
+    const auto& node = result.nodes.front();
+    require(node.tlsConfig.fingerprint == "chrome", "tls fingerprint should preserve fp=chrome");
+    require(node.fingerprint == "chrome", "legacy fingerprint should preserve fp=chrome");
+}
+
 void testUnknownFormatHintFallsBackToAuto() {
     const std::string content = "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#Node\n";
     auto result = subcli::parseSubscription(content, "fixture", "mystery-format", makeConfig());
@@ -6536,6 +6547,7 @@ int main() {
     testParseXrayJson();
     testParseUriIgnoresInvalidVmessPort();
     testParseModernUdpUriLinks();
+    testUriClientFingerprintPreservedForTlsNodes();
     testUnknownFormatHintFallsBackToAuto();
     testHintParseFailedFallsBackToAuto();
     testParseMihomoHttpOpts();

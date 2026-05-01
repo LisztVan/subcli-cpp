@@ -400,7 +400,10 @@ ExportResult exportSingBoxImpl(
     ExportResult result;
     std::vector<ProxyNode> supported;
     auto prepared = preprocessNodes(nodes, config, result.warnings);
-    for (const auto& node : makeExportNodes(prepared)) {
+    for (auto node : makeExportNodes(prepared)) {
+        if (node.tlsConfig.fingerprint.empty() && !node.fingerprint.empty()) {
+            node.tlsConfig.fingerprint = node.fingerprint;
+        }
         std::string reason;
         if (supportsNode(ExportTarget::SingBox, node, reason)) {
             supported.push_back(node);

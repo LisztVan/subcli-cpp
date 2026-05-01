@@ -35,7 +35,10 @@ for summary in \
     fi
 done
 sub_help="$($bin sub --help)"
-if [[ "$sub_help" != *"import"* || "$sub_help" != *"export"* || "$sub_help" != *"check"* || "$sub_help" != *"prune"* ]]; then
+if [[ "$sub_help" != *"import    Import subscriptions from a subcli YAML/JSON or URI list file."* ||
+      "$sub_help" != *"export    Export subscription records to a portable YAML/JSON file."* ||
+      "$sub_help" != *"check     Check selected subscriptions for fetch and parse readiness."* ||
+      "$sub_help" != *"prune     Remove disabled or long-failing subscriptions."* ]]; then
     printf '%s\n' "$sub_help"
     exit 1
 fi

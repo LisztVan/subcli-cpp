@@ -1585,7 +1585,9 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
-    require(script.find("init doctor sub config template asset profile export daemon run stop status restart check completion workspace") != std::string::npos, "completion should include root commands");
+    for (const auto& command : subcli::allCommandNames()) {
+        require(script.find(command) != std::string::npos, std::string("completion should include root command ") + command);
+    }
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
     require(script.find("list get validate explain") != std::string::npos, "completion should include profile subcommand list");
     require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
@@ -1594,6 +1596,16 @@ void testBashCompletionContainsCommands() {
     require(script.find("--download-assets") != std::string::npos, "completion should include export download-assets option");
     require(script.find("--explain-policy") != std::string::npos, "completion should include explain-policy export option");
     require(script.find("--json") != std::string::npos, "completion should include json option");
+}
+
+void testCompletionScriptContainsRegistryKeysAndTargets() {
+    const auto script = subcli::generateBashCompletion();
+    for (const auto& key : subcli::allConfigKeyNames()) {
+        require(script.find(key) != std::string::npos, std::string("completion should include config key ") + key);
+    }
+    for (const auto& target : subcli::allExportTargetIds()) {
+        require(script.find(target) != std::string::npos, std::string("completion should include export target ") + target);
+    }
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -6106,6 +6118,7 @@ int main() {
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();
     testBashCompletionContainsCommands();
+    testCompletionScriptContainsRegistryKeysAndTargets();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
     testDaemonProcessLifecycleWithCustomFiles();

@@ -556,6 +556,12 @@ void printSubUsage() {
               << "  subcli sub update [id-or-name ...] [--tag TAG] [--strict-network]\n"
               << "  subcli sub validate [id-or-name]\n"
               << "\n"
+              << "Data Lifecycle:\n"
+              << "  import    Import subscriptions from a subcli YAML/JSON or URI list file.\n"
+              << "  export    Export subscription records to a portable YAML/JSON file.\n"
+              << "  check     Check selected subscriptions for fetch and parse readiness.\n"
+              << "  prune     Remove disabled or long-failing subscriptions.\n"
+              << "\n"
               << "Add/Edit Options:\n"
               << "  --id ID\n"
               << "  --name NAME\n"
@@ -963,6 +969,14 @@ void printSubCommandUsageLine(const std::string& cmd) {
         std::cout << "Usage:\n  subcli sub update [id-or-name ...] [--tag TAG] [--strict-network]\n";
     } else if (cmd == "validate") {
         std::cout << "Usage:\n  subcli sub validate [id-or-name]\n";
+    } else if (cmd == "import") {
+        std::cout << "Usage:\n  subcli sub import <path-or-uri> [--strict-network]\n";
+    } else if (cmd == "export") {
+        std::cout << "Usage:\n  subcli sub export <path> [--json]\n";
+    } else if (cmd == "check") {
+        std::cout << "Usage:\n  subcli sub check [id-or-name ...] [--tag TAG] [--strict-network]\n";
+    } else if (cmd == "prune") {
+        std::cout << "Usage:\n  subcli sub prune [--disabled] [--failing N]\n";
     }
 }
 

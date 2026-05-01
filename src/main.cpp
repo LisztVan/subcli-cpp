@@ -1833,9 +1833,11 @@ int doDoctorCommand(const std::vector<std::string>& args) {
     DiagnosticReport report = buildDiagnosticReport(cfg, subs, gPaths.root.string());
 
     nlohmann::json checks = nlohmann::json::array();
+    int failedCount = 0;
     auto addCheck = [&](const std::string& name, bool ok, const std::filesystem::path& path, const std::string& message = "") {
         checks.push_back({{"name", name}, {"ok", ok}, {"path", path.string()}, {"message", message}});
         if (!ok) {
+            ++failedCount;
             report.findings.push_back({name, DiagnosticSeverity::Error, name, message.empty() ? "check failed" : message, path.string()});
             report.hasError = true;
         }
@@ -1893,7 +1895,8 @@ int doDoctorCommand(const std::vector<std::string>& args) {
 
     if (jsonOutput) {
         nlohmann::json payload = diagnosticReportToJson(report);
-        payload["failed"] = report.hasError;
+        payload["failed"] = failedCount;
+        payload["has_failed"] = report.hasError;
         payload["checks"] = checks;
         payload["environment"] = {
             {"resolution_source", environmentSourceToString(gEnvResult.source)},

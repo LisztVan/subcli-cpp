@@ -196,8 +196,8 @@ if [[ "$doctor_fail_code" -eq 0 ]]; then
     printf 'doctor should fail on missing template, got exit 0: %s\n' "$doctor_fail_json"
     exit 1
 fi
-if [[ "$doctor_fail_json" != *'"failed":true'* || "$doctor_fail_json" != *'"ok":false'* ]]; then
-    printf 'doctor failure json should include failed=true and ok=false: %s\n' "$doctor_fail_json"
+if [[ "$doctor_fail_json" != *'"failed":1'* || "$doctor_fail_json" != *'"ok":false'* ]]; then
+    printf 'doctor failure json should include failed count and ok=false: %s\n' "$doctor_fail_json"
     exit 1
 fi
 if [[ "$doctor_fail_json" != *'"name":"templates.mihomo.normal"'* ]]; then

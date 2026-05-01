@@ -98,6 +98,7 @@ set(SUBCLI_SOURCES
     src/profile.cpp
     src/profile_explain.cpp
     src/protocol_registry.cpp
+    src/registry.cpp
     src/node.cpp
     src/capabilities.cpp
     src/capability_matrix.cpp

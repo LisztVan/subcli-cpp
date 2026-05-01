@@ -6034,6 +6034,30 @@ void testRegistryContainsCurrentCommandSurface() {
     }
 }
 
+void testRegistryFindConfigKeySupportsPrefixDescriptors() {
+    const subcli::ConfigKeyDescriptor* descriptor = subcli::findConfigKeyDescriptor("grouping.region_rules.HK");
+    require(descriptor != nullptr, "prefix config key should resolve");
+    require(descriptor->valueType == subcli::ConfigValueType::Prefix, "prefix config key should report Prefix type");
+    require(descriptor->key == "grouping.region_rules.", "prefix config key should match descriptor prefix");
+}
+
+void testRegistryExportDescriptorIncludesExpectedOptions() {
+    const subcli::CommandDescriptor* descriptor = subcli::findCommandDescriptor("export");
+    require(descriptor != nullptr, "export command descriptor should exist");
+    require(std::find(descriptor->options.begin(), descriptor->options.end(), "--strict-capabilities") != descriptor->options.end(), "export descriptor should include --strict-capabilities");
+    require(std::find(descriptor->options.begin(), descriptor->options.end(), "--explain-policy") != descriptor->options.end(), "export descriptor should include --explain-policy");
+    require(std::find(descriptor->options.begin(), descriptor->options.end(), "--json") != descriptor->options.end(), "export descriptor should include --json");
+}
+
+void testRegistrySubDescriptorMentionsDataLifecycleCommands() {
+    const subcli::CommandDescriptor* descriptor = subcli::findCommandDescriptor("sub");
+    require(descriptor != nullptr, "sub command descriptor should exist");
+    require(descriptor->summary.find("import") != std::string::npos, "sub descriptor summary should mention import");
+    require(descriptor->summary.find("export") != std::string::npos, "sub descriptor summary should mention export");
+    require(descriptor->summary.find("check") != std::string::npos, "sub descriptor summary should mention check");
+    require(descriptor->summary.find("prune") != std::string::npos, "sub descriptor summary should mention prune");
+}
+
 } // namespace
 
 int main() {
@@ -6180,6 +6204,9 @@ int main() {
     testRegistryContainsCurrentConfigKeys();
     testRegistryContainsCurrentExportTargets();
     testRegistryContainsCurrentCommandSurface();
+    testRegistryFindConfigKeySupportsPrefixDescriptors();
+    testRegistryExportDescriptorIncludesExpectedOptions();
+    testRegistrySubDescriptorMentionsDataLifecycleCommands();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();

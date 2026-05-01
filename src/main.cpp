@@ -37,6 +37,7 @@
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
 #include "subcli/store.hpp"
+#include "subcli/subscription_service.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
 #include "subcli/workspace.hpp"
@@ -971,9 +972,9 @@ void printSubCommandUsageLine(const std::string& cmd) {
     } else if (cmd == "validate") {
         std::cout << "Usage:\n  subcli sub validate [id-or-name]\n";
     } else if (cmd == "import") {
-        std::cout << "Usage:\n  subcli sub import <path-or-uri> [--strict-network]\n";
+        std::cout << "Usage:\n  subcli sub import --file PATH [--format auto|subcli-yaml|uri-list] [--merge|--replace]\n";
     } else if (cmd == "export") {
-        std::cout << "Usage:\n  subcli sub export <path> [--json]\n";
+        std::cout << "Usage:\n  subcli sub export --file PATH [--format subcli-yaml] [--tag TAG] [--group GROUP] [--enabled true|false]\n";
     } else if (cmd == "check") {
         std::cout << "Usage:\n  subcli sub check [id-or-name ...] [--tag TAG] [--strict-network]\n";
     } else if (cmd == "prune") {
@@ -1288,6 +1289,20 @@ bool parseBoolValue(const std::string& raw, const std::string& key, bool& out) {
     }
     std::cerr << "invalid boolean for " << key << ": " << raw << "\n";
     return false;
+}
+
+std::string detectSubImportFormat(const std::string& explicitFormat, const std::string& filePath) {
+    if (explicitFormat == "subcli-yaml" || explicitFormat == "uri-list") {
+        return explicitFormat;
+    }
+    const std::string lower = toLower(filePath);
+    if (lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".yaml") == 0) {
+        return "subcli-yaml";
+    }
+    if (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".txt") == 0) {
+        return "uri-list";
+    }
+    return "subcli-yaml";
 }
 
 bool parseCliArgs(CLI::App& app, const std::vector<std::string>& args) {
@@ -1999,9 +2014,9 @@ int doCompletionCommand(const std::vector<std::string>& args) {
 
 int doSubCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
-        if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate"})) {
+        if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export"})) {
             printSubCommandUsageLine(args[2]);
-        } else if (args.size() == 3 && isHelpToken(args[2]) && isKnownSubcommand(args[1], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate"})) {
+        } else if (args.size() == 3 && isHelpToken(args[2]) && isKnownSubcommand(args[1], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export"})) {
             printSubCommandUsageLine(args[1]);
         } else {
             printSubUsage();
@@ -2057,6 +2072,15 @@ int doSubCommand(const std::vector<std::string>& args) {
 
     std::vector<std::string> updateTags;
     bool updateStrictNetwork = false;
+    std::string importFile;
+    std::string importFormat = "auto";
+    bool importMerge = false;
+    bool importReplace = false;
+    std::string exportFile;
+    std::string exportFormat = "subcli-yaml";
+    std::string exportTag;
+    std::string exportGroup;
+    std::string exportEnabled;
 
     auto* listCmd = parser.add_subcommand("list");
     listCmd->add_flag("--json", listJson);
@@ -2111,6 +2135,19 @@ int doSubCommand(const std::vector<std::string>& args) {
     updateCmd->add_option("--tag", updateTags);
     updateCmd->add_flag("--strict-network", updateStrictNetwork);
 
+    auto* importCmd = parser.add_subcommand("import");
+    importCmd->add_option("--file", importFile);
+    importCmd->add_option("--format", importFormat);
+    importCmd->add_flag("--merge", importMerge);
+    importCmd->add_flag("--replace", importReplace);
+
+    auto* exportCmd = parser.add_subcommand("export");
+    exportCmd->add_option("--file", exportFile);
+    exportCmd->add_option("--format", exportFormat);
+    exportCmd->add_option("--tag", exportTag);
+    exportCmd->add_option("--group", exportGroup);
+    exportCmd->add_option("--enabled", exportEnabled);
+
     if (!parseCliArgs(parser, args)) {
         printSubUsage();
         return ExitUsage;
@@ -2125,6 +2162,8 @@ int doSubCommand(const std::vector<std::string>& args) {
     else if (*editCmd) cmd = "edit";
     else if (*validateCmd) cmd = "validate";
     else if (*updateCmd) cmd = "update";
+    else if (*importCmd) cmd = "import";
+    else if (*exportCmd) cmd = "export";
     if (cmd == "list") {
         const bool jsonOutput = listJson;
         if (jsonOutput) {
@@ -2553,6 +2592,95 @@ int doSubCommand(const std::vector<std::string>& args) {
         std::cout << "update summary: success=" << okCount << " failed=" << failCount << " parsed_nodes=" << parsedNodeCount
                   << " skipped_nodes=" << skippedNodeCount << " skipped_subscriptions=" << skippedByInterval << "\n";
         return failCount > 0 ? 1 : 0;
+    }
+
+    if (cmd == "import") {
+        if (importFile.empty()) {
+            std::cerr << "sub import requires --file PATH\n";
+            return ExitUsage;
+        }
+        if (importMerge && importReplace) {
+            std::cerr << "sub import accepts only one mode flag: --merge or --replace\n";
+            return ExitUsage;
+        }
+        const auto mode = importReplace ? SubscriptionImportMode::Replace : SubscriptionImportMode::Merge;
+        const auto format = detectSubImportFormat(importFormat, importFile);
+        if (importFormat != "auto" && importFormat != "subcli-yaml" && importFormat != "uri-list") {
+            std::cerr << "invalid --format for sub import: " << importFormat << "\n";
+            return ExitUsage;
+        }
+
+        const std::string importPath = resolveFromCliCwd(importFile);
+        std::ifstream in(importPath, std::ios::binary);
+        if (!in) {
+            std::cerr << "sub import failed: unable to open file: " << importPath << "\n";
+            return ExitError;
+        }
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+        SubscriptionImportResult result;
+        if (format == "uri-list") {
+            result = importSubscriptionsFromUriList(content, subs, mode);
+        } else {
+            result = importSubscriptionsFromYaml(content, subs, mode);
+        }
+        if (!result.messages.empty()) {
+            for (const auto& message : result.messages) {
+                std::cerr << message << "\n";
+            }
+        }
+        if (result.rejected > 0) {
+            return ExitError;
+        }
+
+        saveSubscriptions(gPaths.subPath.string(), result.subscriptions);
+        std::cout << "created=" << result.created << " updated=" << result.updated << " rejected=" << result.rejected << "\n";
+        return ExitOk;
+    }
+
+    if (cmd == "export") {
+        if (exportFile.empty()) {
+            std::cerr << "sub export requires --file PATH\n";
+            return ExitUsage;
+        }
+        if (exportFormat != "subcli-yaml") {
+            std::cerr << "invalid --format for sub export: " << exportFormat << "\n";
+            return ExitUsage;
+        }
+
+        std::vector<Subscription> selected;
+        selected.reserve(subs.size());
+        bool enabledFilterOn = false;
+        bool enabledFilterValue = false;
+        if (!exportEnabled.empty()) {
+            if (!parseBoolValue(exportEnabled, "--enabled", enabledFilterValue)) {
+                return ExitUsage;
+            }
+            enabledFilterOn = true;
+        }
+        for (const auto& sub : subs) {
+            if (!exportTag.empty() && std::find(sub.tags.begin(), sub.tags.end(), exportTag) == sub.tags.end()) {
+                continue;
+            }
+            if (!exportGroup.empty() && sub.group != exportGroup) {
+                continue;
+            }
+            if (enabledFilterOn && sub.enabled != enabledFilterValue) {
+                continue;
+            }
+            selected.push_back(sub);
+        }
+
+        const std::string yaml = exportSubscriptionsToYaml(selected);
+        std::string error;
+        const std::string outputPath = resolveFromCliCwd(exportFile);
+        if (!writeFile(outputPath, yaml, error)) {
+            std::cerr << "sub export failed: " << error << "\n";
+            return ExitError;
+        }
+
+        std::cout << "exported=" << selected.size() << "\n";
+        return ExitOk;
     }
 
     std::cerr << "unknown sub command: " << cmd << "\n";

@@ -253,6 +253,20 @@ fi
 
 printf '%s\n' 'trojan://password@1.2.3.4:443#HK-Node' > "$tmp/valid-sub.txt"
 "$bin" sub add --name explain --url "file://$tmp/valid-sub.txt" --force >/dev/null
+backup_file="$tmp/sub-backup.yaml"
+"$bin" sub export --file "$backup_file" >/dev/null
+if [[ ! -f "$backup_file" || ! -s "$backup_file" ]]; then
+    printf 'sub export should create non-empty file: %s\n' "$backup_file"
+    exit 1
+fi
+"$bin" sub remove explain >/dev/null
+"$bin" sub import --file "$backup_file" --merge >/dev/null
+sub_list_json="$($bin sub list --json)"
+if [[ "$sub_list_json" != *'"name":"explain"'* ]]; then
+    printf '%s\n' "$sub_list_json"
+    exit 1
+fi
+
 explain_export="$({ "$bin" export mihomo --profile bypass-cn --sub explain --explain-policy; } 2>&1 || true)"
 if [[ "$explain_export" != *"policy explain: profile=bypass-cn"* || "$explain_export" != *"policy explain: target=mihomo"* ]]; then
     printf '%s\n' "$explain_export"

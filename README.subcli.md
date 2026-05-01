@@ -78,6 +78,9 @@ subcli sub remove airport-a
 subcli sub update
 subcli sub update --strict-network
 subcli sub validate airport-a
+subcli sub export --file ./backup/subs.yaml
+subcli sub import --file ./backup/subs.yaml --merge
+subcli sub export --file ./backup/enabled-hk.yaml --tag hk --enabled true
 
 subcli config list
 subcli config list --json
@@ -175,6 +178,16 @@ Header examples:
 subcli sub edit airport-a --header 'Authorization: Bearer xxx'
 subcli sub edit airport-a --remove-header Authorization
 subcli sub edit airport-a --clear-headers
+```
+
+Lifecycle backup/import examples:
+
+```bash
+subcli sub export --file ./backup/subscriptions.yaml
+subcli sub remove airport-a
+subcli sub import --file ./backup/subscriptions.yaml --merge
+subcli sub export --file ./backup/hk-enabled.yaml --tag hk --enabled true
+subcli sub export --file ./backup/default-group.yaml --group default
 ```
 
 ## Config Management

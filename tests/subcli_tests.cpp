@@ -28,6 +28,7 @@
 #include "subcli/protocol_registry.hpp"
 #include "subcli/registry.hpp"
 #include "subcli/store.hpp"
+#include "subcli/subscription_service.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
 #include "subcli/workspace.hpp"
@@ -3753,6 +3754,54 @@ void testStorePersistsStrategyGroups() {
     fs::remove(path);
 }
 
+void testSubscriptionServiceYamlRoundTrip() {
+    subcli::Subscription first;
+    first.id = "alpha";
+    first.name = "alpha";
+    first.url = "https://example.com/alpha";
+    first.tags = {"hk", "jp"};
+
+    subcli::Subscription second;
+    second.id = "beta";
+    second.name = "beta";
+    second.url = "file:///tmp/beta.txt";
+    second.enabled = false;
+    second.group = "lab";
+
+    const std::string yaml = subcli::exportSubscriptionsToYaml({first, second});
+    auto imported = subcli::importSubscriptionsFromYaml(yaml, {}, subcli::SubscriptionImportMode::Replace);
+
+    require(imported.rejected == 0, "round-trip import should not reject subscriptions");
+    require(imported.subscriptions.size() == 2, "round-trip should keep two subscriptions");
+    require(imported.subscriptions[0].name == "alpha", "round-trip should keep first name");
+    require(imported.subscriptions[0].url == "https://example.com/alpha", "round-trip should keep first url");
+    require(imported.subscriptions[1].name == "beta", "round-trip should keep second name");
+    require(!imported.subscriptions[1].enabled, "round-trip should keep enabled flag");
+}
+
+void testSubscriptionServiceImportRejectsMissingNameAndUrl() {
+    const std::string yaml = R"yaml(version: 1
+subscriptions:
+  - id: a
+    name: valid
+    url: https://example.com/sub
+  - id: b
+    name: ""
+    url: https://example.com/missing-name
+  - id: c
+    name: missing-url
+)yaml";
+
+    auto result = subcli::importSubscriptionsFromYaml(yaml, {}, subcli::SubscriptionImportMode::Merge);
+    require(result.rejected == 3, "missing name/url should reject full YAML import");
+    require(result.subscriptions.empty(), "rejected import should not return merged subscriptions");
+    require(!result.messages.empty(), "rejected import should include a message");
+    require(
+        result.messages[0].find("missing required subscription field") != std::string::npos,
+        "rejection message should mention missing required subscription field"
+    );
+}
+
 void testCustomStrategyGroupsRenderForMihomoAndSingBox() {
     auto config = makeConfig();
     config.strategyGroups.clear();
@@ -6295,6 +6344,8 @@ int main() {
     testWorkspaceMigrateCopiesDurableDataOnly();
     testStorePersistsOverrideFlags();
     testNormalizeTagsDropsEmptyDedupesAndKeepsOrder();
+    testSubscriptionServiceYamlRoundTrip();
+    testSubscriptionServiceImportRejectsMissingNameAndUrl();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();

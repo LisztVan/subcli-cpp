@@ -36,6 +36,7 @@
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
 #include "subcli/store.hpp"
+#include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
 #include "subcli/workspace.hpp"
 #include "exporter_internal.hpp"
@@ -937,6 +938,11 @@ bool isKnownSubcommand(const std::string& cmd, const std::vector<std::string>& v
     return std::find(values.begin(), values.end(), cmd) != values.end();
 }
 
+int doSubCommand(const std::vector<std::string>& args);
+int doExportCommand(const std::vector<std::string>& args);
+int doRestartCommand(const std::vector<std::string>& args);
+bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile);
+
 void printExportTargetUsage(const std::string& target) {
     std::cout << "Usage:\n  subcli export " << target
               << " [--tun] [--check] [--check-timeout SEC] [--output-dir DIR] [--profile PATH_OR_NAME] [--sub ID_OR_NAME] [--tag TAG] [--strict-network] [--strict-capabilities] [--download-assets] [--explain-policy] [--json]\n";
@@ -1032,6 +1038,136 @@ void printDaemonSubcommandUsage(const std::string& cmd) {
                   << " [--interval SEC] [--target all|mihomo|sing-box|xray] [--update-assets] [--strict-network] [--check] [--no-restart]\n";
     } else if (cmd == "stop" || cmd == "status") {
         std::cout << "Usage:\n  subcli daemon " << cmd << " [--pid-file PATH]\n";
+    }
+}
+
+std::string daemonModeFromCommands(CLI::App* onceCmd, CLI::App* runCmd, CLI::App* startCmd, CLI::App* stopCmd, CLI::App* statusCmd) {
+    if (*onceCmd) return "once";
+    if (*runCmd) return "run";
+    if (*startCmd) return "start";
+    if (*stopCmd) return "stop";
+    if (*statusCmd) return "status";
+    return "";
+}
+
+bool validateDaemonTarget(const std::string& target) {
+    if (target == "all") {
+        return true;
+    }
+    ExportTarget parsedTarget;
+    std::string defaultFile;
+    if (!parseExportTarget(target, parsedTarget, defaultFile)) {
+        std::cerr << "invalid daemon target: " << target << "\n";
+        return false;
+    }
+    return true;
+}
+
+DaemonOptions buildDaemonOptionsFromCli(int intervalSec, const std::string& target, bool updateAssets, bool strictNetwork, bool check, bool noRestart, const std::string& pidFile, const std::string& logFile) {
+    DaemonOptions options;
+    options.intervalSec = intervalSec;
+    options.exportTarget = target;
+    options.updateAssets = updateAssets;
+    options.strictNetwork = strictNetwork;
+    options.check = check;
+    options.restartRunning = !noRestart;
+    options.pidFile = pidFile;
+    options.logFile = logFile;
+    return options;
+}
+
+DaemonCallbacks makeDaemonCallbacks() {
+    DaemonCallbacks callbacks;
+    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return doSubCommand(subArgs); };
+    callbacks.runExportCommand = [&](const std::vector<std::string>& exportArgs) { return doExportCommand(exportArgs); };
+    callbacks.isCoreRunning = [&](const std::string& coreTarget, std::string& error) {
+        const auto status = inspectCoreRuntime(gPaths.stateDir, coreTarget, error);
+        return status.running;
+    };
+    callbacks.runRestartCommand = [&](const std::vector<std::string>& restartArgs) { return doRestartCommand(restartArgs); };
+    return callbacks;
+}
+
+void printDaemonLastCycle(const DaemonProcessStatus& status) {
+    if (status.lastCycleMessage.empty()) {
+        return;
+    }
+    if (status.lastCycleExitCode == 0) {
+        std::cout << "\tlast=ok";
+    } else {
+        std::cout << "\tlast=failed(" << status.lastCycleMessage << ")";
+    }
+}
+
+int doDaemonStatusMode() {
+    std::string error;
+    const auto status = inspectDaemonProcess(gPaths.stateDir, error);
+    if (!error.empty()) {
+        std::cerr << "daemon status failed: " << error << "\n";
+        return ExitError;
+    }
+    if (!status.hasState) {
+        std::cout << "daemon\tstopped\n";
+        return ExitOk;
+    }
+    if (status.running) {
+        std::cout << "daemon\trunning\tpid=" << status.pid << "\tinterval=" << status.options.intervalSec << "\ttarget=" << status.options.exportTarget;
+        printDaemonLastCycle(status);
+        std::cout << "\n";
+        return ExitOk;
+    }
+    std::cout << "daemon\tstale\tpid=" << status.pid;
+    printDaemonLastCycle(status);
+    std::cout << "\n";
+    return ExitOk;
+}
+
+int doDaemonStopMode() {
+    std::string error;
+    if (!stopDaemonProcess(gPaths.stateDir, 5, error)) {
+        std::cerr << "daemon stop failed: " << error << "\n";
+        return ExitError;
+    }
+    std::cout << "daemon stopped\n";
+    return ExitOk;
+}
+
+int doDaemonStartMode(const DaemonOptions& options) {
+    if (gExecutablePath.empty()) {
+        std::cerr << "cannot resolve subcli executable path\n";
+        return ExitError;
+    }
+    std::string error;
+    if (!startDaemonProcess(gPaths.stateDir, gExecutablePath, buildDaemonRunArgs(options), options, error)) {
+        std::cerr << "daemon start failed: " << error << "\n";
+        return ExitError;
+    }
+    const auto status = inspectDaemonProcess(gPaths.stateDir, error);
+    if (!error.empty()) {
+        std::cerr << "daemon status read failed: " << error << "\n";
+        return ExitError;
+    }
+    std::cout << "daemon started pid=" << status.pid << "\n";
+    return ExitOk;
+}
+
+int doDaemonOnceMode(const DaemonOptions& options, const DaemonCallbacks& callbacks) {
+    const int rc = runDaemonCycleWithState(gPaths.stateDir, options, callbacks);
+    if (rc == 0) {
+        std::cout << "daemon cycle completed\n";
+        return ExitOk;
+    }
+    std::cerr << "daemon cycle failed\n";
+    return ExitError;
+}
+
+int runDaemonLoopMode(const DaemonOptions& options, const DaemonCallbacks& callbacks) {
+    while (true) {
+        const int rc = runDaemonCycleWithState(gPaths.stateDir, options, callbacks);
+        if (rc != 0) {
+            std::cerr << "daemon cycle failed with code " << rc << "\n";
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(options.intervalSec));
     }
 }
 
@@ -2019,6 +2155,7 @@ int doSubCommand(const std::vector<std::string>& args) {
             auto more = splitComma(tagsCsv);
             tags.insert(tags.end(), more.begin(), more.end());
         }
+        tags = normalizeTags(tags);
         if (name.empty() || url.empty()) {
             std::cerr << "sub add requires --name and --url\n";
             return 1;
@@ -2201,7 +2338,7 @@ int doSubCommand(const std::vector<std::string>& args) {
             s->updateInterval = parsed;
         }
         if (!tagsCsv.empty()) {
-            s->tags = splitComma(tagsCsv);
+            s->tags = normalizeTags(splitComma(tagsCsv));
         }
         if (editClearHeaders) {
             s->headers.clear();
@@ -4104,137 +4241,44 @@ int doDaemonCommand(const std::vector<std::string>& args) {
     attachRunLike(onceCmd);
     attachRunLike(runCmd);
     attachRunLike(startCmd);
+    stopCmd->add_option("--pid-file", pidFile);
+    statusCmd->add_option("--pid-file", pidFile);
 
     if (!parseCliArgs(parser, args)) {
         printDaemonUsage();
         return ExitUsage;
     }
 
-    std::string mode;
-    if (*onceCmd) mode = "once";
-    else if (*runCmd) mode = "run";
-    else if (*startCmd) mode = "start";
-    else if (*stopCmd) mode = "stop";
-    else if (*statusCmd) mode = "status";
+    const std::string mode = daemonModeFromCommands(onceCmd, runCmd, startCmd, stopCmd, statusCmd);
 
     if (mode != "once" && mode != "run" && mode != "start" && mode != "stop" && mode != "status") {
         std::cerr << "unknown daemon mode: " << mode << "\n";
         return ExitUsage;
     }
 
-    if (mode == "status") {
-        std::string error;
-        const auto status = inspectDaemonProcess(gPaths.stateDir, error);
-        if (!error.empty()) {
-            std::cerr << "daemon status failed: " << error << "\n";
-            return ExitError;
-        }
-        if (!status.hasState) {
-            std::cout << "daemon\tstopped\n";
-            return ExitOk;
-        }
-        if (status.running) {
-            std::cout << "daemon\trunning\tpid=" << status.pid << "\tinterval=" << status.options.intervalSec
-                      << "\ttarget=" << status.options.exportTarget;
-            if (!status.lastCycleMessage.empty()) {
-                if (status.lastCycleExitCode == 0) {
-                    std::cout << "\tlast=ok";
-                } else {
-                    std::cout << "\tlast=failed(" << status.lastCycleMessage << ")";
-                }
-            }
-            std::cout << "\n";
-        } else {
-            std::cout << "daemon\tstale\tpid=" << status.pid;
-            if (!status.lastCycleMessage.empty()) {
-                if (status.lastCycleExitCode == 0) {
-                    std::cout << "\tlast=ok";
-                } else {
-                    std::cout << "\tlast=failed(" << status.lastCycleMessage << ")";
-                }
-            }
-            std::cout << "\n";
-        }
-        return ExitOk;
-    }
+    if (mode == "status") return doDaemonStatusMode();
 
-    if (mode == "stop") {
-        std::string error;
-        if (!stopDaemonProcess(gPaths.stateDir, 5, error)) {
-            std::cerr << "daemon stop failed: " << error << "\n";
-            return ExitError;
-        }
-        std::cout << "daemon stopped\n";
-        return ExitOk;
-    }
+    if (mode == "stop") return doDaemonStopMode();
 
     if (!parseBoundedIntValue(std::to_string(intervalSec), "--interval", 1, intervalSec)) {
         return ExitUsage;
     }
-    if (target != "all") {
-        ExportTarget parsedTarget;
-        std::string defaultFile;
-        if (!parseExportTarget(target, parsedTarget, defaultFile)) {
-            std::cerr << "invalid daemon target: " << target << "\n";
-            return ExitUsage;
-        }
+    if (!validateDaemonTarget(target)) {
+        return ExitUsage;
     }
 
-    DaemonOptions options;
-    options.intervalSec = intervalSec;
-    options.exportTarget = target;
-    options.updateAssets = updateAssets;
-    options.strictNetwork = strictNetwork;
-    options.check = check;
-    options.restartRunning = !noRestart;
-    options.pidFile = pidFile;
-    options.logFile = logFile;
-
-    DaemonCallbacks callbacks;
-    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return doSubCommand(subArgs); };
-    callbacks.runExportCommand = [&](const std::vector<std::string>& exportArgs) { return doExportCommand(exportArgs); };
-    callbacks.isCoreRunning = [&](const std::string& coreTarget, std::string& error) {
-        const auto status = inspectCoreRuntime(gPaths.stateDir, coreTarget, error);
-        return status.running;
-    };
-    callbacks.runRestartCommand = [&](const std::vector<std::string>& restartArgs) { return doRestartCommand(restartArgs); };
+    const DaemonOptions options = buildDaemonOptionsFromCli(intervalSec, target, updateAssets, strictNetwork, check, noRestart, pidFile, logFile);
+    const DaemonCallbacks callbacks = makeDaemonCallbacks();
 
     if (mode == "start") {
-        if (gExecutablePath.empty()) {
-            std::cerr << "cannot resolve subcli executable path\n";
-            return ExitError;
-        }
-        std::string error;
-        if (!startDaemonProcess(gPaths.stateDir, gExecutablePath, buildDaemonRunArgs(options), options, error)) {
-            std::cerr << "daemon start failed: " << error << "\n";
-            return ExitError;
-        }
-        const auto status = inspectDaemonProcess(gPaths.stateDir, error);
-        if (!error.empty()) {
-            std::cerr << "daemon status read failed: " << error << "\n";
-            return ExitError;
-        }
-        std::cout << "daemon started pid=" << status.pid << "\n";
-        return ExitOk;
+        return doDaemonStartMode(options);
     }
 
     if (mode == "once") {
-        const int rc = runDaemonCycleWithState(gPaths.stateDir, options, callbacks);
-        if (rc == 0) {
-            std::cout << "daemon cycle completed\n";
-            return ExitOk;
-        }
-        std::cerr << "daemon cycle failed\n";
-        return ExitError;
+        return doDaemonOnceMode(options, callbacks);
     }
 
-    while (true) {
-        const int rc = runDaemonCycleWithState(gPaths.stateDir, options, callbacks);
-        if (rc != 0) {
-            std::cerr << "daemon cycle failed with code " << rc << "\n";
-        }
-        std::this_thread::sleep_for(std::chrono::seconds(options.intervalSec));
-    }
+    return runDaemonLoopMode(options, callbacks);
 }
 
 } // namespace

@@ -15,6 +15,7 @@
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
 #include "subcli/daemon.hpp"
+#include "subcli/daemon_process.hpp"
 #include "subcli/core_runtime.hpp"
 #include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
@@ -25,6 +26,7 @@
 #include "subcli/profile_explain.hpp"
 #include "subcli/protocol_registry.hpp"
 #include "subcli/store.hpp"
+#include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
 #include "subcli/workspace.hpp"
 
@@ -1584,9 +1586,13 @@ void testBashCompletionContainsCommands() {
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
     require(script.find("init doctor sub config template asset profile export daemon run stop status restart check completion workspace") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
+    require(script.find("list get validate explain") != std::string::npos, "completion should include profile subcommand list");
     require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
     require(script.find("--profile") != std::string::npos, "completion should include export profile option");
+    require(script.find("--strict-capabilities") != std::string::npos, "completion should include strict-capabilities option");
     require(script.find("--download-assets") != std::string::npos, "completion should include export download-assets option");
+    require(script.find("--explain-policy") != std::string::npos, "completion should include explain-policy export option");
+    require(script.find("--json") != std::string::npos, "completion should include json option");
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -1773,6 +1779,58 @@ void testInspectDaemonProcessExposesLastCycleFailure() {
     require(status.lastCycleMessage == "sub update failed", "status should expose failure summary");
 
     require(subcli::stopDaemonProcess(stateDir, 1, error), "daemon stop should succeed");
+    fs::remove_all(stateDir);
+}
+
+void testInspectDaemonProcessClassifiesStaleStatus() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-daemon-stale-status-tests";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    subcli::DaemonProcessStatus stale;
+    stale.hasState = true;
+    stale.pid = 999999;
+    stale.options.intervalSec = 120;
+    stale.options.exportTarget = "all";
+    std::string error;
+    require(subcli::ensureDaemonDir(stateDir, error), "ensureDaemonDir should create daemon dir");
+    require(subcli::writeDaemonStateFile(stateDir, stale, error), "writeDaemonStateFile should persist stale state");
+
+    const auto status = subcli::inspectDaemonProcess(stateDir, error);
+    require(error.empty(), "inspectDaemonProcess should succeed for stale state file");
+    require(status.hasState, "stale status should keep state file");
+    require(!status.running, "stale status should classify process as not running");
+    require(status.pid > 0, "stale status should preserve pid metadata");
+
+    require(subcli::stopDaemonProcess(stateDir, 1, error), "stopDaemonProcess should clean stale state");
+    fs::remove_all(stateDir);
+}
+
+void testRunDaemonCycleWithStatePersistsFailureSummaryWithoutState() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-daemon-failure-summary-tests";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    subcli::DaemonOptions options;
+    subcli::DaemonCallbacks callbacks;
+    callbacks.runSubCommand = [&](const std::vector<std::string>&) { return 7; };
+    callbacks.runExportCommand = [&](const std::vector<std::string>&) { return 0; };
+    callbacks.isCoreRunning = [&](const std::string&, std::string& err) {
+        err.clear();
+        return false;
+    };
+    callbacks.runRestartCommand = [&](const std::vector<std::string>&) { return 0; };
+
+    require(subcli::runDaemonCycleWithState(stateDir, options, callbacks) == 7, "cycle should preserve callback failure code");
+
+    std::string error;
+    const auto status = subcli::inspectDaemonProcess(stateDir, error);
+    require(error.empty(), "inspectDaemonProcess should succeed for persisted failure summary");
+    require(status.hasState, "failure summary should create daemon state");
+    require(status.lastCycleExitCode == 7, "failure summary should persist exit code");
+    require(status.lastCycleMessage == "sub update failed", "failure summary should persist reason");
+    require(!status.lastCycleAt.empty(), "failure summary should persist timestamp");
+
     fs::remove_all(stateDir);
 }
 
@@ -3544,6 +3602,16 @@ void testStorePersistsOverrideFlags() {
     require(loaded[0].retryOverride, "retry_override should persist");
 
     fs::remove(path);
+}
+
+void testNormalizeTagsDropsEmptyDedupesAndKeepsOrder() {
+    const std::vector<std::string> input = {"hk", "", "jp", "hk", "sg", "", "jp", "us"};
+    const std::vector<std::string> normalized = subcli::normalizeTags(input);
+    require(normalized.size() == 4, "normalizeTags should remove empty and duplicate values");
+    require(normalized[0] == "hk", "normalizeTags should keep first tag");
+    require(normalized[1] == "jp", "normalizeTags should keep first-seen order");
+    require(normalized[2] == "sg", "normalizeTags should keep unique tags");
+    require(normalized[3] == "us", "normalizeTags should keep trailing unique tags");
 }
 
 void testStorePersistsFetchMaxBytes() {
@@ -5453,6 +5521,53 @@ void testCoreRuntimeLifecycle() {
     fs::remove_all(stateDir);
 }
 
+void testStopCoreRuntimeRemovesStaleStateFile() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-tests-runtime-stale";
+    const fs::path statePath = stateDir / "runtime" / "sing_box.json";
+    fs::remove_all(stateDir);
+    fs::create_directories(statePath.parent_path());
+
+    nlohmann::json stale = {
+        {"pid", 999999},
+        {"target", "sing-box"},
+        {"binary_path", "/bin/sleep"},
+        {"config_path", "/tmp/subcli-tests-runtime-config.json"},
+    };
+    {
+        std::ofstream out(statePath);
+        out << stale.dump(2);
+    }
+
+    std::string error;
+    const bool stopped = subcli::stopCoreRuntime(stateDir, "sing-box", 1, error);
+    require(stopped, "stopCoreRuntime should succeed for stale state: " + error);
+    require(!fs::exists(statePath), "stopCoreRuntime should remove stale state file");
+
+    fs::remove_all(stateDir);
+}
+
+void testStartCoreRuntimeInvalidBinaryLeavesNoState() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-tests-runtime-invalid-binary";
+    const fs::path statePath = stateDir / "runtime" / "sing_box.json";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    std::string error;
+    const bool started = subcli::startCoreRuntime(
+        stateDir,
+        "sing-box",
+        "/definitely/missing/subcli-binary",
+        {"run"},
+        "/tmp/subcli-tests-runtime-config.json",
+        error
+    );
+    require(!started, "startCoreRuntime should fail when binary is missing");
+    require(!error.empty(), "startCoreRuntime should report missing binary error");
+    require(!fs::exists(statePath), "startCoreRuntime failure should not leave runtime state file");
+
+    fs::remove_all(stateDir);
+}
+
 void testCapabilityMatrixAssessesProfileGroupsAcrossTargets() {
     subcli::ResolvedProfile profile;
     profile.name = "matrix-profile";
@@ -5945,6 +6060,8 @@ int main() {
     testStartDaemonProcessFailsWhenExecCannotStart();
     testRunDaemonCycleWithStateUpdatesSuccessSummary();
     testInspectDaemonProcessExposesLastCycleFailure();
+    testInspectDaemonProcessClassifiesStaleStatus();
+    testRunDaemonCycleWithStatePersistsFailureSummaryWithoutState();
     testDaemonCycleRestartsOnlyRunningCores();
     testDaemonCycleStopsOnUpdateFailure();
     testCapabilityWarningsAreSpecific();
@@ -6007,6 +6124,8 @@ int main() {
     testWriteFileCreatesParentDirectories();
     testLoadConfigMalformedYamlThrows();
     testCoreRuntimeLifecycle();
+    testStopCoreRuntimeRemovesStaleStateFile();
+    testStartCoreRuntimeInvalidBinaryLeavesNoState();
     testCapabilityMatrixAssessesProfileGroupsAcrossTargets();
     testCapabilityMatrixFlagsMissingSingBoxAssetsWithConfigAwareAssess();
     testCapabilityMatrixAssessesFakeIpDnsModeByTarget();
@@ -6025,6 +6144,7 @@ int main() {
     testWorkspaceReadMetadataSupportsLegacyMarkerWithoutMetadata();
     testWorkspaceMigrateCopiesDurableDataOnly();
     testStorePersistsOverrideFlags();
+    testNormalizeTagsDropsEmptyDedupesAndKeepsOrder();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();

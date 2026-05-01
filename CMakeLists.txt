@@ -104,12 +104,15 @@ set(SUBCLI_SOURCES
     src/core_discovery.cpp
     src/core_check.cpp
     src/core_runtime.cpp
+    src/runtime_process.cpp
+    src/daemon_process.cpp
     src/daemon.cpp
     src/cli_completion.cpp
     src/cli_output.cpp
     src/environment.cpp
     src/assets.cpp
     src/workspace.cpp
+    src/tag_utils.cpp
     src/util.cpp
 )
 

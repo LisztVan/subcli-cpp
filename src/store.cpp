@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "subcli/util.hpp"
+#include "subcli/tag_utils.hpp"
 
 namespace subcli {
 
@@ -37,6 +38,7 @@ Subscription parseSubscription(const YAML::Node& n) {
         for (const auto& t : n["tags"]) {
             s.tags.push_back(t.as<std::string>());
         }
+        s.tags = normalizeTags(s.tags);
     }
     if (n["headers"] && n["headers"].IsMap()) {
         for (const auto& kv : n["headers"]) {

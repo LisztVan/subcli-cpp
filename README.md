@@ -108,7 +108,7 @@ subcli doctor --json
 
 ```bash
 cmake --build build -j
-cd build && ctest --output-on-failure
+ctest --test-dir build --output-on-failure
 ```
 
 The practical end-to-end check is exporting a config and validating it with the corresponding core:
@@ -131,4 +131,4 @@ Xray does not provide a native TUN device. The Xray TUN template is a transparen
 
 ## Documentation
 
-See [`README.subcli.md`](README.subcli.md) for detailed command examples, release validation workflow (`profile explain`, `export --json`, `--strict-capabilities`), cache behavior, troubleshooting, and deployment notes. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for the full v2.1 capability matrix (protocols, groups, DNS, route mapping, assets, and strict-mode behavior).
+See [`README.subcli.md`](README.subcli.md) for detailed command examples, release validation workflow (`profile explain`, `export --json`, `--strict-capabilities`), cache behavior, troubleshooting, and deployment notes. See [`docs/config-file.md`](docs/config-file.md) for `config.yaml` reference and workspace/path precedence rules. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for the full v2.1 capability matrix (protocols, groups, DNS, route mapping, assets, and strict-mode behavior).

@@ -218,6 +218,20 @@ fi
 "$bin" config set timeout 0 >/dev/null 2>&1 && exit 1 || true
 "$bin" sub edit help --header 'Authorization=Bearer test' --remove-header User-Agent >/dev/null
 
+empty_sel_out="$({ "$bin" export mihomo --profile direct --sub does-not-exist; } 2>&1 || true)"
+if [[ "$empty_sel_out" != *"no subscriptions selected for export (check --sub/--tag filters)"* ]]; then
+    printf '%s\n' "$empty_sel_out"
+    exit 1
+fi
+
+printf '%s\n' 'not-a-valid-subscription' > "$tmp/zero-node.txt"
+"$bin" sub add --name zero-node --url "file://$tmp/zero-node.txt" --force >/dev/null
+zero_node_out="$({ "$bin" export mihomo --profile direct --sub zero-node; } 2>&1 || true)"
+if [[ "$zero_node_out" != *"no nodes parsed from enabled subscriptions"* ]]; then
+    printf '%s\n' "$zero_node_out"
+    exit 1
+fi
+
 "$bin" sub add --name tagged --url "file://$tmp/missing" --force --tag hk >/dev/null
 out="$({ "$bin" sub update --tag hk; } 2>&1 || true)"
 if [[ "$out" == *"no subscriptions selected"* ]]; then

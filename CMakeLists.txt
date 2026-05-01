@@ -101,6 +101,7 @@ set(SUBCLI_SOURCES
     src/registry.cpp
     src/config_service.cpp
     src/subscription_service.cpp
+    src/diagnostic_service.cpp
     src/node.cpp
     src/capabilities.cpp
     src/capability_matrix.cpp

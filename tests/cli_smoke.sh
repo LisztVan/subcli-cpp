@@ -167,8 +167,12 @@ if [[ "$template_json" != *'"templates"'* ]]; then
 fi
 
 doctor_json="$({ "$bin" doctor --json; } 2>&1 || true)"
-if [[ "$doctor_json" != *'"checks"'* ]]; then
+if [[ "$doctor_json" != *'"findings"'* || "$doctor_json" != *'"ok"'* ]]; then
     printf '%s\n' "$doctor_json"
+    exit 1
+fi
+if [[ "$doctor_json" != *'"code":"workspace.resolved"'* || "$doctor_json" != *'"code":"config.key.registered"'* || "$doctor_json" != *'"code":"export.target.registered"'* ]]; then
+    printf 'doctor --json missing stable diagnostic codes: %s\n' "$doctor_json"
     exit 1
 fi
 if [[ "$doctor_json" != *'"environment"'* || "$doctor_json" != *'"resolution_source"'* || "$doctor_json" != *'"resolved_path_map"'* ]]; then
@@ -179,13 +183,14 @@ fi
 workspace_root="$tmp/workspace-env"
 "$bin" workspace init "$workspace_root" >/dev/null
 doctor_env_json="$({ SUBCLI_WORKSPACE="$workspace_root" "$bin" doctor --json; } 2>&1 || true)"
-python3 - "$workspace_root" <<'PY' <<<"$doctor_env_json"
+DOCTOR_ENV_JSON="$doctor_env_json" python3 - "$workspace_root" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
 workspace = pathlib.Path(sys.argv[1]).resolve()
-raw = sys.stdin.read()
+raw = os.environ.get("DOCTOR_ENV_JSON", "")
 try:
     doc = json.loads(raw)
 except Exception as exc:

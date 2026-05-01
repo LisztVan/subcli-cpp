@@ -16,6 +16,7 @@
 #include "subcli/cli_output.hpp"
 #include "subcli/daemon.hpp"
 #include "subcli/daemon_process.hpp"
+#include "subcli/diagnostic_service.hpp"
 #include "subcli/config_service.hpp"
 #include "subcli/core_runtime.hpp"
 #include "subcli/environment.hpp"
@@ -67,6 +68,62 @@ bool containsProtocol(const std::vector<std::string>& protocols, const std::stri
         }
     }
     return false;
+}
+
+void testDiagnosticServiceReportsConfigAndTargets() {
+    subcli::AppConfig cfg = makeConfig();
+    cfg.profile = "bypass-cn";
+
+    subcli::Subscription enabled;
+    enabled.id = "s1";
+    enabled.name = "sub-1";
+    enabled.enabled = true;
+
+    subcli::Subscription disabled;
+    disabled.id = "s2";
+    disabled.name = "sub-2";
+    disabled.enabled = false;
+    disabled.lastError = "fetch failed";
+
+    const auto report = subcli::buildDiagnosticReport(cfg, {enabled, disabled}, "/tmp/ws");
+    require(!report.findings.empty(), "diagnostic report should have findings");
+
+    bool hasWorkspace = false;
+    bool hasConfigKey = false;
+    bool hasTarget = false;
+    bool hasProfile = false;
+    bool hasSubEnabled = false;
+    bool hasSubDisabled = false;
+    bool hasSubLastError = false;
+    for (const auto& finding : report.findings) {
+        if (finding.code == "workspace.resolved") {
+            hasWorkspace = true;
+        } else if (finding.code == "config.key.registered") {
+            hasConfigKey = true;
+        } else if (finding.code == "export.target.registered") {
+            hasTarget = true;
+        } else if (finding.code == "profile.configured") {
+            hasProfile = true;
+        } else if (finding.code == "subscription.enabled") {
+            hasSubEnabled = true;
+        } else if (finding.code == "subscription.disabled") {
+            hasSubDisabled = true;
+        } else if (finding.code == "subscription.last_error") {
+            hasSubLastError = true;
+        }
+    }
+
+    require(hasWorkspace, "diagnostic report should include workspace.resolved finding");
+    require(hasConfigKey, "diagnostic report should include config.key.registered findings");
+    require(hasTarget, "diagnostic report should include export.target.registered findings");
+    require(hasProfile, "diagnostic report should include profile.configured finding");
+    require(hasSubEnabled, "diagnostic report should include subscription.enabled finding");
+    require(hasSubDisabled, "diagnostic report should include subscription.disabled finding");
+    require(hasSubLastError, "diagnostic report should include subscription.last_error finding");
+
+    const auto json = subcli::diagnosticReportToJson(report);
+    require(json.contains("ok"), "diagnostic json should contain ok");
+    require(json.contains("findings"), "diagnostic json should contain findings");
 }
 
 fs::path makeUniqueTestDir(const std::string& name) {
@@ -6406,6 +6463,7 @@ int main() {
     testProfileExplainFallbackWhenConfigLoadFails();
     testBuiltInAutoGroupsDoNotReferenceProxy();
     testProtocolRegistryCoversOfficialTargets();
+    testDiagnosticServiceReportsConfigAndTargets();
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();
     testBashCompletionContainsCommands();

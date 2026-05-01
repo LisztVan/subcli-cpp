@@ -382,6 +382,15 @@ subcli template validate --json
 
 JSON output is emitted as a single compact JSON object on stdout. Warnings and failures remain represented in the JSON payload instead of relying on terminal formatting.
 
+`doctor --json` returns `{"ok":<bool>,"findings":[...]}`. The following finding codes are stable and intended for scripts:
+
+- `workspace.resolved`
+- `config.key.registered`
+- `export.target.registered`
+- `profile.configured` / `profile.missing`
+- `subscription.enabled` / `subscription.disabled`
+- `subscription.last_error`
+
 ## Shell Completion
 
 Bash completion can be generated with:

@@ -29,6 +29,7 @@
 #include "subcli/daemon.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
+#include "subcli/diagnostic_service.hpp"
 #include "subcli/capability_matrix.hpp"
 #include "subcli/config_service.hpp"
 #include "subcli/environment.hpp"
@@ -1826,85 +1827,13 @@ int doDoctorCommand(const std::vector<std::string>& args) {
         return 1;
     }
     ensureDefaults();
-    int failed = 0;
-    nlohmann::json checks = nlohmann::json::array();
-
-    auto addCheck = [&](const std::string& name, const std::string& status, const std::filesystem::path& path, const std::string& message = "") {
-        checks.push_back({{"name", name}, {"status", status}, {"path", path.string()}, {"message", message}});
-        if (!jsonOutput) {
-            if (status == "ok") {
-                std::cout << "[ OK ] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " " + message) << "\n";
-            } else if (status == "warn") {
-                std::cout << "[WARN] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " " + message) << "\n";
-            } else {
-                std::cout << "[FAIL] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " (" + message + ")") << "\n";
-            }
-        }
-    };
-
-    auto checkPath = [&](const std::string& name, const std::filesystem::path& path, bool mustExist) {
-        std::error_code ec;
-        const bool exists = std::filesystem::exists(path, ec);
-        if (ec || (mustExist && !exists)) {
-            ++failed;
-            addCheck(name, "fail", path, ec ? ec.message() : "missing");
-            return;
-        }
-        addCheck(name, "ok", path);
-    };
-
-    checkPath("config_path", gPaths.configPath, true);
-    checkPath("sub_path", gPaths.subPath, true);
-    checkPath("template_dir", gPaths.templateDir, true);
-    checkPath("output_dir", gPaths.outputDir, true);
-
-    auto checkWritable = [&](const std::string& name, const std::filesystem::path& path) {
-        std::string reason;
-        if (!checkDirWritable(path, reason)) {
-            ++failed;
-            addCheck(name, "fail", path, reason);
-            return;
-        }
-        addCheck(name, "ok", path, "writable");
-    };
-
-    checkWritable("config_dir", gPaths.configDir);
-    checkWritable("data_dir", gPaths.dataDir);
-    checkWritable("cache_dir", gPaths.cacheDir);
-    checkWritable("output_dir", gPaths.outputDir);
-
     AppConfig cfg = loadConfig(gPaths.configPath.string());
-    applyConfigDefaults(cfg);
-    for (const auto& item : requiredTemplateFiles(cfg)) {
-        std::error_code ec;
-        if (item.second.empty() || !std::filesystem::is_regular_file(item.second, ec) || ec) {
-            ++failed;
-            addCheck(item.first, "fail", item.second, ec ? ec.message() : "missing");
-        } else {
-            addCheck(item.first, "ok", item.second);
-        }
-    }
-    const auto cores = discoverCorePaths(cfg);
-
-    auto checkCore = [&](const std::string& key, const std::string& value) {
-        if (value.empty()) {
-            addCheck(key, "warn", {}, "not found in PATH and not configured");
-            return;
-        }
-        if (!isExecutableFile(value)) {
-            ++failed;
-            addCheck(key, "fail", value, "not executable");
-            return;
-        }
-        addCheck(key, "ok", value);
-    };
-
-    checkCore("core.mihomo", cores.mihomo);
-    checkCore("core.sing-box", cores.singBox);
-    checkCore("core.xray", cores.xray);
+    const std::vector<Subscription> subs = loadSubscriptions(gPaths.subPath.string());
+    const DiagnosticReport report = buildDiagnosticReport(cfg, subs, gPaths.root.string());
 
     if (jsonOutput) {
-        nlohmann::json envJson = {
+        nlohmann::json payload = diagnosticReportToJson(report);
+        payload["environment"] = {
             {"resolution_source", environmentSourceToString(gEnvResult.source)},
             {"active_workspace_root", gEnvResult.root.empty() ? gPaths.root.string() : gEnvResult.root},
             {"resolved_path_map", {
@@ -1920,13 +1849,13 @@ int doDoctorCommand(const std::vector<std::string>& args) {
             }},
         };
         if (!gEnvResult.trace.empty()) {
-            envJson["trace"] = gEnvResult.trace;
+            payload["environment"]["trace"] = gEnvResult.trace;
         }
-        printJsonLine({{"failed", failed}, {"checks", checks}, {"environment", envJson}});
+        printJsonLine(payload);
     } else {
-        std::cout << "doctor summary: failed=" << failed << "\n";
+        std::cout << diagnosticReportToText(report);
     }
-    return failed == 0 ? 0 : 1;
+    return report.hasError ? 1 : 0;
 }
 
 int doCheckCommand(const std::vector<std::string>& args) {

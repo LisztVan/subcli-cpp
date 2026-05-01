@@ -49,19 +49,6 @@ bool isFakeIpMode(const std::string& mode) {
     return normalized == "fake-ip" || normalized == "fakeip";
 }
 
-std::string exportTargetId(ExportTarget target) {
-    const char* fallback = "unknown";
-    if (target == ExportTarget::Mihomo) {
-        fallback = "mihomo";
-    } else if (target == ExportTarget::SingBox) {
-        fallback = "sing-box";
-    } else if (target == ExportTarget::Xray) {
-        fallback = "xray";
-    }
-    const auto* descriptor = findExportTargetDescriptor(fallback);
-    return descriptor != nullptr ? descriptor->id : std::string(fallback);
-}
-
 CapabilityLevel profileGroupLevelForTarget(ExportTarget target, const std::string& type) {
     const std::string normalized = toLower(type);
     if (target == ExportTarget::Mihomo) {
@@ -123,7 +110,7 @@ std::vector<CapabilityFinding> assessProfileCapabilities(ExportTarget target, co
                     CapabilityLevel::Unsupported,
                     "route_rule_type",
                     normalizedType + ":" + normalizedValue,
-                    exportTargetId(target) + " v2.1 only supports cn/private for this geosite/geoip rule",
+                    subcli::exportTargetId(target) + " v2.1 only supports cn/private for this geosite/geoip rule",
                 }
             );
         }

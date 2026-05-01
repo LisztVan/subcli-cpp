@@ -1509,34 +1509,12 @@ bool hasUsableParsedNodes(const ParseResult& parsed, std::string& reason) {
 }
 
 bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile) {
-    if (value == "mihomo") {
-        target = ExportTarget::Mihomo;
-        if (const auto* descriptor = findExportTargetDescriptor("mihomo")) {
-            outFile = descriptor->outputFile;
-        } else {
-            outFile = "mihomo.yaml";
-        }
-        return true;
+    const ExportTargetDescriptor* descriptor = nullptr;
+    if (!resolveExportTarget(value, target, descriptor) || descriptor == nullptr || descriptor->outputFile.empty()) {
+        return false;
     }
-    if (value == "sing-box") {
-        target = ExportTarget::SingBox;
-        if (const auto* descriptor = findExportTargetDescriptor("sing-box")) {
-            outFile = descriptor->outputFile;
-        } else {
-            outFile = "sing-box.json";
-        }
-        return true;
-    }
-    if (value == "xray") {
-        target = ExportTarget::Xray;
-        if (const auto* descriptor = findExportTargetDescriptor("xray")) {
-            outFile = descriptor->outputFile;
-        } else {
-            outFile = "xray.json";
-        }
-        return true;
-    }
-    return false;
+    outFile = descriptor->outputFile;
+    return true;
 }
 
 int runConfigCheckForTarget(const AppConfig& cfg, ExportTarget target, const std::string& filePath, int timeoutSec = 30) {
@@ -3844,14 +3822,21 @@ int doExportCommand(const std::vector<std::string>& args) {
         }
     }
 
-    const auto outputPathForTarget = [&](const std::string& targetId, const std::string& fallbackFile) {
-        const auto* descriptor = findExportTargetDescriptor(targetId);
-        const std::string& outputFile = (descriptor != nullptr && !descriptor->outputFile.empty()) ? descriptor->outputFile : fallbackFile;
-        return outputDir + "/" + outputFile;
+    const auto outputPathForTarget = [&](ExportTarget exportTarget, std::string& outputPath) {
+        return exportTargetOutputPath(outputDir, exportTarget, outputPath);
     };
 
     auto runMihomo = [&]() {
-        const std::string targetOutput = outputPathForTarget("mihomo", "mihomo.yaml");
+        std::string targetOutput;
+        if (!outputPathForTarget(ExportTarget::Mihomo, targetOutput)) {
+            error = "missing export target metadata for mihomo";
+            if (!jsonOutput) {
+                std::cerr << "mihomo export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "mihomo"}, {"ok", false}, {"error", error}});
+            ++failed;
+            return;
+        }
         auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::Mihomo);
@@ -3875,7 +3860,16 @@ int doExportCommand(const std::vector<std::string>& args) {
     };
 
     auto runSing = [&]() {
-        const std::string targetOutput = outputPathForTarget("sing-box", "sing-box.json");
+        std::string targetOutput;
+        if (!outputPathForTarget(ExportTarget::SingBox, targetOutput)) {
+            error = "missing export target metadata for sing-box";
+            if (!jsonOutput) {
+                std::cerr << "sing-box export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "sing-box"}, {"ok", false}, {"error", error}});
+            ++failed;
+            return;
+        }
         auto result = exportForTarget(ExportTarget::SingBox, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::SingBox);
@@ -3899,7 +3893,16 @@ int doExportCommand(const std::vector<std::string>& args) {
     };
 
     auto runXray = [&]() {
-        const std::string targetOutput = outputPathForTarget("xray", "xray.json");
+        std::string targetOutput;
+        if (!outputPathForTarget(ExportTarget::Xray, targetOutput)) {
+            error = "missing export target metadata for xray";
+            if (!jsonOutput) {
+                std::cerr << "xray export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "xray"}, {"ok", false}, {"error", error}});
+            ++failed;
+            return;
+        }
         auto result = exportForTarget(ExportTarget::Xray, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::Xray);
@@ -3956,37 +3959,55 @@ int doExportCommand(const std::vector<std::string>& args) {
 
     if (checkFlag) {
         int checkFailed = 0;
+        std::string mihomoOutput;
+        std::string singBoxOutput;
+        std::string xrayOutput;
+        const bool hasMihomoOutput = outputPathForTarget(ExportTarget::Mihomo, mihomoOutput);
+        const bool hasSingBoxOutput = outputPathForTarget(ExportTarget::SingBox, singBoxOutput);
+        const bool hasXrayOutput = outputPathForTarget(ExportTarget::Xray, xrayOutput);
         if ((target == "all" || target == "mihomo") && mihomoOk) {
+            if (!hasMihomoOutput) {
+                std::cerr << "check failed: missing export target metadata for mihomo\n";
+                ++checkFailed;
+            } else
             if (jsonOutput) {
-                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Mihomo, outputDir + "/mihomo.yaml", checkTimeoutSec);
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Mihomo, mihomoOutput, checkTimeoutSec);
                 setJsonTargetCheck("mihomo", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
                 if (!check.ok) {
                     ++checkFailed;
                 }
             } else {
-                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Mihomo, outputDir + "/mihomo.yaml", checkTimeoutSec);
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Mihomo, mihomoOutput, checkTimeoutSec);
             }
         }
         if ((target == "all" || target == "sing-box") && singOk) {
+            if (!hasSingBoxOutput) {
+                std::cerr << "check failed: missing export target metadata for sing-box\n";
+                ++checkFailed;
+            } else
             if (jsonOutput) {
-                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::SingBox, outputDir + "/sing-box.json", checkTimeoutSec);
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::SingBox, singBoxOutput, checkTimeoutSec);
                 setJsonTargetCheck("sing-box", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
                 if (!check.ok) {
                     ++checkFailed;
                 }
             } else {
-                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::SingBox, outputDir + "/sing-box.json", checkTimeoutSec);
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::SingBox, singBoxOutput, checkTimeoutSec);
             }
         }
         if ((target == "all" || target == "xray") && xrayOk) {
+            if (!hasXrayOutput) {
+                std::cerr << "check failed: missing export target metadata for xray\n";
+                ++checkFailed;
+            } else
             if (jsonOutput) {
-                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Xray, outputDir + "/xray.json", checkTimeoutSec);
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Xray, xrayOutput, checkTimeoutSec);
                 setJsonTargetCheck("xray", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
                 if (!check.ok) {
                     ++checkFailed;
                 }
             } else {
-                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Xray, outputDir + "/xray.json", checkTimeoutSec);
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Xray, xrayOutput, checkTimeoutSec);
             }
         }
         if (checkFailed > 0) {

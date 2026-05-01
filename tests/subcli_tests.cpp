@@ -6335,6 +6335,39 @@ void testExportTargetRegistryHasTemplateAndCoreKeys() {
     }
 }
 
+void testExportTargetEnumRegistryConsistency() {
+    const auto* mihomo = subcli::findExportTargetDescriptor(subcli::ExportTarget::Mihomo);
+    const auto* singBox = subcli::findExportTargetDescriptor(subcli::ExportTarget::SingBox);
+    const auto* xray = subcli::findExportTargetDescriptor(subcli::ExportTarget::Xray);
+    require(mihomo != nullptr && mihomo->id == "mihomo", "Mihomo enum should map to mihomo descriptor");
+    require(singBox != nullptr && singBox->id == "sing-box", "SingBox enum should map to sing-box descriptor");
+    require(xray != nullptr && xray->id == "xray", "Xray enum should map to xray descriptor");
+    require(subcli::exportTargetId(subcli::ExportTarget::Mihomo) == "mihomo", "exportTargetId should resolve mihomo");
+    require(subcli::exportTargetId(subcli::ExportTarget::SingBox) == "sing-box", "exportTargetId should resolve sing-box");
+    require(subcli::exportTargetId(subcli::ExportTarget::Xray) == "xray", "exportTargetId should resolve xray");
+}
+
+void testExportTargetResolveAndOutputPathUseRegistryMetadata() {
+    for (const auto& descriptor : subcli::exportTargetRegistry()) {
+        subcli::ExportTarget resolvedTarget = subcli::ExportTarget::Mihomo;
+        const subcli::ExportTargetDescriptor* resolvedDescriptor = nullptr;
+        require(subcli::resolveExportTarget(descriptor.id, resolvedTarget, resolvedDescriptor), "resolveExportTarget should parse registry target id");
+        require(resolvedDescriptor != nullptr, "resolveExportTarget should return descriptor");
+        require(resolvedDescriptor->id == descriptor.id, "resolved descriptor id should match registry id");
+        require(resolvedTarget == descriptor.target, "resolved target enum should match registry target enum");
+
+        std::string outputPath;
+        require(subcli::exportTargetOutputPath("/tmp/outputs", resolvedTarget, outputPath), "exportTargetOutputPath should resolve for registry target");
+        require(outputPath == std::string("/tmp/outputs/") + descriptor.outputFile, "output path should use registry-defined outputFile");
+    }
+}
+
+void testExportTargetResolveRejectsUnknownTarget() {
+    subcli::ExportTarget target = subcli::ExportTarget::Mihomo;
+    const subcli::ExportTargetDescriptor* descriptor = nullptr;
+    require(!subcli::resolveExportTarget("unknown-target", target, descriptor), "resolveExportTarget should reject unknown ids");
+}
+
 void testRegistryContainsCurrentCommandSurface() {
     const auto commands = subcli::allCommandNames();
     for (const auto& command : {"init", "doctor", "sub", "config", "profile", "template", "asset", "export", "workspace", "check", "run", "daemon", "status", "stop", "restart", "completion"}) {
@@ -6587,6 +6620,9 @@ int main() {
     testRegistryContainsCurrentConfigKeys();
     testRegistryContainsCurrentExportTargets();
     testExportTargetRegistryHasTemplateAndCoreKeys();
+    testExportTargetEnumRegistryConsistency();
+    testExportTargetResolveAndOutputPathUseRegistryMetadata();
+    testExportTargetResolveRejectsUnknownTarget();
     testRegistryContainsCurrentCommandSurface();
     testRegistryFindConfigKeySupportsPrefixDescriptors();
     testRegistryExportDescriptorIncludesExpectedOptions();

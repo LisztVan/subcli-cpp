@@ -58,9 +58,9 @@ const std::vector<ConfigKeyDescriptor> kConfigKeys = {
 };
 
 const std::vector<ExportTargetDescriptor> kExportTargets = {
-    {"mihomo", "Mihomo YAML config.", "mihomo.yaml", "core_paths.mihomo", "templates.mihomo.normal", "templates.mihomo.tun"},
-    {"sing-box", "sing-box JSON config.", "sing-box.json", "core_paths.sing_box", "templates.sing-box.normal", "templates.sing-box.tun"},
-    {"xray", "xray JSON config.", "xray.json", "core_paths.xray", "templates.xray.normal", "templates.xray.tun"},
+    {ExportTarget::Mihomo, "mihomo", "Mihomo YAML config.", "mihomo.yaml", "core_paths.mihomo", "templates.mihomo.normal", "templates.mihomo.tun"},
+    {ExportTarget::SingBox, "sing-box", "sing-box JSON config.", "sing-box.json", "core_paths.sing_box", "templates.sing-box.normal", "templates.sing-box.tun"},
+    {ExportTarget::Xray, "xray", "xray JSON config.", "xray.json", "core_paths.xray", "templates.xray.normal", "templates.xray.tun"},
 };
 
 } // namespace
@@ -137,6 +137,42 @@ const ExportTargetDescriptor* findExportTargetDescriptor(const std::string& id) 
         return nullptr;
     }
     return &(*it);
+}
+
+const ExportTargetDescriptor* findExportTargetDescriptor(ExportTarget target) {
+    const auto it = std::find_if(kExportTargets.begin(), kExportTargets.end(), [target](const ExportTargetDescriptor& entry) {
+        return entry.target == target;
+    });
+    if (it == kExportTargets.end()) {
+        return nullptr;
+    }
+    return &(*it);
+}
+
+bool resolveExportTarget(const std::string& id, ExportTarget& target, const ExportTargetDescriptor*& descriptor) {
+    descriptor = findExportTargetDescriptor(id);
+    if (descriptor == nullptr) {
+        return false;
+    }
+    target = descriptor->target;
+    return true;
+}
+
+std::string exportTargetId(ExportTarget target) {
+    const auto* descriptor = findExportTargetDescriptor(target);
+    if (descriptor == nullptr) {
+        return "";
+    }
+    return descriptor->id;
+}
+
+bool exportTargetOutputPath(const std::string& outputDir, ExportTarget target, std::string& outputPath) {
+    const auto* descriptor = findExportTargetDescriptor(target);
+    if (descriptor == nullptr || descriptor->outputFile.empty()) {
+        return false;
+    }
+    outputPath = outputDir + "/" + descriptor->outputFile;
+    return true;
 }
 
 } // namespace subcli

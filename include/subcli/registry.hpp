@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "subcli/exporter.hpp"
+
 namespace subcli {
 
 enum class ConfigValueType {
@@ -26,6 +28,7 @@ struct ConfigKeyDescriptor {
 };
 
 struct ExportTargetDescriptor {
+    ExportTarget target = ExportTarget::Mihomo;
     std::string id;
     std::string summary;
     std::string outputFile;
@@ -45,5 +48,9 @@ std::vector<std::string> allExportTargetIds();
 const CommandDescriptor* findCommandDescriptor(const std::string& name);
 const ConfigKeyDescriptor* findConfigKeyDescriptor(const std::string& key);
 const ExportTargetDescriptor* findExportTargetDescriptor(const std::string& id);
+const ExportTargetDescriptor* findExportTargetDescriptor(ExportTarget target);
+bool resolveExportTarget(const std::string& id, ExportTarget& target, const ExportTargetDescriptor*& descriptor);
+std::string exportTargetId(ExportTarget target);
+bool exportTargetOutputPath(const std::string& outputDir, ExportTarget target, std::string& outputPath);
 
 } // namespace subcli

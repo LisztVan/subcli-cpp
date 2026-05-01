@@ -14,6 +14,8 @@ This matrix covers export-time capability interpretation for:
 
 It does not redefine each target core's full runtime feature set; it documents what `subcli` exports today.
 
+v0.2.5 note: export target metadata is defined in `TargetRegistry`; target ids in this document and code must stay aligned with `mihomo`, `sing-box`, and `xray`.
+
 ## Levels
 
 - `native`: target supports profile behavior directly.

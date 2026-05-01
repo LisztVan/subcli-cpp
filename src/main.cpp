@@ -38,6 +38,7 @@
 #include "subcli/parser.hpp"
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
+#include "subcli/registry.hpp"
 #include "subcli/store.hpp"
 #include "subcli/subscription_service.hpp"
 #include "subcli/tag_utils.hpp"
@@ -1510,17 +1511,29 @@ bool hasUsableParsedNodes(const ParseResult& parsed, std::string& reason) {
 bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile) {
     if (value == "mihomo") {
         target = ExportTarget::Mihomo;
-        outFile = "mihomo.yaml";
+        if (const auto* descriptor = findExportTargetDescriptor("mihomo")) {
+            outFile = descriptor->outputFile;
+        } else {
+            outFile = "mihomo.yaml";
+        }
         return true;
     }
     if (value == "sing-box") {
         target = ExportTarget::SingBox;
-        outFile = "sing-box.json";
+        if (const auto* descriptor = findExportTargetDescriptor("sing-box")) {
+            outFile = descriptor->outputFile;
+        } else {
+            outFile = "sing-box.json";
+        }
         return true;
     }
     if (value == "xray") {
         target = ExportTarget::Xray;
-        outFile = "xray.json";
+        if (const auto* descriptor = findExportTargetDescriptor("xray")) {
+            outFile = descriptor->outputFile;
+        } else {
+            outFile = "xray.json";
+        }
         return true;
     }
     return false;
@@ -3831,18 +3844,25 @@ int doExportCommand(const std::vector<std::string>& args) {
         }
     }
 
+    const auto outputPathForTarget = [&](const std::string& targetId, const std::string& fallbackFile) {
+        const auto* descriptor = findExportTargetDescriptor(targetId);
+        const std::string& outputFile = (descriptor != nullptr && !descriptor->outputFile.empty()) ? descriptor->outputFile : fallbackFile;
+        return outputDir + "/" + outputFile;
+    };
+
     auto runMihomo = [&]() {
-        auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, exportProfile, outputDir + "/mihomo.yaml", error);
+        const std::string targetOutput = outputPathForTarget("mihomo", "mihomo.yaml");
+        auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::Mihomo);
             if (!jsonOutput) {
-                std::cout << "exported mihomo: " << outputDir << "/mihomo.yaml\n";
+                std::cout << "exported mihomo: " << targetOutput << "\n";
                 printCapabilitySummaryForTarget(ExportTarget::Mihomo, "mihomo");
                 if (result.skipped > 0) {
                     std::cout << "mihomo skipped nodes: " << result.skipped << "\n";
                 }
             }
-            exportTargets.push_back({{"target", "mihomo"}, {"ok", true}, {"output", outputDir + "/mihomo.yaml"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Mihomo)}});
+            exportTargets.push_back({{"target", "mihomo"}, {"ok", true}, {"output", targetOutput}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Mihomo)}});
             ++success;
             mihomoOk = true;
         } else {
@@ -3855,17 +3875,18 @@ int doExportCommand(const std::vector<std::string>& args) {
     };
 
     auto runSing = [&]() {
-        auto result = exportForTarget(ExportTarget::SingBox, allNodes, cfg, tun, exportProfile, outputDir + "/sing-box.json", error);
+        const std::string targetOutput = outputPathForTarget("sing-box", "sing-box.json");
+        auto result = exportForTarget(ExportTarget::SingBox, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::SingBox);
             if (!jsonOutput) {
-                std::cout << "exported sing-box: " << outputDir << "/sing-box.json\n";
+                std::cout << "exported sing-box: " << targetOutput << "\n";
                 printCapabilitySummaryForTarget(ExportTarget::SingBox, "sing-box");
                 if (result.skipped > 0) {
                     std::cout << "sing-box skipped nodes: " << result.skipped << "\n";
                 }
             }
-            exportTargets.push_back({{"target", "sing-box"}, {"ok", true}, {"output", outputDir + "/sing-box.json"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::SingBox)}});
+            exportTargets.push_back({{"target", "sing-box"}, {"ok", true}, {"output", targetOutput}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::SingBox)}});
             ++success;
             singOk = true;
         } else {
@@ -3878,17 +3899,18 @@ int doExportCommand(const std::vector<std::string>& args) {
     };
 
     auto runXray = [&]() {
-        auto result = exportForTarget(ExportTarget::Xray, allNodes, cfg, tun, exportProfile, outputDir + "/xray.json", error);
+        const std::string targetOutput = outputPathForTarget("xray", "xray.json");
+        auto result = exportForTarget(ExportTarget::Xray, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::Xray);
             if (!jsonOutput) {
-                std::cout << "exported xray: " << outputDir << "/xray.json\n";
+                std::cout << "exported xray: " << targetOutput << "\n";
                 printCapabilitySummaryForTarget(ExportTarget::Xray, "xray");
                 if (result.skipped > 0) {
                     std::cout << "xray skipped nodes: " << result.skipped << "\n";
                 }
             }
-            exportTargets.push_back({{"target", "xray"}, {"ok", true}, {"output", outputDir + "/xray.json"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Xray)}});
+            exportTargets.push_back({{"target", "xray"}, {"ok", true}, {"output", targetOutput}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Xray)}});
             ++success;
             xrayOk = true;
         } else {

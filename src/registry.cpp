@@ -46,15 +46,21 @@ const std::vector<ConfigKeyDescriptor> kConfigKeys = {
     {"node_management.exclude_regex", ConfigValueType::String, "Node exclude filter regex."},
     {"node_management.sort_by", ConfigValueType::String, "Node sort order expression."},
     {"templates.", ConfigValueType::Prefix, "Template path override namespace."},
+    {"templates.mihomo.normal", ConfigValueType::Path, "Mihomo normal template path."},
+    {"templates.mihomo.tun", ConfigValueType::Path, "Mihomo tun template path."},
+    {"templates.sing-box.normal", ConfigValueType::Path, "sing-box normal template path."},
+    {"templates.sing-box.tun", ConfigValueType::Path, "sing-box tun template path."},
+    {"templates.xray.normal", ConfigValueType::Path, "xray normal template path."},
+    {"templates.xray.tun", ConfigValueType::Path, "xray tun template path."},
     {"grouping.region_rules.", ConfigValueType::Prefix, "Region matcher namespace."},
     {"assets.paths.", ConfigValueType::Prefix, "Asset file path namespace."},
     {"assets.urls.", ConfigValueType::Prefix, "Asset URL namespace."},
 };
 
 const std::vector<ExportTargetDescriptor> kExportTargets = {
-    {"mihomo", "Mihomo YAML config."},
-    {"sing-box", "sing-box JSON config."},
-    {"xray", "xray JSON config."},
+    {"mihomo", "Mihomo YAML config.", "mihomo.yaml", "core_paths.mihomo", "templates.mihomo.normal", "templates.mihomo.tun"},
+    {"sing-box", "sing-box JSON config.", "sing-box.json", "core_paths.sing_box", "templates.sing-box.normal", "templates.sing-box.tun"},
+    {"xray", "xray JSON config.", "xray.json", "core_paths.xray", "templates.xray.normal", "templates.xray.tun"},
 };
 
 } // namespace

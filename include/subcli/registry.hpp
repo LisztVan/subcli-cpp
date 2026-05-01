@@ -28,6 +28,10 @@ struct ConfigKeyDescriptor {
 struct ExportTargetDescriptor {
     std::string id;
     std::string summary;
+    std::string outputFile;
+    std::string coreConfigKey;
+    std::string normalTemplateKey;
+    std::string tunTemplateKey;
 };
 
 const std::vector<CommandDescriptor>& commandRegistry();

@@ -6325,6 +6325,16 @@ void testRegistryContainsCurrentExportTargets() {
     require(std::find(targets.begin(), targets.end(), "xray") != targets.end(), "registry should include xray");
 }
 
+void testExportTargetRegistryHasTemplateAndCoreKeys() {
+    for (const auto& target : subcli::exportTargetRegistry()) {
+        require(!target.id.empty(), "export target id should be non-empty");
+        require(!target.outputFile.empty(), "export target output should be non-empty");
+        require(subcli::findConfigKeyDescriptor(target.coreConfigKey) != nullptr, "export target core key should exist");
+        require(subcli::findConfigKeyDescriptor(target.normalTemplateKey) != nullptr, "export target normal template key should exist");
+        require(subcli::findConfigKeyDescriptor(target.tunTemplateKey) != nullptr, "export target tun template key should exist");
+    }
+}
+
 void testRegistryContainsCurrentCommandSurface() {
     const auto commands = subcli::allCommandNames();
     for (const auto& command : {"init", "doctor", "sub", "config", "profile", "template", "asset", "export", "workspace", "check", "run", "daemon", "status", "stop", "restart", "completion"}) {
@@ -6576,6 +6586,7 @@ int main() {
     testStoreDefaultsMissingProfilePathToEmpty();
     testRegistryContainsCurrentConfigKeys();
     testRegistryContainsCurrentExportTargets();
+    testExportTargetRegistryHasTemplateAndCoreKeys();
     testRegistryContainsCurrentCommandSurface();
     testRegistryFindConfigKeySupportsPrefixDescriptors();
     testRegistryExportDescriptorIncludesExpectedOptions();

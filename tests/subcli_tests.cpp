@@ -2,6 +2,7 @@
 #include <fstream>
 #include <future>
 #include <netinet/in.h>
+#include <regex>
 #include <sys/socket.h>
 #include <thread>
 #include <stdexcept>
@@ -6603,8 +6604,12 @@ void testCMakeVersionIsV025() {
     require(in.is_open(), "CMakeLists.txt should be readable");
 
     std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    require(content.find("project(subcli VERSION 0.2.5") != std::string::npos,
-            "CMakeLists.txt should declare project(subcli VERSION 0.2.5");
+    const std::regex projectPattern(R"(project\s*\(\s*subcli\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)\b)", std::regex::icase);
+    std::smatch match;
+    require(std::regex_search(content, match, projectPattern),
+            "CMakeLists.txt should declare subcli project version");
+    require(match.size() >= 2, "CMakeLists.txt project version capture should exist");
+    require(match[1].str() == "0.2.5", "CMakeLists.txt subcli project version should be exactly 0.2.5");
 }
 
 } // namespace

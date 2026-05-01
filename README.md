@@ -36,7 +36,7 @@ Package archive:
 cmake --build build --target package
 ```
 
-Release-validation workflow runs configure/build/test/package for tagged releases.
+Release-validation workflow triggers on `v*` tags, enforces tag == `v<project version>` from `CMakeLists.txt`, then runs configure/build/test/package.
 
 ## Quick Start
 

@@ -273,7 +273,7 @@ subcli export all --profile bypass-cn --strict-capabilities
 - `profile explain --target all` is the pre-export capability interpretation check.
 - `export ... --json` is machine-readable evidence of per-target capability findings.
 - `--strict-capabilities` blocks degraded or unsupported exports for selected target(s).
-- GitHub `release-validation` workflow also uploads the packaged `build/subcli-*.tar.gz` artifact.
+- GitHub `release-validation` workflow triggers on `v*` tags, enforces tag == `v<project version>` from `CMakeLists.txt`, and uploads `build/subcli-*.tar.gz`.
 
 Advanced template merge behavior is also profile-driven via `template_policy`.
 

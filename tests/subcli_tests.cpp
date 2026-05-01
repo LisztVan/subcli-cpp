@@ -25,6 +25,7 @@
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
 #include "subcli/protocol_registry.hpp"
+#include "subcli/registry.hpp"
 #include "subcli/store.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
@@ -6006,6 +6007,33 @@ void testWorkspaceMigrateCopiesDurableDataOnly() {
     fs::remove_all(to);
 }
 
+void testRegistryContainsCurrentConfigKeys() {
+    const auto keys = subcli::allConfigKeyNames();
+    require(std::find(keys.begin(), keys.end(), "profile") != keys.end(), "registry should include profile");
+    require(std::find(keys.begin(), keys.end(), "profile_path") != keys.end(), "registry should include profile_path");
+    require(std::find(keys.begin(), keys.end(), "output_dir") != keys.end(), "registry should include output_dir");
+    require(std::find(keys.begin(), keys.end(), "template_dir") != keys.end(), "registry should include template_dir");
+    require(std::find(keys.begin(), keys.end(), "core_paths.mihomo") != keys.end(), "registry should include core_paths.mihomo");
+    require(std::find(keys.begin(), keys.end(), "core_paths.sing_box") != keys.end(), "registry should include core_paths.sing_box");
+    require(std::find(keys.begin(), keys.end(), "core_paths.xray") != keys.end(), "registry should include core_paths.xray");
+    require(std::find(keys.begin(), keys.end(), "node_management.dedupe") != keys.end(), "registry should include node_management.dedupe");
+}
+
+void testRegistryContainsCurrentExportTargets() {
+    const auto targets = subcli::allExportTargetIds();
+    require(targets.size() == 3, "registry should include exactly current built-in export targets");
+    require(std::find(targets.begin(), targets.end(), "mihomo") != targets.end(), "registry should include mihomo");
+    require(std::find(targets.begin(), targets.end(), "sing-box") != targets.end(), "registry should include sing-box");
+    require(std::find(targets.begin(), targets.end(), "xray") != targets.end(), "registry should include xray");
+}
+
+void testRegistryContainsCurrentCommandSurface() {
+    const auto commands = subcli::allCommandNames();
+    for (const auto& command : {"init", "doctor", "sub", "config", "profile", "template", "asset", "export", "workspace", "check", "run", "daemon", "status", "stop", "restart", "completion"}) {
+        require(std::find(commands.begin(), commands.end(), command) != commands.end(), std::string("registry should include command ") + command);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -6149,6 +6177,9 @@ int main() {
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();
     testStoreDefaultsMissingProfilePathToEmpty();
+    testRegistryContainsCurrentConfigKeys();
+    testRegistryContainsCurrentExportTargets();
+    testRegistryContainsCurrentCommandSurface();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();

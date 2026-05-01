@@ -34,6 +34,11 @@ for summary in \
         exit 1
     fi
 done
+sub_help="$($bin sub --help)"
+if [[ "$sub_help" != *"import"* || "$sub_help" != *"export"* || "$sub_help" != *"check"* || "$sub_help" != *"prune"* ]]; then
+    printf '%s\n' "$sub_help"
+    exit 1
+fi
 "$bin" template validate >/dev/null
 
 cp "$($bin template get mihomo normal)" "$tmp/valid-mihomo.yaml"

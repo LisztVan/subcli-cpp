@@ -3891,6 +3891,47 @@ wireguard://ok
     require(!result.messages.empty(), "uri-list should report invalid lines");
 }
 
+void testSubscriptionServicePruneDisabledDryRun() {
+    subcli::Subscription disabled;
+    disabled.id = "off";
+    disabled.name = "off";
+    disabled.enabled = false;
+
+    subcli::Subscription enabled;
+    enabled.id = "on";
+    enabled.name = "on";
+    enabled.enabled = true;
+
+    auto plan = subcli::planPruneSubscriptions({disabled, enabled}, true, 0);
+    require(plan.removeIds.size() == 1, "prune plan should include one disabled id");
+    require(plan.removeIds[0] == "off", "prune plan should remove disabled subscription");
+    require(plan.keepIds.size() == 1 && plan.keepIds[0] == "on", "prune plan should keep enabled subscription");
+}
+
+void testSubscriptionServiceBatchSetGroupByTag() {
+    subcli::Subscription hkA;
+    hkA.id = "hk-a";
+    hkA.tags = {"hk"};
+    hkA.group = "default";
+
+    subcli::Subscription hkB;
+    hkB.id = "hk-b";
+    hkB.tags = {"hk", "premium"};
+    hkB.group = "legacy";
+
+    subcli::Subscription us;
+    us.id = "us-a";
+    us.tags = {"us"};
+    us.group = "default";
+
+    std::vector<subcli::Subscription> subs = {hkA, hkB, us};
+    const int updated = subcli::batchSetGroupByTag(subs, "hk", "asia");
+    require(updated == 2, "batch set group should update all matching tag subscriptions");
+    require(subs[0].group == "asia", "first hk subscription group should be updated");
+    require(subs[1].group == "asia", "second hk subscription group should be updated");
+    require(subs[2].group == "default", "non matching tag should keep original group");
+}
+
 void testCustomStrategyGroupsRenderForMihomoAndSingBox() {
     auto config = makeConfig();
     config.strategyGroups.clear();
@@ -6439,6 +6480,8 @@ int main() {
     testSubscriptionServiceReplaceModeReturnsOnlyImported();
     testSubscriptionServiceYamlTypedDecodeErrorDoesNotCrash();
     testSubscriptionServiceUriListIgnoresCommentsAndRejectsInvalidLines();
+    testSubscriptionServicePruneDisabledDryRun();
+    testSubscriptionServiceBatchSetGroupByTag();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();

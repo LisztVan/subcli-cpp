@@ -251,6 +251,24 @@ if [[ "$out" != *"update failed for tagged"* ]]; then
     exit 1
 fi
 
+check_json="$({ "$bin" sub check --json; } 2>/dev/null || true)"
+if [[ "$check_json" != *'"url_present"'* ]]; then
+    printf '%s\n' "$check_json"
+    exit 1
+fi
+
+prune_dry_run_out="$($bin sub prune --disabled --dry-run)"
+if [[ "$prune_dry_run_out" != *"dry_run=true"* ]]; then
+    printf '%s\n' "$prune_dry_run_out"
+    exit 1
+fi
+
+edit_batch_out="$($bin sub edit --tag hk --set-group smoke-group)"
+if [[ "$edit_batch_out" != *"updated="* ]]; then
+    printf '%s\n' "$edit_batch_out"
+    exit 1
+fi
+
 printf '%s\n' 'trojan://password@1.2.3.4:443#HK-Node' > "$tmp/valid-sub.txt"
 "$bin" sub add --name explain --url "file://$tmp/valid-sub.txt" --force >/dev/null
 backup_file="$tmp/sub-backup.yaml"

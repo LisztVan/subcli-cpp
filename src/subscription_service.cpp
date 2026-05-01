@@ -261,4 +261,58 @@ SubscriptionImportResult importSubscriptionsFromUriList(
     return merged;
 }
 
+SubscriptionPrunePlan planPruneSubscriptions(
+    const std::vector<Subscription>& subscriptions,
+    bool disabled,
+    int failedDays
+) {
+    SubscriptionPrunePlan plan;
+    const std::time_t now = std::time(nullptr);
+    for (const auto& sub : subscriptions) {
+        bool remove = false;
+        if (disabled && !sub.enabled) {
+            remove = true;
+        }
+        if (!remove && failedDays > 0 && !sub.lastError.empty()) {
+            if (sub.lastSuccess.empty()) {
+                remove = true;
+            } else {
+                std::time_t lastSuccess = 0;
+                if (parseIso8601(sub.lastSuccess, lastSuccess)) {
+                    const auto ageSec = static_cast<long long>(now - lastSuccess);
+                    const auto threshold = static_cast<long long>(failedDays) * 24LL * 60LL * 60LL;
+                    if (ageSec >= threshold) {
+                        remove = true;
+                    }
+                }
+            }
+        }
+        if (remove) {
+            plan.removeIds.push_back(sub.id);
+        } else {
+            plan.keepIds.push_back(sub.id);
+        }
+    }
+    return plan;
+}
+
+int batchSetGroupByTag(
+    std::vector<Subscription>& subscriptions,
+    const std::string& tag,
+    const std::string& group
+) {
+    int updated = 0;
+    for (auto& sub : subscriptions) {
+        if (std::find(sub.tags.begin(), sub.tags.end(), tag) == sub.tags.end()) {
+            continue;
+        }
+        if (sub.group == group) {
+            continue;
+        }
+        sub.group = group;
+        ++updated;
+    }
+    return updated;
+}
+
 } // namespace subcli

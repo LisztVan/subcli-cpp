@@ -78,6 +78,9 @@ subcli sub remove airport-a
 subcli sub update
 subcli sub update --strict-network
 subcli sub validate airport-a
+subcli sub check --json
+subcli sub prune --disabled --dry-run
+subcli sub edit --tag hk --set-group asia
 subcli sub export --file ./backup/subs.yaml
 subcli sub import --file ./backup/subs.yaml --merge
 subcli sub export --file ./backup/enabled-hk.yaml --tag hk --enabled true

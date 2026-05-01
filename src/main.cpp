@@ -976,9 +976,9 @@ void printSubCommandUsageLine(const std::string& cmd) {
     } else if (cmd == "export") {
         std::cout << "Usage:\n  subcli sub export --file PATH [--format subcli-yaml] [--tag TAG] [--group GROUP] [--enabled true|false]\n";
     } else if (cmd == "check") {
-        std::cout << "Usage:\n  subcli sub check [id-or-name ...] [--tag TAG] [--strict-network]\n";
+        std::cout << "Usage:\n  subcli sub check [id-or-name ...] [--tag TAG] [--json]\n";
     } else if (cmd == "prune") {
-        std::cout << "Usage:\n  subcli sub prune [--disabled] [--failing N]\n";
+        std::cout << "Usage:\n  subcli sub prune [--disabled] [--failed-days N] [--dry-run]\n";
     }
 }
 
@@ -2014,9 +2014,9 @@ int doCompletionCommand(const std::vector<std::string>& args) {
 
 int doSubCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
-        if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export"})) {
+        if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export", "check", "prune"})) {
             printSubCommandUsageLine(args[2]);
-        } else if (args.size() == 3 && isHelpToken(args[2]) && isKnownSubcommand(args[1], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export"})) {
+        } else if (args.size() == 3 && isHelpToken(args[2]) && isKnownSubcommand(args[1], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export", "check", "prune"})) {
             printSubCommandUsageLine(args[1]);
         } else {
             printSubUsage();
@@ -2038,6 +2038,7 @@ int doSubCommand(const std::vector<std::string>& args) {
 
     bool listJson = false;
     std::string idOrName;
+    std::string editTargetIdOrName;
     std::vector<std::string> updateIds;
     std::string addId;
     std::string addName;
@@ -2069,6 +2070,8 @@ int doSubCommand(const std::vector<std::string>& args) {
     bool editClearHeaders = false;
     bool editEnable = false;
     bool editDisable = false;
+    std::string editBatchTag;
+    std::string editBatchSetGroup;
 
     std::vector<std::string> updateTags;
     bool updateStrictNetwork = false;
@@ -2083,6 +2086,12 @@ int doSubCommand(const std::vector<std::string>& args) {
     std::string exportTag;
     std::string exportGroup;
     std::string exportEnabled;
+    std::vector<std::string> checkIds;
+    std::vector<std::string> checkTags;
+    bool checkJson = false;
+    bool pruneDisabled = false;
+    std::string pruneFailedDays;
+    bool pruneDryRun = false;
 
     auto* listCmd = parser.add_subcommand("list");
     listCmd->add_flag("--json", listJson);
@@ -2112,7 +2121,7 @@ int doSubCommand(const std::vector<std::string>& args) {
     disableCmd->add_option("id_or_name", idOrName);
 
     auto* editCmd = parser.add_subcommand("edit");
-    editCmd->add_option("id_or_name", idOrName);
+    editCmd->add_option("id_or_name", editTargetIdOrName);
     editCmd->add_option("--name", editName);
     editCmd->add_option("--url", editUrl);
     editCmd->add_option("--group", editGroup);
@@ -2128,6 +2137,8 @@ int doSubCommand(const std::vector<std::string>& args) {
     editCmd->add_flag("--clear-headers", editClearHeaders);
     editCmd->add_flag("--enable", editEnable);
     editCmd->add_flag("--disable", editDisable);
+    editCmd->add_option("--tag", editBatchTag);
+    editCmd->add_option("--set-group", editBatchSetGroup);
 
     auto* validateCmd = parser.add_subcommand("validate");
     validateCmd->add_option("id_or_name", idOrName)->required(false);
@@ -2152,6 +2163,16 @@ int doSubCommand(const std::vector<std::string>& args) {
     exportCmd->add_option("--group", exportGroup);
     exportCmd->add_option("--enabled", exportEnabled);
 
+    auto* checkCmd = parser.add_subcommand("check");
+    checkCmd->add_option("id_or_name", checkIds);
+    checkCmd->add_option("--tag", checkTags);
+    checkCmd->add_flag("--json", checkJson);
+
+    auto* pruneCmd = parser.add_subcommand("prune");
+    pruneCmd->add_flag("--disabled", pruneDisabled);
+    pruneCmd->add_option("--failed-days", pruneFailedDays);
+    pruneCmd->add_flag("--dry-run", pruneDryRun);
+
     if (!parseCliArgs(parser, args)) {
         printSubUsage();
         return ExitUsage;
@@ -2168,6 +2189,8 @@ int doSubCommand(const std::vector<std::string>& args) {
     else if (*updateCmd) cmd = "update";
     else if (*importCmd) cmd = "import";
     else if (*exportCmd) cmd = "export";
+    else if (*checkCmd) cmd = "check";
+    else if (*pruneCmd) cmd = "prune";
     if (cmd == "list") {
         const bool jsonOutput = listJson;
         if (jsonOutput) {
@@ -2326,13 +2349,24 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "edit") {
-        if (idOrName.empty()) {
+        const bool batchModeRequested = !editBatchTag.empty() || !editBatchSetGroup.empty();
+        if (batchModeRequested && editTargetIdOrName.empty()) {
+            if (editBatchTag.empty() || editBatchSetGroup.empty()) {
+                std::cerr << "sub edit batch mode requires --tag TAG and --set-group GROUP\n";
+                return ExitUsage;
+            }
+            const int updated = batchSetGroupByTag(subs, editBatchTag, editBatchSetGroup);
+            saveSubscriptions(gPaths.subPath.string(), subs);
+            std::cout << "updated=" << updated << "\n";
+            return ExitOk;
+        }
+        if (editTargetIdOrName.empty()) {
             std::cerr << "sub edit requires <id|name>\n";
             return 1;
         }
-        auto* s = findSub(subs, idOrName);
+        auto* s = findSub(subs, editTargetIdOrName);
         if (!s) {
-            std::cerr << "not found: " << idOrName << "\n";
+            std::cerr << "not found: " << editTargetIdOrName << "\n";
             return 1;
         }
         const auto& name = editName;
@@ -2421,6 +2455,117 @@ int doSubCommand(const std::vector<std::string>& args) {
         saveSubscriptions(gPaths.subPath.string(), subs);
         std::cout << "edited subscription: " << s->id << "\n";
         return 0;
+    }
+
+    if (cmd == "check") {
+        std::set<std::string> ids;
+        for (const auto& id : checkIds) {
+            ids.insert(id);
+        }
+
+        nlohmann::json items = nlohmann::json::array();
+        int okCount = 0;
+        int failCount = 0;
+        for (const auto& sub : subs) {
+            if (!sub.enabled) {
+                continue;
+            }
+            if (!ids.empty() && !ids.count(sub.id) && !ids.count(sub.name)) {
+                continue;
+            }
+            if (!checkTags.empty()) {
+                bool tagMatched = false;
+                for (const auto& tag : checkTags) {
+                    if (std::find(sub.tags.begin(), sub.tags.end(), tag) != sub.tags.end()) {
+                        tagMatched = true;
+                        break;
+                    }
+                }
+                if (!tagMatched) {
+                    continue;
+                }
+            }
+
+            const bool urlPresent = !sub.url.empty();
+            const std::string cacheFile = resolveCachePath(sub.cachePath);
+            const bool cachePresent = fileExists(cacheFile);
+            const bool successPresent = !sub.lastSuccess.empty();
+            const bool hasError = !sub.lastError.empty();
+            const bool fetchable = sub.enabled && urlPresent && cachePresent && !hasError;
+            const bool parseable = fetchable && successPresent;
+            if (fetchable && parseable) {
+                ++okCount;
+            } else {
+                ++failCount;
+            }
+            std::string error;
+            if (!sub.enabled) {
+                error = "disabled";
+            } else if (!urlPresent) {
+                error = "missing url";
+            } else if (!cachePresent) {
+                error = "missing cache";
+            } else if (hasError) {
+                error = sub.lastError;
+            } else if (!successPresent) {
+                error = "missing last success";
+            }
+
+            if (checkJson) {
+                items.push_back(
+                    {
+                        {"id", sub.id},
+                        {"name", sub.name},
+                        {"enabled", sub.enabled},
+                        {"url_present", urlPresent},
+                        {"cache_present", cachePresent},
+                        {"last_success_present", successPresent},
+                        {"last_error", sub.lastError},
+                        {"fetchable", fetchable},
+                        {"parseable", parseable},
+                        {"node_count", 0},
+                        {"error", error},
+                    }
+                );
+            } else {
+                std::cout << sub.id << "\tfetchable=" << (fetchable ? "true" : "false") << "\tparseable=" << (parseable ? "true" : "false")
+                          << "\turl_present=" << (urlPresent ? "true" : "false") << "\tcache_present=" << (cachePresent ? "true" : "false")
+                          << "\tlast_success=" << (successPresent ? "true" : "false") << "\terror=" << (error.empty() ? "-" : error) << "\n";
+            }
+        }
+        if (checkJson) {
+            printJsonLine({{"summary", {{"ok", okCount}, {"failed", failCount}}}, {"checks", items}});
+        } else {
+            std::cout << "check summary: ok=" << okCount << " failed=" << failCount << "\n";
+        }
+        return failCount > 0 ? ExitError : ExitOk;
+    }
+
+    if (cmd == "prune") {
+        int failedDays = 0;
+        if (!pruneFailedDays.empty() && !parseBoundedIntValue(pruneFailedDays, "--failed-days", 1, failedDays)) {
+            return ExitUsage;
+        }
+        if (!pruneDisabled && failedDays <= 0) {
+            std::cerr << "sub prune requires --disabled or --failed-days N\n";
+            return ExitUsage;
+        }
+        const auto plan = planPruneSubscriptions(subs, pruneDisabled, failedDays);
+        if (!pruneDryRun) {
+            subs.erase(
+                std::remove_if(
+                    subs.begin(),
+                    subs.end(),
+                    [&](const Subscription& sub) {
+                        return std::find(plan.removeIds.begin(), plan.removeIds.end(), sub.id) != plan.removeIds.end();
+                    }
+                ),
+                subs.end()
+            );
+            saveSubscriptions(gPaths.subPath.string(), subs);
+        }
+        std::cout << "pruned=" << plan.removeIds.size() << " dry_run=" << (pruneDryRun ? "true" : "false") << "\n";
+        return ExitOk;
     }
 
     if (cmd == "validate") {

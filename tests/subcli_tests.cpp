@@ -3932,6 +3932,23 @@ void testSubscriptionServiceBatchSetGroupByTag() {
     require(subs[2].group == "default", "non matching tag should keep original group");
 }
 
+void testSubscriptionServicePruneFailedDays() {
+    subcli::Subscription stale;
+    stale.id = "stale";
+    stale.lastError = "fetch failed";
+    stale.lastSuccess = "2000-01-01T00:00:00Z";
+
+    subcli::Subscription fresh;
+    fresh.id = "fresh";
+    fresh.lastError = "fetch failed";
+    fresh.lastSuccess = subcli::nowIso8601();
+
+    auto plan = subcli::planPruneSubscriptions({stale, fresh}, false, 1);
+    require(plan.removeIds.size() == 1, "prune failed-days should remove stale failed subscription");
+    require(plan.removeIds[0] == "stale", "prune failed-days should remove stale id");
+    require(plan.keepIds.size() == 1 && plan.keepIds[0] == "fresh", "prune failed-days should keep recent failed subscription");
+}
+
 void testCustomStrategyGroupsRenderForMihomoAndSingBox() {
     auto config = makeConfig();
     config.strategyGroups.clear();
@@ -6482,6 +6499,7 @@ int main() {
     testSubscriptionServiceUriListIgnoresCommentsAndRejectsInvalidLines();
     testSubscriptionServicePruneDisabledDryRun();
     testSubscriptionServiceBatchSetGroupByTag();
+    testSubscriptionServicePruneFailedDays();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();

@@ -251,6 +251,40 @@ if [[ "$out" != *"update failed for tagged"* ]]; then
     exit 1
 fi
 
+"$bin" sub disable tagged >/dev/null
+
+check_disabled_json="$({ "$bin" sub check tagged --json; } 2>/dev/null || true)"
+if [[ "$check_disabled_json" != *'"id":"tagged"'* ]]; then
+    printf '%s\n' "$check_disabled_json"
+    exit 1
+fi
+
+check_disabled_tag_json="$({ "$bin" sub check --tag hk --json; } 2>/dev/null || true)"
+if [[ "$check_disabled_tag_json" != *'"id":"tagged"'* ]]; then
+    printf '%s\n' "$check_disabled_tag_json"
+    exit 1
+fi
+
+strict_out="$({ "$bin" sub check --strict-network; } 2>&1 || true)"
+if [[ "$strict_out" != *"--strict-network is ignored"* ]]; then
+    printf '%s\n' "$strict_out"
+    exit 1
+fi
+
+strict_json="$({ "$bin" sub check --strict-network --json; } 2>/dev/null || true)"
+if [[ "$strict_json" != *'"checks"'* || "$strict_json" == *"ignored"* ]]; then
+    printf '%s\n' "$strict_json"
+    exit 1
+fi
+
+"$bin" sub edit tagged --tag hk --set-group bad >/dev/null 2>&1 && exit 1 || true
+
+prune_failed_days="$($bin sub prune --failed-days 1 --dry-run)"
+if [[ "$prune_failed_days" != *"dry_run=true"* || "$prune_failed_days" != *"pruned="* ]]; then
+    printf '%s\n' "$prune_failed_days"
+    exit 1
+fi
+
 check_json="$({ "$bin" sub check --json; } 2>/dev/null || true)"
 if [[ "$check_json" != *'"url_present"'* ]]; then
     printf '%s\n' "$check_json"

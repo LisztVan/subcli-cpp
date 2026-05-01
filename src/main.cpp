@@ -17,6 +17,7 @@
 #include <system_error>
 #include <map>
 #include <tuple>
+#include <unordered_set>
 
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
@@ -976,7 +977,7 @@ void printSubCommandUsageLine(const std::string& cmd) {
     } else if (cmd == "export") {
         std::cout << "Usage:\n  subcli sub export --file PATH [--format subcli-yaml] [--tag TAG] [--group GROUP] [--enabled true|false]\n";
     } else if (cmd == "check") {
-        std::cout << "Usage:\n  subcli sub check [id-or-name ...] [--tag TAG] [--json]\n";
+        std::cout << "Usage:\n  subcli sub check [id-or-name ...] [--tag TAG] [--strict-network] [--json]\n";
     } else if (cmd == "prune") {
         std::cout << "Usage:\n  subcli sub prune [--disabled] [--failed-days N] [--dry-run]\n";
     }
@@ -2088,6 +2089,7 @@ int doSubCommand(const std::vector<std::string>& args) {
     std::string exportEnabled;
     std::vector<std::string> checkIds;
     std::vector<std::string> checkTags;
+    bool checkStrictNetwork = false;
     bool checkJson = false;
     bool pruneDisabled = false;
     std::string pruneFailedDays;
@@ -2166,6 +2168,7 @@ int doSubCommand(const std::vector<std::string>& args) {
     auto* checkCmd = parser.add_subcommand("check");
     checkCmd->add_option("id_or_name", checkIds);
     checkCmd->add_option("--tag", checkTags);
+    checkCmd->add_flag("--strict-network", checkStrictNetwork);
     checkCmd->add_flag("--json", checkJson);
 
     auto* pruneCmd = parser.add_subcommand("prune");
@@ -2350,6 +2353,10 @@ int doSubCommand(const std::vector<std::string>& args) {
 
     if (cmd == "edit") {
         const bool batchModeRequested = !editBatchTag.empty() || !editBatchSetGroup.empty();
+        if (batchModeRequested && !editTargetIdOrName.empty()) {
+            std::cerr << "sub edit batch mode cannot be mixed with positional <id|name>\n";
+            return ExitUsage;
+        }
         if (batchModeRequested && editTargetIdOrName.empty()) {
             if (editBatchTag.empty() || editBatchSetGroup.empty()) {
                 std::cerr << "sub edit batch mode requires --tag TAG and --set-group GROUP\n";
@@ -2462,12 +2469,16 @@ int doSubCommand(const std::vector<std::string>& args) {
         for (const auto& id : checkIds) {
             ids.insert(id);
         }
+        const bool hasFilters = !ids.empty() || !checkTags.empty();
+        if (checkStrictNetwork && !checkJson) {
+            std::cerr << "warning: --strict-network is ignored for local sub check\n";
+        }
 
         nlohmann::json items = nlohmann::json::array();
         int okCount = 0;
         int failCount = 0;
         for (const auto& sub : subs) {
-            if (!sub.enabled) {
+            if (!hasFilters && !sub.enabled) {
                 continue;
             }
             if (!ids.empty() && !ids.count(sub.id) && !ids.count(sub.name)) {
@@ -2499,9 +2510,7 @@ int doSubCommand(const std::vector<std::string>& args) {
                 ++failCount;
             }
             std::string error;
-            if (!sub.enabled) {
-                error = "disabled";
-            } else if (!urlPresent) {
+            if (!urlPresent) {
                 error = "missing url";
             } else if (!cachePresent) {
                 error = "missing cache";
@@ -2552,12 +2561,13 @@ int doSubCommand(const std::vector<std::string>& args) {
         }
         const auto plan = planPruneSubscriptions(subs, pruneDisabled, failedDays);
         if (!pruneDryRun) {
+            std::unordered_set<std::string> removeSet(plan.removeIds.begin(), plan.removeIds.end());
             subs.erase(
                 std::remove_if(
                     subs.begin(),
                     subs.end(),
                     [&](const Subscription& sub) {
-                        return std::find(plan.removeIds.begin(), plan.removeIds.end(), sub.id) != plan.removeIds.end();
+                        return removeSet.find(sub.id) != removeSet.end();
                     }
                 ),
                 subs.end()

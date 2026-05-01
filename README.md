@@ -36,6 +36,8 @@ Package archive:
 cmake --build build --target package
 ```
 
+Release-validation workflow runs configure/build/test/package for tagged releases.
+
 ## Quick Start
 
 ```bash

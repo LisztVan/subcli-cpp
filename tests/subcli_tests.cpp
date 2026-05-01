@@ -6597,6 +6597,16 @@ void testConfigServiceRejectsUnknownAndBadValues() {
     require(error == "unsupported key in v1", "remove unknown key should use unsupported message");
 }
 
+void testCMakeVersionIsV025() {
+    const fs::path cmakePath = fs::path(SUBCLI_SOURCE_DIR) / "CMakeLists.txt";
+    std::ifstream in(cmakePath);
+    require(in.is_open(), "CMakeLists.txt should be readable");
+
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    require(content.find("project(subcli VERSION 0.2.5") != std::string::npos,
+            "CMakeLists.txt should declare project(subcli VERSION 0.2.5");
+}
+
 } // namespace
 
 int main() {
@@ -6770,6 +6780,7 @@ int main() {
     testRegistrySubDescriptorMentionsDataLifecycleCommands();
     testConfigServiceSetGetRemoveScalarKeys();
     testConfigServiceRejectsUnknownAndBadValues();
+    testCMakeVersionIsV025();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();

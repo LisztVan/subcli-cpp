@@ -3949,6 +3949,17 @@ void testSubscriptionServicePruneFailedDays() {
     require(plan.keepIds.size() == 1 && plan.keepIds[0] == "fresh", "prune failed-days should keep recent failed subscription");
 }
 
+void testSubscriptionServicePruneFailedDaysKeepsInvalidTimestamp() {
+    subcli::Subscription invalidTs;
+    invalidTs.id = "invalid-ts";
+    invalidTs.lastError = "fetch failed";
+    invalidTs.lastSuccess = "not-a-timestamp";
+
+    auto plan = subcli::planPruneSubscriptions({invalidTs}, false, 3);
+    require(plan.removeIds.empty(), "invalid lastSuccess timestamp should not be auto-pruned by failed-days");
+    require(plan.keepIds.size() == 1 && plan.keepIds[0] == "invalid-ts", "invalid timestamp subscription should be kept");
+}
+
 void testCustomStrategyGroupsRenderForMihomoAndSingBox() {
     auto config = makeConfig();
     config.strategyGroups.clear();
@@ -6500,6 +6511,7 @@ int main() {
     testSubscriptionServicePruneDisabledDryRun();
     testSubscriptionServiceBatchSetGroupByTag();
     testSubscriptionServicePruneFailedDays();
+    testSubscriptionServicePruneFailedDaysKeepsInvalidTimestamp();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();

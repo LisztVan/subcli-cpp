@@ -6,6 +6,22 @@ namespace subcli {
 
 namespace {
 
+std::string resolveUriFingerprintAlias(const std::map<std::string, std::string>& query) {
+    auto it = query.find("fp");
+    if (it != query.end() && !it->second.empty()) {
+        return it->second;
+    }
+    it = query.find("client-fingerprint");
+    if (it != query.end() && !it->second.empty()) {
+        return it->second;
+    }
+    it = query.find("fingerprint");
+    if (it != query.end() && !it->second.empty()) {
+        return it->second;
+    }
+    return "";
+}
+
 void applyUriClientFingerprint(ProxyNode& node, const std::string& line) {
     auto queryStart = line.find('?');
     if (queryStart == std::string::npos) {
@@ -15,24 +31,16 @@ void applyUriClientFingerprint(ProxyNode& node, const std::string& line) {
     const auto queryText = line.substr(queryStart + 1, queryEnd == std::string::npos ? std::string::npos : queryEnd - queryStart - 1);
     const auto query = parseQuery(queryText);
 
-    std::string fingerprint;
-    auto it = query.find("fp");
-    if (it != query.end()) {
-        fingerprint = it->second;
-    }
-    if (fingerprint.empty()) {
-        it = query.find("client-fingerprint");
-        if (it != query.end()) {
-            fingerprint = it->second;
-        }
-    }
+    const std::string fingerprint = resolveUriFingerprintAlias(query);
     if (fingerprint.empty()) {
         return;
     }
 
-    node.tlsConfig.fingerprint = fingerprint;
     node.fingerprint = fingerprint;
     node.protocol.values["client-fingerprint"] = fingerprint;
+    if (node.tlsConfig.enabled || node.tlsConfig.reality.enabled) {
+        node.tlsConfig.fingerprint = fingerprint;
+    }
 }
 
 } // namespace

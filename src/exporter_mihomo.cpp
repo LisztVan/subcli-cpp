@@ -319,10 +319,7 @@ ExportResult exportMihomoImpl(
     ExportResult result;
     std::vector<ProxyNode> supported;
     auto prepared = preprocessNodes(nodes, config, result.warnings);
-    for (auto node : makeExportNodes(prepared)) {
-        if (node.tlsConfig.fingerprint.empty() && !node.fingerprint.empty()) {
-            node.tlsConfig.fingerprint = node.fingerprint;
-        }
+    for (const auto& node : makeExportNodes(prepared)) {
         std::string reason;
         if (supportsNode(ExportTarget::Mihomo, node, reason)) {
             supported.push_back(node);

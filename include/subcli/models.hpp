@@ -184,7 +184,7 @@ struct ProxyNode {
         if (tlsConfig.sni.empty()) {
             tlsConfig.sni = sni;
         }
-        if (tlsConfig.fingerprint.empty()) {
+        if (tlsConfig.fingerprint.empty() && (tlsConfig.enabled || tlsConfig.reality.enabled)) {
             tlsConfig.fingerprint = fingerprint;
         }
         tlsConfig.reality.enabled = tlsConfig.reality.enabled || reality;

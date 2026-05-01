@@ -2401,6 +2401,131 @@ void testUriClientFingerprintPreservedForTlsNodes() {
     require(node.fingerprint == "chrome", "legacy fingerprint should preserve fp=chrome");
 }
 
+void testUriClientFingerprintAliasMappingAndPrecedence() {
+    const std::string content =
+        "vless://11111111-1111-1111-1111-111111111111@one.example.com:443?security=tls&fp=chrome&client-fingerprint=firefox&fingerprint=safari#One\n"
+        "vless://11111111-1111-1111-1111-111111111111@two.example.com:443?security=tls&client-fingerprint=edge&fingerprint=safari#Two\n"
+        "vless://11111111-1111-1111-1111-111111111111@three.example.com:443?security=tls&fingerprint=ios#Three\n";
+
+    auto result = subcli::parseSubscription(content, "fixture", "uri", makeConfig());
+    require(result.nodes.size() == 3, "fingerprint alias mapping should parse all nodes");
+
+    require(result.nodes[0].tlsConfig.fingerprint == "chrome", "fp should have highest precedence");
+    require(result.nodes[0].fingerprint == "chrome", "legacy fingerprint should use fp");
+    require(result.nodes[0].protocol.values.at("client-fingerprint") == "chrome", "protocol values should keep unified fingerprint");
+
+    require(result.nodes[1].tlsConfig.fingerprint == "edge", "client-fingerprint should win over fingerprint when fp missing");
+    require(result.nodes[1].fingerprint == "edge", "legacy fingerprint should use client-fingerprint");
+    require(result.nodes[1].protocol.values.at("client-fingerprint") == "edge", "protocol values should keep client-fingerprint alias");
+
+    require(result.nodes[2].tlsConfig.fingerprint == "ios", "fingerprint alias should map when others missing");
+    require(result.nodes[2].fingerprint == "ios", "legacy fingerprint should keep fingerprint alias");
+    require(result.nodes[2].protocol.values.at("client-fingerprint") == "ios", "protocol values should keep fallback fingerprint alias");
+}
+
+void testUriClientFingerprintTrojanAndNonTlsGate() {
+    const std::string content =
+        "trojan://password@trojan.example.com:443?security=tls&client-fingerprint=chrome#Trojan\n"
+        "vless://11111111-1111-1111-1111-111111111111@plain.example.com:443?security=none&fp=firefox#Plain\n";
+
+    auto result = subcli::parseSubscription(content, "fixture", "uri", makeConfig());
+    require(result.nodes.size() == 2, "trojan and non-tls vless should parse");
+
+    const auto& trojan = result.nodes[0];
+    require(trojan.type == "trojan", "first node should be trojan");
+    require(trojan.tlsConfig.fingerprint == "chrome", "trojan tls should promote fingerprint");
+    require(trojan.fingerprint == "chrome", "trojan legacy fingerprint should preserve alias");
+    require(trojan.protocol.values.at("client-fingerprint") == "chrome", "trojan protocol values should keep alias");
+
+    const auto& nonTls = result.nodes[1];
+    require(nonTls.type == "vless", "second node should be vless");
+    require(nonTls.fingerprint == "firefox", "non-tls legacy fingerprint should preserve alias");
+    require(nonTls.protocol.values.at("client-fingerprint") == "firefox", "non-tls protocol values should keep alias");
+    require(nonTls.tlsConfig.fingerprint.empty(), "non-tls node should not promote fingerprint into tlsConfig");
+}
+
+void testExporterFingerprintPropagationAcrossTargets() {
+    auto config = makeConfig();
+
+    subcli::ProxyNode node;
+    node.type = "vless";
+    node.name = "VLESS TLS Node";
+    node.server = "vless.example.com";
+    node.port = 443;
+    node.protocol.uuid = "11111111-1111-1111-1111-111111111111";
+    node.tls = true;
+    node.fingerprint = "chrome";
+    node.normalize();
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-fingerprint-propagation";
+    fs::remove_all(outDir);
+    fs::create_directories(outDir);
+
+    std::string error;
+    auto mihomo = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {node}, config, false, (outDir / "mihomo.yaml").string(), error);
+    require(mihomo.ok, "mihomo export should succeed: " + error);
+    auto sing = subcli::exportForTarget(subcli::ExportTarget::SingBox, {node}, config, false, (outDir / "singbox.json").string(), error);
+    require(sing.ok, "sing-box export should succeed: " + error);
+    auto xray = subcli::exportForTarget(subcli::ExportTarget::Xray, {node}, config, false, (outDir / "xray.json").string(), error);
+    require(xray.ok, "xray export should succeed: " + error);
+
+    const auto mihomoRoot = YAML::LoadFile((outDir / "mihomo.yaml").string());
+    require(mihomoRoot["proxies"] && mihomoRoot["proxies"].IsSequence() && mihomoRoot["proxies"].size() > 0, "mihomo should render proxies");
+    require(mihomoRoot["proxies"][0]["client-fingerprint"].as<std::string>("") == "chrome", "mihomo should render client-fingerprint");
+
+    auto singRoot = nlohmann::json::parse(subcli::readFile((outDir / "singbox.json").string()), nullptr, false);
+    require(!singRoot.is_discarded(), "sing-box output should parse");
+    require(singRoot["outbounds"].is_array() && !singRoot["outbounds"].empty(), "sing-box should render outbounds");
+    bool singHasFingerprint = false;
+    for (const auto& outbound : singRoot["outbounds"]) {
+        if (!outbound.is_object() || outbound.value("tag", "") != "VLESS TLS Node") {
+            continue;
+        }
+        if (outbound.contains("tls") && outbound["tls"].is_object() &&
+            outbound["tls"].contains("utls") && outbound["tls"]["utls"].is_object()) {
+            singHasFingerprint = outbound["tls"]["utls"].value("fingerprint", "") == "chrome";
+        }
+    }
+    require(singHasFingerprint, "sing-box should render tls.utls fingerprint");
+
+    auto xrayRoot = nlohmann::json::parse(subcli::readFile((outDir / "xray.json").string()), nullptr, false);
+    require(!xrayRoot.is_discarded(), "xray output should parse");
+    require(xrayRoot["outbounds"].is_array() && !xrayRoot["outbounds"].empty(), "xray should render outbounds");
+    bool xrayHasFingerprint = false;
+    for (const auto& outbound : xrayRoot["outbounds"]) {
+        if (!outbound.is_object() || outbound.value("protocol", "") != "vless") {
+            continue;
+        }
+        if (outbound.contains("streamSettings") && outbound["streamSettings"].is_object() &&
+            outbound["streamSettings"].contains("tlsSettings") && outbound["streamSettings"]["tlsSettings"].is_object()) {
+            xrayHasFingerprint = outbound["streamSettings"]["tlsSettings"].value("fingerprint", "") == "chrome";
+        }
+    }
+    require(xrayHasFingerprint, "xray should render tlsSettings fingerprint");
+
+    fs::remove_all(outDir);
+}
+
+void testFingerprintPromotionPrecedenceKeepsStructuredValue() {
+    auto config = makeConfig();
+
+    subcli::ProxyNode node;
+    node.type = "vless";
+    node.name = "Structured FP";
+    node.server = "vless.example.com";
+    node.port = 443;
+    node.protocol.uuid = "11111111-1111-1111-1111-111111111111";
+    node.tlsConfig.enabled = true;
+    node.tlsConfig.fingerprint = "structured";
+    node.fingerprint = "legacy";
+    node.normalize();
+
+    std::vector<subcli::DiagnosticMessage> warnings;
+    auto prepared = subcli::preprocessNodes({node}, config, warnings);
+    require(prepared.size() == 1, "preprocess should keep node");
+    require(prepared[0].tlsConfig.fingerprint == "structured", "structured fingerprint should not be overwritten by legacy fallback");
+}
+
 void testUnknownFormatHintFallsBackToAuto() {
     const std::string content = "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls#Node\n";
     auto result = subcli::parseSubscription(content, "fixture", "mystery-format", makeConfig());
@@ -6548,6 +6673,10 @@ int main() {
     testParseUriIgnoresInvalidVmessPort();
     testParseModernUdpUriLinks();
     testUriClientFingerprintPreservedForTlsNodes();
+    testUriClientFingerprintAliasMappingAndPrecedence();
+    testUriClientFingerprintTrojanAndNonTlsGate();
+    testExporterFingerprintPropagationAcrossTargets();
+    testFingerprintPromotionPrecedenceKeepsStructuredValue();
     testUnknownFormatHintFallsBackToAuto();
     testHintParseFailedFallsBackToAuto();
     testParseMihomoHttpOpts();

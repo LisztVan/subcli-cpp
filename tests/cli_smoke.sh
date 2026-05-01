@@ -267,6 +267,20 @@ if [[ "$sub_list_json" != *'"name":"explain"'* ]]; then
     exit 1
 fi
 
+positional_backup="$tmp/sub-backup-positional.yaml"
+"$bin" sub export "$positional_backup" >/dev/null
+if [[ ! -f "$positional_backup" || ! -s "$positional_backup" ]]; then
+    printf 'positional sub export should create non-empty file: %s\n' "$positional_backup"
+    exit 1
+fi
+"$bin" sub remove explain >/dev/null
+"$bin" sub import "$positional_backup" >/dev/null
+positional_json="$($bin sub list --json)"
+if [[ "$positional_json" != *'"name":"explain"'* ]]; then
+    printf '%s\n' "$positional_json"
+    exit 1
+fi
+
 explain_export="$({ "$bin" export mihomo --profile bypass-cn --sub explain --explain-policy; } 2>&1 || true)"
 if [[ "$explain_export" != *"policy explain: profile=bypass-cn"* || "$explain_export" != *"policy explain: target=mihomo"* ]]; then
     printf '%s\n' "$explain_export"

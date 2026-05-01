@@ -2073,10 +2073,12 @@ int doSubCommand(const std::vector<std::string>& args) {
     std::vector<std::string> updateTags;
     bool updateStrictNetwork = false;
     std::string importFile;
+    std::string importFilePositional;
     std::string importFormat = "auto";
     bool importMerge = false;
     bool importReplace = false;
     std::string exportFile;
+    std::string exportFilePositional;
     std::string exportFormat = "subcli-yaml";
     std::string exportTag;
     std::string exportGroup;
@@ -2136,12 +2138,14 @@ int doSubCommand(const std::vector<std::string>& args) {
     updateCmd->add_flag("--strict-network", updateStrictNetwork);
 
     auto* importCmd = parser.add_subcommand("import");
+    importCmd->add_option("path", importFilePositional);
     importCmd->add_option("--file", importFile);
     importCmd->add_option("--format", importFormat);
     importCmd->add_flag("--merge", importMerge);
     importCmd->add_flag("--replace", importReplace);
 
     auto* exportCmd = parser.add_subcommand("export");
+    exportCmd->add_option("path", exportFilePositional);
     exportCmd->add_option("--file", exportFile);
     exportCmd->add_option("--format", exportFormat);
     exportCmd->add_option("--tag", exportTag);
@@ -2595,6 +2599,9 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "import") {
+        if (importFile.empty() && !importFilePositional.empty()) {
+            importFile = importFilePositional;
+        }
         if (importFile.empty()) {
             std::cerr << "sub import requires --file PATH\n";
             return ExitUsage;
@@ -2639,6 +2646,9 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "export") {
+        if (exportFile.empty() && !exportFilePositional.empty()) {
+            exportFile = exportFilePositional;
+        }
         if (exportFile.empty()) {
             std::cerr << "sub export requires --file PATH\n";
             return ExitUsage;

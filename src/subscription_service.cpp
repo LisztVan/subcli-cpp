@@ -30,22 +30,22 @@ Subscription parseSubscriptionFromYaml(const YAML::Node& n) {
     s.id = n["id"].as<std::string>("");
     s.name = n["name"].as<std::string>("");
     s.url = n["url"].as<std::string>("");
-    s.enabled = n["enabled"].as<bool>(true);
+    s.enabled = n["enabled"] ? n["enabled"].as<bool>() : true;
     s.group = n["group"].as<std::string>("default");
     s.formatHint = n["format_hint"].as<std::string>("auto");
     s.userAgent = n["user_agent"].as<std::string>("");
-    s.timeout = n["timeout"].as<int>(15);
-    s.timeoutOverride = n["timeout_override"].as<bool>(s.timeout != 15);
-    s.retry = n["retry"].as<int>(2);
-    s.retryOverride = n["retry_override"].as<bool>(s.retry != 2);
-    s.updateInterval = n["update_interval"].as<int>(3600);
+    s.timeout = n["timeout"] ? n["timeout"].as<int>() : 15;
+    s.timeoutOverride = n["timeout_override"] ? n["timeout_override"].as<bool>() : (s.timeout != 15);
+    s.retry = n["retry"] ? n["retry"].as<int>() : 2;
+    s.retryOverride = n["retry_override"] ? n["retry_override"].as<bool>() : (s.retry != 2);
+    s.updateInterval = n["update_interval"] ? n["update_interval"].as<int>() : 3600;
     s.lastUpdated = n["last_updated"].as<std::string>("");
     s.lastSuccess = n["last_success"].as<std::string>("");
     s.lastError = n["last_error"].as<std::string>("");
     s.etag = n["etag"].as<std::string>("");
     s.lastModified = n["last_modified"].as<std::string>("");
     s.cachePath = n["cache_path"].as<std::string>("");
-    s.priority = n["priority"].as<int>(100);
+    s.priority = n["priority"] ? n["priority"].as<int>() : 100;
     if (n["tags"] && n["tags"].IsSequence()) {
         for (const auto& tag : n["tags"]) {
             s.tags.push_back(tag.as<std::string>());
@@ -176,18 +176,41 @@ SubscriptionImportResult importSubscriptionsFromYaml(
     }
 
     std::vector<Subscription> imported;
+    int index = 0;
     for (const auto& item : root["subscriptions"]) {
-        const std::string name = item["name"].as<std::string>("");
-        const std::string url = item["url"].as<std::string>("");
+        ++index;
+        std::string name;
+        std::string url;
+        try {
+            name = item["name"].as<std::string>("");
+            url = item["url"].as<std::string>("");
+        } catch (const std::exception& ex) {
+            ++result.rejected;
+            result.messages.push_back("subscription[" + std::to_string(index) + "] decode failed: " + ex.what());
+            continue;
+        }
         if (name.empty() || url.empty()) {
             result.rejected = static_cast<int>(root["subscriptions"].size());
             result.messages.push_back("missing required subscription field");
             return result;
         }
-        imported.push_back(parseSubscriptionFromYaml(item));
+        try {
+            imported.push_back(parseSubscriptionFromYaml(item));
+        } catch (const std::exception& ex) {
+            ++result.rejected;
+            result.messages.push_back("subscription[" + std::to_string(index) + "] decode failed: " + ex.what());
+        }
     }
 
-    return mergeImportedSubscriptions(existing, imported, mode);
+    if (imported.empty()) {
+        result.subscriptions = existing;
+        return result;
+    }
+
+    auto merged = mergeImportedSubscriptions(existing, imported, mode);
+    merged.rejected += result.rejected;
+    merged.messages.insert(merged.messages.end(), result.messages.begin(), result.messages.end());
+    return merged;
 }
 
 SubscriptionImportResult importSubscriptionsFromUriList(
@@ -196,23 +219,46 @@ SubscriptionImportResult importSubscriptionsFromUriList(
     SubscriptionImportMode mode
 ) {
     std::vector<Subscription> imported;
+    SubscriptionImportResult result;
     std::istringstream input(uriListContent);
     std::string line;
     int index = 0;
+    int validIndex = 0;
     while (std::getline(input, line)) {
         const auto trimmed = trim(line);
         if (trimmed.empty()) {
             continue;
         }
+        if (trimmed[0] == '#' || trimmed[0] == ';') {
+            continue;
+        }
         ++index;
+        const bool allowedScheme =
+            trimmed.rfind("vmess://", 0) == 0 ||
+            trimmed.rfind("vless://", 0) == 0 ||
+            trimmed.rfind("trojan://", 0) == 0 ||
+            trimmed.rfind("ss://", 0) == 0 ||
+            trimmed.rfind("hy2://", 0) == 0 ||
+            trimmed.rfind("hysteria2://", 0) == 0 ||
+            trimmed.rfind("tuic://", 0) == 0 ||
+            trimmed.rfind("wireguard://", 0) == 0;
+        if (!allowedScheme) {
+            ++result.rejected;
+            result.messages.push_back("uri-list line " + std::to_string(index) + " rejected: unsupported uri scheme");
+            continue;
+        }
+        ++validIndex;
         Subscription sub;
-        sub.name = "imported-" + std::to_string(index);
+        sub.name = "imported-" + std::to_string(validIndex);
         sub.id = makeIdFromName(sub.name);
         sub.url = trimmed;
         sub.cachePath = "subscriptions/" + sub.id + ".cache";
         imported.push_back(sub);
     }
-    return mergeImportedSubscriptions(existing, imported, mode);
+    auto merged = mergeImportedSubscriptions(existing, imported, mode);
+    merged.rejected += result.rejected;
+    merged.messages.insert(merged.messages.end(), result.messages.begin(), result.messages.end());
+    return merged;
 }
 
 } // namespace subcli

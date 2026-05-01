@@ -3802,6 +3802,95 @@ subscriptions:
     );
 }
 
+void testSubscriptionServiceMergeUpdatesByIdAndName() {
+    subcli::Subscription oldById;
+    oldById.id = "same-id";
+    oldById.name = "old-name";
+    oldById.url = "https://example.com/old-id";
+
+    subcli::Subscription oldByName;
+    oldByName.id = "old-name-id";
+    oldByName.name = "same-name";
+    oldByName.url = "https://example.com/old-name";
+
+    const std::string yaml = R"yaml(version: 1
+subscriptions:
+  - id: same-id
+    name: new-name
+    url: https://example.com/new-id
+  - name: same-name
+    url: https://example.com/new-name
+)yaml";
+
+    auto result = subcli::importSubscriptionsFromYaml(
+        yaml,
+        {oldById, oldByName},
+        subcli::SubscriptionImportMode::Merge
+    );
+    require(result.rejected == 0, "merge import should succeed");
+    require(result.created == 0, "merge should not create new entries in this case");
+    require(result.updated == 2, "merge should update both id and name matches");
+    require(result.subscriptions.size() == 2, "merge should keep same subscription count");
+    require(result.subscriptions[0].name == "new-name", "id match should update record");
+    require(result.subscriptions[1].url == "https://example.com/new-name", "name match should update record");
+}
+
+void testSubscriptionServiceReplaceModeReturnsOnlyImported() {
+    subcli::Subscription old;
+    old.id = "old";
+    old.name = "old";
+    old.url = "https://example.com/old";
+
+    const std::string yaml = R"yaml(version: 1
+subscriptions:
+  - id: fresh
+    name: fresh
+    url: https://example.com/fresh
+)yaml";
+
+    auto result = subcli::importSubscriptionsFromYaml(
+        yaml,
+        {old},
+        subcli::SubscriptionImportMode::Replace
+    );
+    require(result.rejected == 0, "replace import should succeed");
+    require(result.updated == 0, "replace mode should not report updated");
+    require(result.created == 1, "replace mode should report imported count as created");
+    require(result.subscriptions.size() == 1, "replace mode should return only imported entries");
+    require(result.subscriptions[0].id == "fresh", "replace mode should drop old entries");
+}
+
+void testSubscriptionServiceYamlTypedDecodeErrorDoesNotCrash() {
+    const std::string yaml = R"yaml(version: 1
+subscriptions:
+  - id: typed-error
+    name: typed-error
+    url: https://example.com/a
+    timeout: bad-timeout
+)yaml";
+
+    auto result = subcli::importSubscriptionsFromYaml(yaml, {}, subcli::SubscriptionImportMode::Merge);
+    require(result.rejected == 1, "typed decode error should reject entry");
+    require(result.subscriptions.empty(), "typed decode error should not merge entries");
+    require(!result.messages.empty(), "typed decode error should report message");
+}
+
+void testSubscriptionServiceUriListIgnoresCommentsAndRejectsInvalidLines() {
+    const std::string content = R"txt(
+# comment line
+; second comment
+vmess://ok
+invalid-line
+wireguard://ok
+)txt";
+
+    auto result = subcli::importSubscriptionsFromUriList(content, {}, subcli::SubscriptionImportMode::Merge);
+    require(result.created == 2, "uri-list should import only valid lines");
+    require(result.rejected == 1, "uri-list should reject invalid lines");
+    require(result.subscriptions.size() == 2, "uri-list should keep only valid entries");
+    require(!result.messages.empty(), "uri-list should report invalid lines");
+}
+
 void testCustomStrategyGroupsRenderForMihomoAndSingBox() {
     auto config = makeConfig();
     config.strategyGroups.clear();
@@ -6346,6 +6435,10 @@ int main() {
     testNormalizeTagsDropsEmptyDedupesAndKeepsOrder();
     testSubscriptionServiceYamlRoundTrip();
     testSubscriptionServiceImportRejectsMissingNameAndUrl();
+    testSubscriptionServiceMergeUpdatesByIdAndName();
+    testSubscriptionServiceReplaceModeReturnsOnlyImported();
+    testSubscriptionServiceYamlTypedDecodeErrorDoesNotCrash();
+    testSubscriptionServiceUriListIgnoresCommentsAndRejectsInvalidLines();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();

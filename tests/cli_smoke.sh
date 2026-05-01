@@ -171,6 +171,10 @@ if [[ "$doctor_json" != *'"findings"'* || "$doctor_json" != *'"ok"'* ]]; then
     printf '%s\n' "$doctor_json"
     exit 1
 fi
+if [[ "$doctor_json" != *'"failed"'* || "$doctor_json" != *'"checks"'* ]]; then
+    printf 'doctor --json missing compatibility fields: %s\n' "$doctor_json"
+    exit 1
+fi
 if [[ "$doctor_json" != *'"code":"workspace.resolved"'* || "$doctor_json" != *'"code":"config.key.registered"'* || "$doctor_json" != *'"code":"export.target.registered"'* ]]; then
     printf 'doctor --json missing stable diagnostic codes: %s\n' "$doctor_json"
     exit 1
@@ -179,6 +183,29 @@ if [[ "$doctor_json" != *'"environment"'* || "$doctor_json" != *'"resolution_sou
     printf 'doctor --json missing environment fields: %s\n' "$doctor_json"
     exit 1
 fi
+
+missing_cfg="$tmp/missing-config"
+mkdir -p "$missing_cfg"
+"$bin" config set templates.mihomo.normal "$missing_cfg/nope.yaml" >/dev/null
+set +e
+"$bin" doctor --json >/tmp/subcli-doctor-fail.json 2>/tmp/subcli-doctor-fail.err
+doctor_fail_code=$?
+set -e
+doctor_fail_json="$(cat /tmp/subcli-doctor-fail.json)"
+if [[ "$doctor_fail_code" -eq 0 ]]; then
+    printf 'doctor should fail on missing template, got exit 0: %s\n' "$doctor_fail_json"
+    exit 1
+fi
+if [[ "$doctor_fail_json" != *'"failed":true'* || "$doctor_fail_json" != *'"ok":false'* ]]; then
+    printf 'doctor failure json should include failed=true and ok=false: %s\n' "$doctor_fail_json"
+    exit 1
+fi
+if [[ "$doctor_fail_json" != *'"name":"templates.mihomo.normal"'* ]]; then
+    printf 'doctor checks should include failed template check: %s\n' "$doctor_fail_json"
+    exit 1
+fi
+cp "$tmp/valid-mihomo.yaml" "$missing_cfg/nope.yaml"
+"$bin" config set templates.mihomo.normal "$missing_cfg/nope.yaml" >/dev/null
 
 workspace_root="$tmp/workspace-env"
 "$bin" workspace init "$workspace_root" >/dev/null

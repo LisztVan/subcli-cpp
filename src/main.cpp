@@ -1828,11 +1828,73 @@ int doDoctorCommand(const std::vector<std::string>& args) {
     }
     ensureDefaults();
     AppConfig cfg = loadConfig(gPaths.configPath.string());
+    applyConfigDefaults(cfg);
     const std::vector<Subscription> subs = loadSubscriptions(gPaths.subPath.string());
-    const DiagnosticReport report = buildDiagnosticReport(cfg, subs, gPaths.root.string());
+    DiagnosticReport report = buildDiagnosticReport(cfg, subs, gPaths.root.string());
+
+    nlohmann::json checks = nlohmann::json::array();
+    auto addCheck = [&](const std::string& name, bool ok, const std::filesystem::path& path, const std::string& message = "") {
+        checks.push_back({{"name", name}, {"ok", ok}, {"path", path.string()}, {"message", message}});
+        if (!ok) {
+            report.findings.push_back({name, DiagnosticSeverity::Error, name, message.empty() ? "check failed" : message, path.string()});
+            report.hasError = true;
+        }
+    };
+
+    auto checkPath = [&](const std::string& name, const std::filesystem::path& path, bool mustExist) {
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(path, ec);
+        if (ec || (mustExist && !exists)) {
+            addCheck(name, false, path, ec ? ec.message() : "missing");
+            return;
+        }
+        addCheck(name, true, path);
+    };
+
+    checkPath("config_path", gPaths.configPath, true);
+    checkPath("sub_path", gPaths.subPath, true);
+    checkPath("template_dir", gPaths.templateDir, true);
+    checkPath("output_dir", gPaths.outputDir, true);
+
+    auto checkWritable = [&](const std::string& name, const std::filesystem::path& path) {
+        std::string reason;
+        if (!checkDirWritable(path, reason)) {
+            addCheck(name, false, path, reason);
+            return;
+        }
+        addCheck(name, true, path, "writable");
+    };
+    checkWritable("config_dir", gPaths.configDir);
+    checkWritable("data_dir", gPaths.dataDir);
+    checkWritable("cache_dir", gPaths.cacheDir);
+    checkWritable("output_dir", gPaths.outputDir);
+
+    for (const auto& item : requiredTemplateFiles(cfg)) {
+        std::error_code ec;
+        const bool ok = !item.second.empty() && std::filesystem::is_regular_file(item.second, ec) && !ec;
+        addCheck(item.first, ok, item.second, ok ? "" : (ec ? ec.message() : "missing"));
+    }
+
+    const auto cores = discoverCorePaths(cfg);
+    auto checkCore = [&](const std::string& key, const std::string& value) {
+        if (value.empty()) {
+            checks.push_back({{"name", key}, {"ok", true}, {"path", ""}, {"message", "not configured"}});
+            return;
+        }
+        if (!isExecutableFile(value)) {
+            addCheck(key, false, value, "not executable");
+            return;
+        }
+        addCheck(key, true, value);
+    };
+    checkCore("core.mihomo", cores.mihomo);
+    checkCore("core.sing-box", cores.singBox);
+    checkCore("core.xray", cores.xray);
 
     if (jsonOutput) {
         nlohmann::json payload = diagnosticReportToJson(report);
+        payload["failed"] = report.hasError;
+        payload["checks"] = checks;
         payload["environment"] = {
             {"resolution_source", environmentSourceToString(gEnvResult.source)},
             {"active_workspace_root", gEnvResult.root.empty() ? gPaths.root.string() : gEnvResult.root},

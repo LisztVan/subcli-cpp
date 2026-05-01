@@ -38,6 +38,7 @@ Common scalar/object keys:
 - `template_dir`
 - `parallelism`, `timeout`, `retry`, `fetch_max_bytes`, `log_level`
 - `core_paths.mihomo`, `core_paths.sing_box`, `core_paths.xray`
+- `node_management.dedupe`, `node_management.rename_template`, `node_management.include_regex`, `node_management.exclude_regex`, `node_management.sort_by`
 
 Common structured prefixes:
 

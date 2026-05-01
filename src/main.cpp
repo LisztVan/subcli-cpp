@@ -29,6 +29,7 @@
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
 #include "subcli/capability_matrix.hpp"
+#include "subcli/config_service.hpp"
 #include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
@@ -2614,39 +2615,8 @@ int doConfigCommand(const std::vector<std::string>& args) {
             printJsonLine(configToJson(cfg));
             return 0;
         }
-        std::cout << "tun=" << (cfg.tun ? "true" : "false") << "\n";
-        std::cout << "profile=" << cfg.profile << "\n";
-        std::cout << "profile_path=" << cfg.profilePath << "\n";
-        std::cout << "output_dir=" << cfg.outputDir << "\n";
-        std::cout << "template_dir=" << cfg.templateDir << "\n";
-        std::cout << "asset_dir=" << cfg.assetDir << "\n";
-        std::cout << "parallelism=" << cfg.parallelism << "\n";
-        std::cout << "timeout=" << cfg.timeout << "\n";
-        std::cout << "retry=" << cfg.retry << "\n";
-        std::cout << "fetch_max_bytes=" << cfg.fetchMaxBytes << "\n";
-        std::cout << "log_level=" << cfg.logLevel << "\n";
-        std::cout << "core_paths.mihomo=" << cfg.mihomoPath << "\n";
-        std::cout << "core_paths.sing_box=" << cfg.singBoxPath << "\n";
-        std::cout << "core_paths.xray=" << cfg.xrayPath << "\n";
-        std::cout << "node_management.dedupe=" << (cfg.dedupeNodes ? "true" : "false") << "\n";
-        std::cout << "node_management.rename_template=" << cfg.renameTemplate << "\n";
-        std::cout << "node_management.include_regex=" << cfg.includeRegex << "\n";
-        std::cout << "node_management.exclude_regex=" << cfg.excludeRegex << "\n";
-        std::cout << "node_management.sort_by=" << cfg.sortBy << "\n";
-        for (const auto& kv : cfg.templateNormal) {
-            std::cout << "templates." << kv.first << ".normal=" << kv.second << "\n";
-        }
-        for (const auto& kv : cfg.templateTun) {
-            std::cout << "templates." << kv.first << ".tun=" << kv.second << "\n";
-        }
-        for (const auto& kv : cfg.regionRules) {
-            std::cout << "grouping.region_rules." << kv.first << "=" << kv.second << "\n";
-        }
-        for (const auto& kv : cfg.assetPaths) {
-            std::cout << "assets.paths." << kv.first << "=" << kv.second << "\n";
-        }
-        for (const auto& kv : cfg.assetUrls) {
-            std::cout << "assets.urls." << kv.first << "=" << kv.second << "\n";
+        for (const auto& entry : listConfigValues(cfg)) {
+            std::cout << entry.key << "=" << entry.value << "\n";
         }
         return 0;
     }
@@ -2656,126 +2626,14 @@ int doConfigCommand(const std::vector<std::string>& args) {
             std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
-        const auto& key = parsedKey;
-        if (key == "tun") {
-            std::cout << (cfg.tun ? "true" : "false") << "\n";
-            return 0;
+        std::string value;
+        std::string error;
+        if (!getConfigValue(cfg, parsedKey, value, error)) {
+            std::cerr << error << "\n";
+            return 1;
         }
-        if (key == "output_dir") {
-            std::cout << cfg.outputDir << "\n";
-            return 0;
-        }
-        if (key == "profile") {
-            std::cout << cfg.profile << "\n";
-            return 0;
-        }
-        if (key == "profile_path") {
-            std::cout << cfg.profilePath << "\n";
-            return 0;
-        }
-        if (key == "asset_dir") {
-            std::cout << cfg.assetDir << "\n";
-            return 0;
-        }
-        if (key == "template_dir") {
-            std::cout << cfg.templateDir << "\n";
-            return 0;
-        }
-        if (key == "parallelism") {
-            std::cout << cfg.parallelism << "\n";
-            return 0;
-        }
-        if (key == "timeout") {
-            std::cout << cfg.timeout << "\n";
-            return 0;
-        }
-        if (key == "retry") {
-            std::cout << cfg.retry << "\n";
-            return 0;
-        }
-        if (key == "fetch_max_bytes") {
-            std::cout << cfg.fetchMaxBytes << "\n";
-            return 0;
-        }
-        if (key == "log_level") {
-            std::cout << cfg.logLevel << "\n";
-            return 0;
-        }
-        if (key == "core_paths.mihomo") {
-            std::cout << cfg.mihomoPath << "\n";
-            return 0;
-        }
-        if (key == "core_paths.sing_box") {
-            std::cout << cfg.singBoxPath << "\n";
-            return 0;
-        }
-        if (key == "core_paths.xray") {
-            std::cout << cfg.xrayPath << "\n";
-            return 0;
-        }
-        if (key == "node_management.dedupe") {
-            std::cout << (cfg.dedupeNodes ? "true" : "false") << "\n";
-            return 0;
-        }
-        if (key == "node_management.rename_template") {
-            std::cout << cfg.renameTemplate << "\n";
-            return 0;
-        }
-        if (key == "node_management.include_regex") {
-            std::cout << cfg.includeRegex << "\n";
-            return 0;
-        }
-        if (key == "node_management.exclude_regex") {
-            std::cout << cfg.excludeRegex << "\n";
-            return 0;
-        }
-        if (key == "node_management.sort_by") {
-            std::cout << cfg.sortBy << "\n";
-            return 0;
-        }
-        const std::string tplPrefix = "templates.";
-        if (key.rfind(tplPrefix, 0) == 0) {
-            const auto rest = key.substr(tplPrefix.size());
-            auto dot = rest.find('.');
-            if (dot != std::string::npos) {
-                const auto core = rest.substr(0, dot);
-                const auto kind = rest.substr(dot + 1);
-                if (kind == "normal" && cfg.templateNormal.count(core)) {
-                    std::cout << cfg.templateNormal[core] << "\n";
-                    return 0;
-                }
-                if (kind == "tun" && cfg.templateTun.count(core)) {
-                    std::cout << cfg.templateTun[core] << "\n";
-                    return 0;
-                }
-            }
-        }
-        const std::string rrPrefix = "grouping.region_rules.";
-        if (key.rfind(rrPrefix, 0) == 0) {
-            const auto region = key.substr(rrPrefix.size());
-            if (cfg.regionRules.count(region)) {
-                std::cout << cfg.regionRules[region] << "\n";
-                return 0;
-            }
-        }
-        const std::string assetPathPrefix = "assets.paths.";
-        if (key.rfind(assetPathPrefix, 0) == 0) {
-            const auto assetKey = key.substr(assetPathPrefix.size());
-            if (cfg.assetPaths.count(assetKey)) {
-                std::cout << cfg.assetPaths[assetKey] << "\n";
-                return 0;
-            }
-        }
-        const std::string assetUrlPrefix = "assets.urls.";
-        if (key.rfind(assetUrlPrefix, 0) == 0) {
-            const auto assetKey = key.substr(assetUrlPrefix.size());
-            if (cfg.assetUrls.count(assetKey)) {
-                std::cout << cfg.assetUrls[assetKey] << "\n";
-                return 0;
-            }
-        }
-        std::cerr << "unsupported key in v1\n";
-        return 1;
+        std::cout << value << "\n";
+        return 0;
     }
     if (cmd == "set") {
         if (parsedKey.empty() || parsedValue.empty()) {
@@ -2783,121 +2641,13 @@ int doConfigCommand(const std::vector<std::string>& args) {
             std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
-        const auto& key = parsedKey;
-        const auto& value = parsedValue;
-        if (key == "tun") {
-            if (!parseBoolValue(value, "tun", cfg.tun)) {
-                return 1;
-            }
-        } else if (key == "output_dir") {
-            cfg.outputDir = resolveFromConfigDir(value);
-        } else if (key == "profile") {
-            if (!isSupportedProfile(value)) {
-                std::cerr << "unsupported profile: " << value << "\n";
-                return 1;
-            }
-            cfg.profile = value;
-        } else if (key == "profile_path") {
-            cfg.profilePath = resolveFromConfigDir(value);
-        } else if (key == "asset_dir") {
-            cfg.assetDir = resolveFromConfigDir(value);
-        } else if (key == "template_dir") {
-            const std::string oldDir = cfg.templateDir;
-            cfg.templateDir = resolveFromConfigDir(value);
-            updateTemplateDirDefaults(cfg, oldDir);
-        } else if (key == "parallelism") {
-            int parsed = 0;
-            if (!parseBoundedIntValue(value, "parallelism", 1, parsed)) {
-                return 1;
-            }
-            cfg.parallelism = parsed;
-        } else if (key == "timeout") {
-            int parsed = 0;
-            if (!parseBoundedIntValue(value, "timeout", 1, parsed)) {
-                return 1;
-            }
-            cfg.timeout = parsed;
-        } else if (key == "retry") {
-            int parsed = 0;
-            if (!parseBoundedIntValue(value, "retry", 0, parsed)) {
-                return 1;
-            }
-            cfg.retry = parsed;
-        } else if (key == "fetch_max_bytes") {
-            int parsed = 0;
-            if (!parseBoundedIntValue(value, "fetch_max_bytes", 1024, parsed)) {
-                return 1;
-            }
-            cfg.fetchMaxBytes = parsed;
-        } else if (key == "log_level") {
-            cfg.logLevel = value;
-        } else if (key == "core_paths.mihomo") {
-            cfg.mihomoPath = resolveFromConfigDir(value);
-        } else if (key == "core_paths.sing_box") {
-            cfg.singBoxPath = resolveFromConfigDir(value);
-        } else if (key == "core_paths.xray") {
-            cfg.xrayPath = resolveFromConfigDir(value);
-        } else if (key == "node_management.dedupe") {
-            if (!parseBoolValue(value, "node_management.dedupe", cfg.dedupeNodes)) {
-                return 1;
-            }
-        } else if (key == "node_management.rename_template") {
-            cfg.renameTemplate = value;
-        } else if (key == "node_management.include_regex") {
-            cfg.includeRegex = value;
-        } else if (key == "node_management.exclude_regex") {
-            cfg.excludeRegex = value;
-        } else if (key == "node_management.sort_by") {
-            cfg.sortBy = value;
-        } else if (key.rfind("templates.", 0) == 0) {
-            const auto rest = key.substr(std::string("templates.").size());
-            auto dot = rest.find('.');
-            if (dot == std::string::npos) {
-                std::cerr << "invalid template key\n";
-                return 1;
-            }
-            const auto core = rest.substr(0, dot);
-            const auto kind = rest.substr(dot + 1);
-            std::string error;
-            if (!parseTemplateTargetKind(core, kind, error)) {
-                std::cerr << error << "\n";
-                return 1;
-            }
-            if (kind == "normal") {
-                cfg.templateNormal[core] = value;
-            } else if (kind == "tun") {
-                cfg.templateTun[core] = value;
-            } else {
-                std::cerr << "invalid template key\n";
-                return 1;
-            }
-        } else if (key.rfind("grouping.region_rules.", 0) == 0) {
-            const auto region = key.substr(std::string("grouping.region_rules.").size());
-            if (region.empty()) {
-                std::cerr << "invalid region rule key\n";
-                return 1;
-            }
-            cfg.regionRules[region] = value;
-        } else if (key.rfind("assets.paths.", 0) == 0) {
-            const auto assetKey = key.substr(std::string("assets.paths.").size());
-            if (assetKey.empty()) {
-                std::cerr << "invalid asset path key\n";
-                return 1;
-            }
-            cfg.assetPaths[assetKey] = value;
-        } else if (key.rfind("assets.urls.", 0) == 0) {
-            const auto assetKey = key.substr(std::string("assets.urls.").size());
-            if (assetKey.empty()) {
-                std::cerr << "invalid asset URL key\n";
-                return 1;
-            }
-            cfg.assetUrls[assetKey] = value;
-        } else {
-            std::cerr << "unsupported key in v1\n";
+        std::string error;
+        if (!setConfigValue(cfg, parsedKey, parsedValue, resolveFromConfigDir, error)) {
+            std::cerr << error << "\n";
             return 1;
         }
         saveConfig(gPaths.configPath.string(), cfg);
-        std::cout << "updated config: " << key << "\n";
+        std::cout << "updated config: " << parsedKey << "\n";
         return 0;
     }
     if (cmd == "remove") {
@@ -2906,83 +2656,18 @@ int doConfigCommand(const std::vector<std::string>& args) {
             std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
-        const auto& key = parsedKey;
-        if (key == "output_dir") {
-            cfg.outputDir = gPaths.outputDir.string();
-        } else if (key == "profile") {
-            cfg.profile = "bypass-cn";
-        } else if (key == "profile_path") {
-            cfg.profilePath.clear();
-        } else if (key == "asset_dir") {
-            cfg.assetDir = (gPaths.dataDir / "assets").string();
-        } else if (key == "template_dir") {
-            const std::string oldDir = cfg.templateDir;
-            cfg.templateDir = gPaths.templateDir.string();
-            updateTemplateDirDefaults(cfg, oldDir);
-        } else if (key == "tun") {
-            cfg.tun = false;
-        } else if (key == "parallelism") {
-            cfg.parallelism = 4;
-        } else if (key == "timeout") {
-            cfg.timeout = 15;
-        } else if (key == "retry") {
-            cfg.retry = 2;
-        } else if (key == "fetch_max_bytes") {
-            cfg.fetchMaxBytes = 10 * 1024 * 1024;
-        } else if (key == "log_level") {
-            cfg.logLevel = "info";
-        } else if (key == "core_paths.mihomo") {
-            cfg.mihomoPath.clear();
-        } else if (key == "core_paths.sing_box") {
-            cfg.singBoxPath.clear();
-        } else if (key == "core_paths.xray") {
-            cfg.xrayPath.clear();
-        } else if (key == "node_management.dedupe") {
-            cfg.dedupeNodes = true;
-        } else if (key == "node_management.rename_template") {
-            cfg.renameTemplate = "{name}";
-        } else if (key == "node_management.include_regex") {
-            cfg.includeRegex.clear();
-        } else if (key == "node_management.exclude_regex") {
-            cfg.excludeRegex.clear();
-        } else if (key == "node_management.sort_by") {
-            cfg.sortBy = "region,name";
-        } else if (key.rfind("templates.", 0) == 0) {
-            const auto rest = key.substr(std::string("templates.").size());
-            auto dot = rest.find('.');
-            if (dot == std::string::npos) {
-                std::cerr << "invalid template key\n";
-                return 1;
-            }
-            const auto core = rest.substr(0, dot);
-            const auto kind = rest.substr(dot + 1);
-            std::string error;
-            if (!parseTemplateTargetKind(core, kind, error)) {
-                std::cerr << error << "\n";
-                return 1;
-            }
-            if (kind == "normal") {
-                cfg.templateNormal.erase(core);
-            } else if (kind == "tun") {
-                cfg.templateTun.erase(core);
-            } else {
-                std::cerr << "invalid template key\n";
-                return 1;
-            }
-        } else if (key.rfind("grouping.region_rules.", 0) == 0) {
-            const auto region = key.substr(std::string("grouping.region_rules.").size());
-            cfg.regionRules.erase(region);
-        } else if (key.rfind("assets.paths.", 0) == 0) {
-            cfg.assetPaths.erase(key.substr(std::string("assets.paths.").size()));
-        } else if (key.rfind("assets.urls.", 0) == 0) {
-            cfg.assetUrls.erase(key.substr(std::string("assets.urls.").size()));
-        } else {
-            std::cerr << "unsupported key in v1\n";
+        ConfigServiceOptions options;
+        options.defaultOutputDir = gPaths.outputDir.string();
+        options.defaultAssetDir = (gPaths.dataDir / "assets").string();
+        options.defaultTemplateDir = gPaths.templateDir.string();
+        std::string error;
+        if (!removeConfigValue(cfg, parsedKey, options, error)) {
+            std::cerr << error << "\n";
             return 1;
         }
         applyConfigDefaults(cfg);
         saveConfig(gPaths.configPath.string(), cfg);
-        std::cout << "removed config key: " << key << "\n";
+        std::cout << "removed config key: " << parsedKey << "\n";
         return 0;
     }
     std::cerr << "unknown config command: " << cmd << "\n";

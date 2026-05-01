@@ -99,6 +99,7 @@ set(SUBCLI_SOURCES
     src/profile_explain.cpp
     src/protocol_registry.cpp
     src/registry.cpp
+    src/config_service.cpp
     src/node.cpp
     src/capabilities.cpp
     src/capability_matrix.cpp

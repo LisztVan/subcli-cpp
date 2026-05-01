@@ -16,6 +16,7 @@
 #include "subcli/cli_output.hpp"
 #include "subcli/daemon.hpp"
 #include "subcli/daemon_process.hpp"
+#include "subcli/config_service.hpp"
 #include "subcli/core_runtime.hpp"
 #include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
@@ -6091,6 +6092,68 @@ void testRegistrySubDescriptorMentionsDataLifecycleCommands() {
     require(descriptor->summary.find("prune") != std::string::npos, "sub descriptor summary should mention prune");
 }
 
+void testConfigServiceSetGetRemoveScalarKeys() {
+    subcli::AppConfig cfg;
+    cfg.templateDir = "/tmp/templates";
+
+    std::string error;
+    const auto resolvePath = [](const std::string& value) {
+        return std::string("/resolved/") + value;
+    };
+
+    require(subcli::setConfigValue(cfg, "parallelism", "8", resolvePath, error), "set parallelism should succeed: " + error);
+    require(subcli::setConfigValue(cfg, "tun", "true", resolvePath, error), "set tun should succeed: " + error);
+    require(subcli::setConfigValue(cfg, "output_dir", "outputs", resolvePath, error), "set output_dir should succeed: " + error);
+
+    std::string value;
+    require(subcli::getConfigValue(cfg, "parallelism", value, error), "get parallelism should succeed: " + error);
+    require(value == "8", "parallelism should be updated");
+    require(subcli::getConfigValue(cfg, "tun", value, error), "get tun should succeed: " + error);
+    require(value == "true", "tun should be true");
+    require(subcli::getConfigValue(cfg, "output_dir", value, error), "get output_dir should succeed: " + error);
+    require(value == "/resolved/outputs", "output_dir should use resolver");
+
+    subcli::ConfigServiceOptions options;
+    options.defaultOutputDir = "/defaults/outputs";
+    options.defaultAssetDir = "/defaults/assets";
+    options.defaultTemplateDir = "/defaults/templates";
+
+    require(subcli::removeConfigValue(cfg, "parallelism", options, error), "remove parallelism should succeed: " + error);
+    require(subcli::removeConfigValue(cfg, "tun", options, error), "remove tun should succeed: " + error);
+    require(subcli::removeConfigValue(cfg, "output_dir", options, error), "remove output_dir should succeed: " + error);
+
+    require(subcli::getConfigValue(cfg, "parallelism", value, error), "get parallelism after remove should succeed: " + error);
+    require(value == "4", "parallelism should reset to default");
+    require(subcli::getConfigValue(cfg, "tun", value, error), "get tun after remove should succeed: " + error);
+    require(value == "false", "tun should reset to false");
+    require(subcli::getConfigValue(cfg, "output_dir", value, error), "get output_dir after remove should succeed: " + error);
+    require(value == "/defaults/outputs", "output_dir should reset to provided default");
+}
+
+void testConfigServiceRejectsUnknownAndBadValues() {
+    subcli::AppConfig cfg;
+    cfg.templateDir = "/tmp/templates";
+
+    std::string error;
+    const auto resolvePath = [](const std::string& value) {
+        return value;
+    };
+
+    require(!subcli::setConfigValue(cfg, "parallelism", "0", resolvePath, error), "set parallelism 0 should fail");
+    require(error.find("parallelism must be >= 1") != std::string::npos, "parallelism failure should be clear");
+
+    require(!subcli::setConfigValue(cfg, "tun", "maybe", resolvePath, error), "set invalid bool should fail");
+    require(error.find("invalid boolean") != std::string::npos, "invalid bool failure should be clear");
+
+    std::string value;
+    require(!subcli::getConfigValue(cfg, "unknown.key", value, error), "get unknown key should fail");
+    require(error == "unsupported key in v1", "unknown key should use unsupported message");
+
+    subcli::ConfigServiceOptions options;
+    require(!subcli::removeConfigValue(cfg, "unknown.key", options, error), "remove unknown key should fail");
+    require(error == "unsupported key in v1", "remove unknown key should use unsupported message");
+}
+
 } // namespace
 
 int main() {
@@ -6242,6 +6305,8 @@ int main() {
     testRegistryFindConfigKeySupportsPrefixDescriptors();
     testRegistryExportDescriptorIncludesExpectedOptions();
     testRegistrySubDescriptorMentionsDataLifecycleCommands();
+    testConfigServiceSetGetRemoveScalarKeys();
+    testConfigServiceRejectsUnknownAndBadValues();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();

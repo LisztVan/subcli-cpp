@@ -56,7 +56,7 @@ std::string generateBashCompletion() {
     case "$cmd" in
         sub)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "add remove list update enable disable edit validate" -- "$cur") )
+                COMPREPLY=( $(compgen -W "add remove list update enable disable edit validate import export check prune" -- "$cur") )
                 return 0
             fi
             COMPREPLY=( $(compgen -W "--id --name --url --group --format-hint --user-agent --timeout --retry --priority --update-interval --tag --tags --header --force --strict-network --json --enable --disable --clear-headers --remove-header" -- "$cur") )

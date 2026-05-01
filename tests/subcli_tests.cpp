@@ -1585,10 +1585,17 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
+    require(script.find("@COMMAND_WORDS@") == std::string::npos, "completion should not contain unresolved command placeholder");
+    require(script.find("@CONFIG_WORDS_WITH_JSON@") == std::string::npos, "completion should not contain unresolved config+json placeholder");
+    require(script.find("@CONFIG_WORDS@") == std::string::npos, "completion should not contain unresolved config placeholder");
+    require(script.find("@EXPORT_WORDS@") == std::string::npos, "completion should not contain unresolved export placeholder");
     for (const auto& command : subcli::allCommandNames()) {
         require(script.find(command) != std::string::npos, std::string("completion should include root command ") + command);
     }
-    require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
+    require(script.find("if [[ $COMP_CWORD -eq 1 ]]; then\n        COMPREPLY=( $(compgen -W \"init doctor sub config profile template asset export workspace check run daemon status stop restart completion\" -- \"$cur\") )") != std::string::npos,
+            "completion should render root command stanza words");
+    require(script.find("if [[ $COMP_CWORD -eq 2 ]]; then\n                COMPREPLY=( $(compgen -W \"add remove list update enable disable edit validate import export check prune\" -- \"$cur\") )") != std::string::npos,
+            "completion should include sub command stanza words");
     require(script.find("list get validate explain") != std::string::npos, "completion should include profile subcommand list");
     require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
     require(script.find("--profile") != std::string::npos, "completion should include export profile option");
@@ -1600,12 +1607,26 @@ void testBashCompletionContainsCommands() {
 
 void testCompletionScriptContainsRegistryKeysAndTargets() {
     const auto script = subcli::generateBashCompletion();
+    require(script.find("if [[ \"$subcmd\" == \"list\" ]]; then\n                COMPREPLY=( $(compgen -W \"") != std::string::npos,
+            "completion should include config list stanza");
+    require(script.find("if [[ $COMP_CWORD -eq 2 ]]; then\n                COMPREPLY=( $(compgen -W \"all mihomo sing-box xray\" -- \"$cur\") )") != std::string::npos,
+            "completion should include export target stanza");
     for (const auto& key : subcli::allConfigKeyNames()) {
         require(script.find(key) != std::string::npos, std::string("completion should include config key ") + key);
     }
     for (const auto& target : subcli::allExportTargetIds()) {
         require(script.find(target) != std::string::npos, std::string("completion should include export target ") + target);
     }
+}
+
+void testCompletionSubcommandListIncludesLifecycleVerbs() {
+    const auto script = subcli::generateBashCompletion();
+    const std::string subStanza =
+        "if [[ $COMP_CWORD -eq 2 ]]; then\n"
+        "                COMPREPLY=( $(compgen -W \"add remove list update enable disable edit validate import export check prune\" -- \"$cur\") )\n"
+        "                return 0\n"
+        "            fi";
+    require(script.find(subStanza) != std::string::npos, "completion sub stanza should include lifecycle verbs");
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -6119,6 +6140,7 @@ int main() {
     testCliOutputDiagnosticsJson();
     testBashCompletionContainsCommands();
     testCompletionScriptContainsRegistryKeysAndTargets();
+    testCompletionSubcommandListIncludesLifecycleVerbs();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
     testDaemonProcessLifecycleWithCustomFiles();

@@ -365,9 +365,9 @@ bool setConfigValue(
             return false;
         }
         if (kind == "normal") {
-            cfg.templateNormal[target] = value;
+            cfg.templateNormal[target] = resolvePath(value);
         } else {
-            cfg.templateTun[target] = value;
+            cfg.templateTun[target] = resolvePath(value);
         }
         return true;
     }
@@ -386,7 +386,7 @@ bool setConfigValue(
             error = "invalid asset path key";
             return false;
         }
-        cfg.assetPaths[assetKey] = value;
+        cfg.assetPaths[assetKey] = resolvePath(value);
         return true;
     }
     if (key.rfind("assets.urls.", 0) == 0) {

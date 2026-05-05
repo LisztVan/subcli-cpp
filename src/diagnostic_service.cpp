@@ -47,6 +47,27 @@ DiagnosticReport buildDiagnosticReport(
         report.findings.push_back({"profile.missing", DiagnosticSeverity::Warning, "profile", "no profile configured", ""});
     }
 
+    for (const auto& kv : config.templateNormal) {
+        if (!kv.second.empty()) {
+            report.findings.push_back({"template.configured", DiagnosticSeverity::Info, kv.first + ".normal", "template path configured", kv.second});
+        }
+    }
+    for (const auto& kv : config.templateTun) {
+        if (!kv.second.empty()) {
+            report.findings.push_back({"template.configured", DiagnosticSeverity::Info, kv.first + ".tun", "template path configured", kv.second});
+        }
+    }
+    for (const auto& kv : config.assetPaths) {
+        if (!kv.second.empty()) {
+            report.findings.push_back({"asset.path.configured", DiagnosticSeverity::Info, kv.first, "asset path configured", kv.second});
+        }
+    }
+    for (const auto& kv : config.assetUrls) {
+        if (!kv.second.empty()) {
+            report.findings.push_back({"asset.url.configured", DiagnosticSeverity::Info, kv.first, "asset url configured", kv.second});
+        }
+    }
+
     for (const auto& sub : subscriptions) {
         report.findings.push_back({
             sub.enabled ? "subscription.enabled" : "subscription.disabled",

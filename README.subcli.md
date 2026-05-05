@@ -193,6 +193,8 @@ subcli sub export --file ./backup/hk-enabled.yaml --tag hk --enabled true
 subcli sub export --file ./backup/default-group.yaml --group default
 ```
 
+`sub export` writes subcli YAML snapshots. `sub import` accepts those YAML snapshots or plain URI list files.
+
 ## Config Management
 
 `config list`, `config get`, `config set`, and `config remove` manage stored config values.

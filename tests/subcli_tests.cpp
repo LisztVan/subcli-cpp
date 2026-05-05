@@ -74,6 +74,9 @@ bool containsProtocol(const std::vector<std::string>& protocols, const std::stri
 void testDiagnosticServiceReportsConfigAndTargets() {
     subcli::AppConfig cfg = makeConfig();
     cfg.profile = "bypass-cn";
+    cfg.assetDir = "/tmp/assets";
+    cfg.assetPaths["xray.geoip"] = "/tmp/assets/xray/geoip.dat";
+    cfg.templateNormal["mihomo"] = "/tmp/templates/mihomo.yaml";
 
     subcli::Subscription enabled;
     enabled.id = "s1";
@@ -96,6 +99,8 @@ void testDiagnosticServiceReportsConfigAndTargets() {
     bool hasSubEnabled = false;
     bool hasSubDisabled = false;
     bool hasSubLastError = false;
+    bool hasAssetConfigured = false;
+    bool hasTemplateConfigured = false;
     for (const auto& finding : report.findings) {
         if (finding.code == "workspace.resolved") {
             hasWorkspace = true;
@@ -111,6 +116,10 @@ void testDiagnosticServiceReportsConfigAndTargets() {
             hasSubDisabled = true;
         } else if (finding.code == "subscription.last_error") {
             hasSubLastError = true;
+        } else if (finding.code == "asset.path.configured") {
+            hasAssetConfigured = true;
+        } else if (finding.code == "template.configured") {
+            hasTemplateConfigured = true;
         }
     }
 
@@ -121,6 +130,8 @@ void testDiagnosticServiceReportsConfigAndTargets() {
     require(hasSubEnabled, "diagnostic report should include subscription.enabled finding");
     require(hasSubDisabled, "diagnostic report should include subscription.disabled finding");
     require(hasSubLastError, "diagnostic report should include subscription.last_error finding");
+    require(hasAssetConfigured, "diagnostic report should include asset.path.configured finding");
+    require(hasTemplateConfigured, "diagnostic report should include template.configured finding");
 
     const auto json = subcli::diagnosticReportToJson(report);
     require(json.contains("ok"), "diagnostic json should contain ok");
@@ -6574,6 +6585,31 @@ void testConfigServiceSetGetRemoveScalarKeys() {
     require(value == "/defaults/outputs", "output_dir should reset to provided default");
 }
 
+void testConfigServiceResolvesTemplateAndAssetPathsRelativeToConfigDir() {
+    subcli::AppConfig cfg;
+    cfg.templateDir = "/tmp/templates";
+
+    std::string error;
+    const auto resolvePath = [](const std::string& value) {
+        return std::string("/resolved/") + value;
+    };
+
+    require(subcli::setConfigValue(cfg, "templates.sing-box.normal", "./templates/singbox_base.json", resolvePath, error),
+            "set template path should succeed: " + error);
+    require(subcli::setConfigValue(cfg, "assets.paths.xray.geoip", "./assets/geoip.dat", resolvePath, error),
+            "set asset path should succeed: " + error);
+    require(subcli::setConfigValue(cfg, "assets.urls.xray.geoip", "https://example.invalid/geoip.dat", resolvePath, error),
+            "set asset url should succeed: " + error);
+
+    std::string value;
+    require(subcli::getConfigValue(cfg, "templates.sing-box.normal", value, error), "get template path should succeed: " + error);
+    require(value == "/resolved/./templates/singbox_base.json", "template path should use resolver");
+    require(subcli::getConfigValue(cfg, "assets.paths.xray.geoip", value, error), "get asset path should succeed: " + error);
+    require(value == "/resolved/./assets/geoip.dat", "asset path should use resolver");
+    require(subcli::getConfigValue(cfg, "assets.urls.xray.geoip", value, error), "get asset url should succeed: " + error);
+    require(value == "https://example.invalid/geoip.dat", "asset url should remain literal");
+}
+
 void testConfigServiceRejectsUnknownAndBadValues() {
     subcli::AppConfig cfg;
     cfg.templateDir = "/tmp/templates";
@@ -6794,6 +6830,7 @@ int main() {
     testRegistryExportDescriptorIncludesExpectedOptions();
     testRegistrySubDescriptorMentionsDataLifecycleCommands();
     testConfigServiceSetGetRemoveScalarKeys();
+    testConfigServiceResolvesTemplateAndAssetPathsRelativeToConfigDir();
     testConfigServiceRejectsUnknownAndBadValues();
     testCMakeVersionIsV025();
     testConfigDocsMentionRegistryKeys();

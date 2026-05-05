@@ -35,8 +35,8 @@ for summary in \
     fi
 done
 sub_help="$($bin sub --help)"
-if [[ "$sub_help" != *"import    Import subscriptions from a subcli YAML/JSON or URI list file."* ||
-      "$sub_help" != *"export    Export subscription records to a portable YAML/JSON file."* ||
+if [[ "$sub_help" != *"import    Import subscriptions from a subcli YAML or URI list file."* ||
+      "$sub_help" != *"export    Export subscription records to a portable YAML file."* ||
       "$sub_help" != *"check     Check selected subscriptions for fetch and parse readiness."* ||
       "$sub_help" != *"prune     Remove disabled or long-failing subscriptions."* ]]; then
     printf '%s\n' "$sub_help"
@@ -179,6 +179,10 @@ if [[ "$doctor_json" != *'"code":"workspace.resolved"'* || "$doctor_json" != *'"
     printf 'doctor --json missing stable diagnostic codes: %s\n' "$doctor_json"
     exit 1
 fi
+if [[ "$doctor_json" != *'"code":"template.configured"'* || "$doctor_json" != *'"code":"asset.path.configured"'* ]]; then
+    printf 'doctor --json missing template/asset findings: %s\n' "$doctor_json"
+    exit 1
+fi
 if [[ "$doctor_json" != *'"environment"'* || "$doctor_json" != *'"resolution_source"'* || "$doctor_json" != *'"resolved_path_map"'* ]]; then
     printf 'doctor --json missing environment fields: %s\n' "$doctor_json"
     exit 1
@@ -300,6 +304,12 @@ fi
 strict_out="$({ "$bin" sub check --strict-network; } 2>&1 || true)"
 if [[ "$strict_out" != *"--strict-network is ignored"* ]]; then
     printf '%s\n' "$strict_out"
+    exit 1
+fi
+
+sub_help="$({ "$bin" sub --help; } 2>&1 || true)"
+if [[ "$sub_help" == *"YAML/JSON"* ]]; then
+    printf 'sub --help should not promise unsupported JSON import/export: %s\n' "$sub_help"
     exit 1
 fi
 

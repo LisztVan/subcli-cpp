@@ -14,6 +14,8 @@ This matrix covers export-time capability interpretation for:
 
 It does not redefine each target core's full runtime feature set; it documents what `subcli` exports today.
 
+v0.2.5 note: export target metadata is defined in `TargetRegistry`; target ids in this document and code must stay aligned with `mihomo`, `sing-box`, and `xray`.
+
 ## Levels
 
 - `native`: target supports profile behavior directly.
@@ -32,6 +34,12 @@ It does not redefine each target core's full runtime feature set; it documents w
 | `hysteria2` / `hy2` | native | native | unsupported | Xray export skips node with warning |
 | `tuic` | native | native | unsupported | Xray export skips node with warning |
 | `wireguard` | native | native | native | supported on all targets with target-specific fields |
+
+TLS client fingerprint (`fp` / `client-fingerprint`) note in v0.2.5:
+
+- URI parser preserves both query aliases for VLESS/Trojan into normalized TLS fields.
+- Exporters propagate preserved fingerprint to Mihomo (`client-fingerprint`), sing-box (`tls.utls.fingerprint`), and Xray (`streamSettings.tlsSettings.fingerprint` / reality fingerprint when applicable).
+- For non-TLS or unsupported protocol paths, export may omit fingerprint and emit regular capability warnings when other constraints fail.
 
 ## Profile Group Matrix
 

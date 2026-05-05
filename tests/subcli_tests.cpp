@@ -2,6 +2,7 @@
 #include <fstream>
 #include <future>
 #include <netinet/in.h>
+#include <regex>
 #include <sys/socket.h>
 #include <thread>
 #include <stdexcept>
@@ -16,6 +17,8 @@
 #include "subcli/cli_output.hpp"
 #include "subcli/daemon.hpp"
 #include "subcli/daemon_process.hpp"
+#include "subcli/diagnostic_service.hpp"
+#include "subcli/config_service.hpp"
 #include "subcli/core_runtime.hpp"
 #include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
@@ -25,7 +28,9 @@
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
 #include "subcli/protocol_registry.hpp"
+#include "subcli/registry.hpp"
 #include "subcli/store.hpp"
+#include "subcli/subscription_service.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
 #include "subcli/workspace.hpp"
@@ -64,6 +69,73 @@ bool containsProtocol(const std::vector<std::string>& protocols, const std::stri
         }
     }
     return false;
+}
+
+void testDiagnosticServiceReportsConfigAndTargets() {
+    subcli::AppConfig cfg = makeConfig();
+    cfg.profile = "bypass-cn";
+    cfg.assetDir = "/tmp/assets";
+    cfg.assetPaths["xray.geoip"] = "/tmp/assets/xray/geoip.dat";
+    cfg.templateNormal["mihomo"] = "/tmp/templates/mihomo.yaml";
+
+    subcli::Subscription enabled;
+    enabled.id = "s1";
+    enabled.name = "sub-1";
+    enabled.enabled = true;
+
+    subcli::Subscription disabled;
+    disabled.id = "s2";
+    disabled.name = "sub-2";
+    disabled.enabled = false;
+    disabled.lastError = "fetch failed";
+
+    const auto report = subcli::buildDiagnosticReport(cfg, {enabled, disabled}, "/tmp/ws");
+    require(!report.findings.empty(), "diagnostic report should have findings");
+
+    bool hasWorkspace = false;
+    bool hasConfigKey = false;
+    bool hasTarget = false;
+    bool hasProfile = false;
+    bool hasSubEnabled = false;
+    bool hasSubDisabled = false;
+    bool hasSubLastError = false;
+    bool hasAssetConfigured = false;
+    bool hasTemplateConfigured = false;
+    for (const auto& finding : report.findings) {
+        if (finding.code == "workspace.resolved") {
+            hasWorkspace = true;
+        } else if (finding.code == "config.key.registered") {
+            hasConfigKey = true;
+        } else if (finding.code == "export.target.registered") {
+            hasTarget = true;
+        } else if (finding.code == "profile.configured") {
+            hasProfile = true;
+        } else if (finding.code == "subscription.enabled") {
+            hasSubEnabled = true;
+        } else if (finding.code == "subscription.disabled") {
+            hasSubDisabled = true;
+        } else if (finding.code == "subscription.last_error") {
+            hasSubLastError = true;
+        } else if (finding.code == "asset.path.configured") {
+            hasAssetConfigured = true;
+        } else if (finding.code == "template.configured") {
+            hasTemplateConfigured = true;
+        }
+    }
+
+    require(hasWorkspace, "diagnostic report should include workspace.resolved finding");
+    require(hasConfigKey, "diagnostic report should include config.key.registered findings");
+    require(hasTarget, "diagnostic report should include export.target.registered findings");
+    require(hasProfile, "diagnostic report should include profile.configured finding");
+    require(hasSubEnabled, "diagnostic report should include subscription.enabled finding");
+    require(hasSubDisabled, "diagnostic report should include subscription.disabled finding");
+    require(hasSubLastError, "diagnostic report should include subscription.last_error finding");
+    require(hasAssetConfigured, "diagnostic report should include asset.path.configured finding");
+    require(hasTemplateConfigured, "diagnostic report should include template.configured finding");
+
+    const auto json = subcli::diagnosticReportToJson(report);
+    require(json.contains("ok"), "diagnostic json should contain ok");
+    require(json.contains("findings"), "diagnostic json should contain findings");
 }
 
 fs::path makeUniqueTestDir(const std::string& name) {
@@ -1584,8 +1656,17 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
-    require(script.find("init doctor sub config template asset profile export daemon run stop status restart check completion workspace") != std::string::npos, "completion should include root commands");
-    require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
+    require(script.find("@COMMAND_WORDS@") == std::string::npos, "completion should not contain unresolved command placeholder");
+    require(script.find("@CONFIG_WORDS_WITH_JSON@") == std::string::npos, "completion should not contain unresolved config+json placeholder");
+    require(script.find("@CONFIG_WORDS@") == std::string::npos, "completion should not contain unresolved config placeholder");
+    require(script.find("@EXPORT_WORDS@") == std::string::npos, "completion should not contain unresolved export placeholder");
+    for (const auto& command : subcli::allCommandNames()) {
+        require(script.find(command) != std::string::npos, std::string("completion should include root command ") + command);
+    }
+    require(script.find("if [[ $COMP_CWORD -eq 1 ]]; then\n        COMPREPLY=( $(compgen -W \"init doctor sub config profile template asset export workspace check run daemon status stop restart completion\" -- \"$cur\") )") != std::string::npos,
+            "completion should render root command stanza words");
+    require(script.find("if [[ $COMP_CWORD -eq 2 ]]; then\n                COMPREPLY=( $(compgen -W \"add remove list update enable disable edit validate import export check prune\" -- \"$cur\") )") != std::string::npos,
+            "completion should include sub command stanza words");
     require(script.find("list get validate explain") != std::string::npos, "completion should include profile subcommand list");
     require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
     require(script.find("--profile") != std::string::npos, "completion should include export profile option");
@@ -1593,6 +1674,30 @@ void testBashCompletionContainsCommands() {
     require(script.find("--download-assets") != std::string::npos, "completion should include export download-assets option");
     require(script.find("--explain-policy") != std::string::npos, "completion should include explain-policy export option");
     require(script.find("--json") != std::string::npos, "completion should include json option");
+}
+
+void testCompletionScriptContainsRegistryKeysAndTargets() {
+    const auto script = subcli::generateBashCompletion();
+    require(script.find("if [[ \"$subcmd\" == \"list\" ]]; then\n                COMPREPLY=( $(compgen -W \"") != std::string::npos,
+            "completion should include config list stanza");
+    require(script.find("if [[ $COMP_CWORD -eq 2 ]]; then\n                COMPREPLY=( $(compgen -W \"all mihomo sing-box xray\" -- \"$cur\") )") != std::string::npos,
+            "completion should include export target stanza");
+    for (const auto& key : subcli::allConfigKeyNames()) {
+        require(script.find(key) != std::string::npos, std::string("completion should include config key ") + key);
+    }
+    for (const auto& target : subcli::allExportTargetIds()) {
+        require(script.find(target) != std::string::npos, std::string("completion should include export target ") + target);
+    }
+}
+
+void testCompletionSubcommandListIncludesLifecycleVerbs() {
+    const auto script = subcli::generateBashCompletion();
+    const std::string subStanza =
+        "if [[ $COMP_CWORD -eq 2 ]]; then\n"
+        "                COMPREPLY=( $(compgen -W \"add remove list update enable disable edit validate import export check prune\" -- \"$cur\") )\n"
+        "                return 0\n"
+        "            fi";
+    require(script.find(subStanza) != std::string::npos, "completion sub stanza should include lifecycle verbs");
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -2295,6 +2400,142 @@ void testParseModernUdpUriLinks() {
     require(wg.protocol.values.at("peer_public_key") == "peer-public-key", "wireguard URI should parse peer public key");
     require(wg.protocol.values.at("local_address") == "10.0.0.2/32", "wireguard URI should parse local address");
     require(wg.protocol.values.at("peer_allowed_ips") == "0.0.0.0/0", "wireguard URI should parse allowed IPs");
+}
+
+void testUriClientFingerprintPreservedForTlsNodes() {
+    const std::string content =
+        "vless://11111111-1111-1111-1111-111111111111@example.com:443?security=tls&fp=chrome#FP%20Node\n";
+
+    auto result = subcli::parseSubscription(content, "fixture", "uri", makeConfig());
+    require(result.nodes.size() == 1, "vless tls uri with fp should parse");
+    const auto& node = result.nodes.front();
+    require(node.tlsConfig.fingerprint == "chrome", "tls fingerprint should preserve fp=chrome");
+    require(node.fingerprint == "chrome", "legacy fingerprint should preserve fp=chrome");
+}
+
+void testUriClientFingerprintAliasMappingAndPrecedence() {
+    const std::string content =
+        "vless://11111111-1111-1111-1111-111111111111@one.example.com:443?security=tls&fp=chrome&client-fingerprint=firefox&fingerprint=safari#One\n"
+        "vless://11111111-1111-1111-1111-111111111111@two.example.com:443?security=tls&client-fingerprint=edge&fingerprint=safari#Two\n"
+        "vless://11111111-1111-1111-1111-111111111111@three.example.com:443?security=tls&fingerprint=ios#Three\n";
+
+    auto result = subcli::parseSubscription(content, "fixture", "uri", makeConfig());
+    require(result.nodes.size() == 3, "fingerprint alias mapping should parse all nodes");
+
+    require(result.nodes[0].tlsConfig.fingerprint == "chrome", "fp should have highest precedence");
+    require(result.nodes[0].fingerprint == "chrome", "legacy fingerprint should use fp");
+    require(result.nodes[0].protocol.values.at("client-fingerprint") == "chrome", "protocol values should keep unified fingerprint");
+
+    require(result.nodes[1].tlsConfig.fingerprint == "edge", "client-fingerprint should win over fingerprint when fp missing");
+    require(result.nodes[1].fingerprint == "edge", "legacy fingerprint should use client-fingerprint");
+    require(result.nodes[1].protocol.values.at("client-fingerprint") == "edge", "protocol values should keep client-fingerprint alias");
+
+    require(result.nodes[2].tlsConfig.fingerprint == "ios", "fingerprint alias should map when others missing");
+    require(result.nodes[2].fingerprint == "ios", "legacy fingerprint should keep fingerprint alias");
+    require(result.nodes[2].protocol.values.at("client-fingerprint") == "ios", "protocol values should keep fallback fingerprint alias");
+}
+
+void testUriClientFingerprintTrojanAndNonTlsGate() {
+    const std::string content =
+        "trojan://password@trojan.example.com:443?security=tls&client-fingerprint=chrome#Trojan\n"
+        "vless://11111111-1111-1111-1111-111111111111@plain.example.com:443?security=none&fp=firefox#Plain\n";
+
+    auto result = subcli::parseSubscription(content, "fixture", "uri", makeConfig());
+    require(result.nodes.size() == 2, "trojan and non-tls vless should parse");
+
+    const auto& trojan = result.nodes[0];
+    require(trojan.type == "trojan", "first node should be trojan");
+    require(trojan.tlsConfig.fingerprint == "chrome", "trojan tls should promote fingerprint");
+    require(trojan.fingerprint == "chrome", "trojan legacy fingerprint should preserve alias");
+    require(trojan.protocol.values.at("client-fingerprint") == "chrome", "trojan protocol values should keep alias");
+
+    const auto& nonTls = result.nodes[1];
+    require(nonTls.type == "vless", "second node should be vless");
+    require(nonTls.fingerprint == "firefox", "non-tls legacy fingerprint should preserve alias");
+    require(nonTls.protocol.values.at("client-fingerprint") == "firefox", "non-tls protocol values should keep alias");
+    require(nonTls.tlsConfig.fingerprint.empty(), "non-tls node should not promote fingerprint into tlsConfig");
+}
+
+void testExporterFingerprintPropagationAcrossTargets() {
+    auto config = makeConfig();
+
+    subcli::ProxyNode node;
+    node.type = "vless";
+    node.name = "VLESS TLS Node";
+    node.server = "vless.example.com";
+    node.port = 443;
+    node.protocol.uuid = "11111111-1111-1111-1111-111111111111";
+    node.tls = true;
+    node.fingerprint = "chrome";
+    node.normalize();
+
+    const fs::path outDir = fs::temp_directory_path() / "subcli-tests-fingerprint-propagation";
+    fs::remove_all(outDir);
+    fs::create_directories(outDir);
+
+    std::string error;
+    auto mihomo = subcli::exportForTarget(subcli::ExportTarget::Mihomo, {node}, config, false, (outDir / "mihomo.yaml").string(), error);
+    require(mihomo.ok, "mihomo export should succeed: " + error);
+    auto sing = subcli::exportForTarget(subcli::ExportTarget::SingBox, {node}, config, false, (outDir / "singbox.json").string(), error);
+    require(sing.ok, "sing-box export should succeed: " + error);
+    auto xray = subcli::exportForTarget(subcli::ExportTarget::Xray, {node}, config, false, (outDir / "xray.json").string(), error);
+    require(xray.ok, "xray export should succeed: " + error);
+
+    const auto mihomoRoot = YAML::LoadFile((outDir / "mihomo.yaml").string());
+    require(mihomoRoot["proxies"] && mihomoRoot["proxies"].IsSequence() && mihomoRoot["proxies"].size() > 0, "mihomo should render proxies");
+    require(mihomoRoot["proxies"][0]["client-fingerprint"].as<std::string>("") == "chrome", "mihomo should render client-fingerprint");
+
+    auto singRoot = nlohmann::json::parse(subcli::readFile((outDir / "singbox.json").string()), nullptr, false);
+    require(!singRoot.is_discarded(), "sing-box output should parse");
+    require(singRoot["outbounds"].is_array() && !singRoot["outbounds"].empty(), "sing-box should render outbounds");
+    bool singHasFingerprint = false;
+    for (const auto& outbound : singRoot["outbounds"]) {
+        if (!outbound.is_object() || outbound.value("tag", "") != "VLESS TLS Node") {
+            continue;
+        }
+        if (outbound.contains("tls") && outbound["tls"].is_object() &&
+            outbound["tls"].contains("utls") && outbound["tls"]["utls"].is_object()) {
+            singHasFingerprint = outbound["tls"]["utls"].value("fingerprint", "") == "chrome";
+        }
+    }
+    require(singHasFingerprint, "sing-box should render tls.utls fingerprint");
+
+    auto xrayRoot = nlohmann::json::parse(subcli::readFile((outDir / "xray.json").string()), nullptr, false);
+    require(!xrayRoot.is_discarded(), "xray output should parse");
+    require(xrayRoot["outbounds"].is_array() && !xrayRoot["outbounds"].empty(), "xray should render outbounds");
+    bool xrayHasFingerprint = false;
+    for (const auto& outbound : xrayRoot["outbounds"]) {
+        if (!outbound.is_object() || outbound.value("protocol", "") != "vless") {
+            continue;
+        }
+        if (outbound.contains("streamSettings") && outbound["streamSettings"].is_object() &&
+            outbound["streamSettings"].contains("tlsSettings") && outbound["streamSettings"]["tlsSettings"].is_object()) {
+            xrayHasFingerprint = outbound["streamSettings"]["tlsSettings"].value("fingerprint", "") == "chrome";
+        }
+    }
+    require(xrayHasFingerprint, "xray should render tlsSettings fingerprint");
+
+    fs::remove_all(outDir);
+}
+
+void testFingerprintPromotionPrecedenceKeepsStructuredValue() {
+    auto config = makeConfig();
+
+    subcli::ProxyNode node;
+    node.type = "vless";
+    node.name = "Structured FP";
+    node.server = "vless.example.com";
+    node.port = 443;
+    node.protocol.uuid = "11111111-1111-1111-1111-111111111111";
+    node.tlsConfig.enabled = true;
+    node.tlsConfig.fingerprint = "structured";
+    node.fingerprint = "legacy";
+    node.normalize();
+
+    std::vector<subcli::DiagnosticMessage> warnings;
+    auto prepared = subcli::preprocessNodes({node}, config, warnings);
+    require(prepared.size() == 1, "preprocess should keep node");
+    require(prepared[0].tlsConfig.fingerprint == "structured", "structured fingerprint should not be overwritten by legacy fallback");
 }
 
 void testUnknownFormatHintFallsBackToAuto() {
@@ -3716,6 +3957,212 @@ void testStorePersistsStrategyGroups() {
     require(loaded.strategyGroups[1].type == "url-test", "strategy group type should persist");
 
     fs::remove(path);
+}
+
+void testSubscriptionServiceYamlRoundTrip() {
+    subcli::Subscription first;
+    first.id = "alpha";
+    first.name = "alpha";
+    first.url = "https://example.com/alpha";
+    first.tags = {"hk", "jp"};
+
+    subcli::Subscription second;
+    second.id = "beta";
+    second.name = "beta";
+    second.url = "file:///tmp/beta.txt";
+    second.enabled = false;
+    second.group = "lab";
+
+    const std::string yaml = subcli::exportSubscriptionsToYaml({first, second});
+    auto imported = subcli::importSubscriptionsFromYaml(yaml, {}, subcli::SubscriptionImportMode::Replace);
+
+    require(imported.rejected == 0, "round-trip import should not reject subscriptions");
+    require(imported.subscriptions.size() == 2, "round-trip should keep two subscriptions");
+    require(imported.subscriptions[0].name == "alpha", "round-trip should keep first name");
+    require(imported.subscriptions[0].url == "https://example.com/alpha", "round-trip should keep first url");
+    require(imported.subscriptions[1].name == "beta", "round-trip should keep second name");
+    require(!imported.subscriptions[1].enabled, "round-trip should keep enabled flag");
+}
+
+void testSubscriptionServiceImportRejectsMissingNameAndUrl() {
+    const std::string yaml = R"yaml(version: 1
+subscriptions:
+  - id: a
+    name: valid
+    url: https://example.com/sub
+  - id: b
+    name: ""
+    url: https://example.com/missing-name
+  - id: c
+    name: missing-url
+)yaml";
+
+    auto result = subcli::importSubscriptionsFromYaml(yaml, {}, subcli::SubscriptionImportMode::Merge);
+    require(result.rejected == 3, "missing name/url should reject full YAML import");
+    require(result.subscriptions.empty(), "rejected import should not return merged subscriptions");
+    require(!result.messages.empty(), "rejected import should include a message");
+    require(
+        result.messages[0].find("missing required subscription field") != std::string::npos,
+        "rejection message should mention missing required subscription field"
+    );
+}
+
+void testSubscriptionServiceMergeUpdatesByIdAndName() {
+    subcli::Subscription oldById;
+    oldById.id = "same-id";
+    oldById.name = "old-name";
+    oldById.url = "https://example.com/old-id";
+
+    subcli::Subscription oldByName;
+    oldByName.id = "old-name-id";
+    oldByName.name = "same-name";
+    oldByName.url = "https://example.com/old-name";
+
+    const std::string yaml = R"yaml(version: 1
+subscriptions:
+  - id: same-id
+    name: new-name
+    url: https://example.com/new-id
+  - name: same-name
+    url: https://example.com/new-name
+)yaml";
+
+    auto result = subcli::importSubscriptionsFromYaml(
+        yaml,
+        {oldById, oldByName},
+        subcli::SubscriptionImportMode::Merge
+    );
+    require(result.rejected == 0, "merge import should succeed");
+    require(result.created == 0, "merge should not create new entries in this case");
+    require(result.updated == 2, "merge should update both id and name matches");
+    require(result.subscriptions.size() == 2, "merge should keep same subscription count");
+    require(result.subscriptions[0].name == "new-name", "id match should update record");
+    require(result.subscriptions[1].url == "https://example.com/new-name", "name match should update record");
+}
+
+void testSubscriptionServiceReplaceModeReturnsOnlyImported() {
+    subcli::Subscription old;
+    old.id = "old";
+    old.name = "old";
+    old.url = "https://example.com/old";
+
+    const std::string yaml = R"yaml(version: 1
+subscriptions:
+  - id: fresh
+    name: fresh
+    url: https://example.com/fresh
+)yaml";
+
+    auto result = subcli::importSubscriptionsFromYaml(
+        yaml,
+        {old},
+        subcli::SubscriptionImportMode::Replace
+    );
+    require(result.rejected == 0, "replace import should succeed");
+    require(result.updated == 0, "replace mode should not report updated");
+    require(result.created == 1, "replace mode should report imported count as created");
+    require(result.subscriptions.size() == 1, "replace mode should return only imported entries");
+    require(result.subscriptions[0].id == "fresh", "replace mode should drop old entries");
+}
+
+void testSubscriptionServiceYamlTypedDecodeErrorDoesNotCrash() {
+    const std::string yaml = R"yaml(version: 1
+subscriptions:
+  - id: typed-error
+    name: typed-error
+    url: https://example.com/a
+    timeout: bad-timeout
+)yaml";
+
+    auto result = subcli::importSubscriptionsFromYaml(yaml, {}, subcli::SubscriptionImportMode::Merge);
+    require(result.rejected == 1, "typed decode error should reject entry");
+    require(result.subscriptions.empty(), "typed decode error should not merge entries");
+    require(!result.messages.empty(), "typed decode error should report message");
+}
+
+void testSubscriptionServiceUriListIgnoresCommentsAndRejectsInvalidLines() {
+    const std::string content = R"txt(
+# comment line
+; second comment
+vmess://ok
+invalid-line
+wireguard://ok
+)txt";
+
+    auto result = subcli::importSubscriptionsFromUriList(content, {}, subcli::SubscriptionImportMode::Merge);
+    require(result.created == 2, "uri-list should import only valid lines");
+    require(result.rejected == 1, "uri-list should reject invalid lines");
+    require(result.subscriptions.size() == 2, "uri-list should keep only valid entries");
+    require(!result.messages.empty(), "uri-list should report invalid lines");
+}
+
+void testSubscriptionServicePruneDisabledDryRun() {
+    subcli::Subscription disabled;
+    disabled.id = "off";
+    disabled.name = "off";
+    disabled.enabled = false;
+
+    subcli::Subscription enabled;
+    enabled.id = "on";
+    enabled.name = "on";
+    enabled.enabled = true;
+
+    auto plan = subcli::planPruneSubscriptions({disabled, enabled}, true, 0);
+    require(plan.removeIds.size() == 1, "prune plan should include one disabled id");
+    require(plan.removeIds[0] == "off", "prune plan should remove disabled subscription");
+    require(plan.keepIds.size() == 1 && plan.keepIds[0] == "on", "prune plan should keep enabled subscription");
+}
+
+void testSubscriptionServiceBatchSetGroupByTag() {
+    subcli::Subscription hkA;
+    hkA.id = "hk-a";
+    hkA.tags = {"hk"};
+    hkA.group = "default";
+
+    subcli::Subscription hkB;
+    hkB.id = "hk-b";
+    hkB.tags = {"hk", "premium"};
+    hkB.group = "legacy";
+
+    subcli::Subscription us;
+    us.id = "us-a";
+    us.tags = {"us"};
+    us.group = "default";
+
+    std::vector<subcli::Subscription> subs = {hkA, hkB, us};
+    const int updated = subcli::batchSetGroupByTag(subs, "hk", "asia");
+    require(updated == 2, "batch set group should update all matching tag subscriptions");
+    require(subs[0].group == "asia", "first hk subscription group should be updated");
+    require(subs[1].group == "asia", "second hk subscription group should be updated");
+    require(subs[2].group == "default", "non matching tag should keep original group");
+}
+
+void testSubscriptionServicePruneFailedDays() {
+    subcli::Subscription stale;
+    stale.id = "stale";
+    stale.lastError = "fetch failed";
+    stale.lastSuccess = "2000-01-01T00:00:00Z";
+
+    subcli::Subscription fresh;
+    fresh.id = "fresh";
+    fresh.lastError = "fetch failed";
+    fresh.lastSuccess = subcli::nowIso8601();
+
+    auto plan = subcli::planPruneSubscriptions({stale, fresh}, false, 1);
+    require(plan.removeIds.size() == 1, "prune failed-days should remove stale failed subscription");
+    require(plan.removeIds[0] == "stale", "prune failed-days should remove stale id");
+    require(plan.keepIds.size() == 1 && plan.keepIds[0] == "fresh", "prune failed-days should keep recent failed subscription");
+}
+
+void testSubscriptionServicePruneFailedDaysKeepsInvalidTimestamp() {
+    subcli::Subscription invalidTs;
+    invalidTs.id = "invalid-ts";
+    invalidTs.lastError = "fetch failed";
+    invalidTs.lastSuccess = "not-a-timestamp";
+
+    auto plan = subcli::planPruneSubscriptions({invalidTs}, false, 3);
+    require(plan.removeIds.empty(), "invalid lastSuccess timestamp should not be auto-pruned by failed-days");
+    require(plan.keepIds.size() == 1 && plan.keepIds[0] == "invalid-ts", "invalid timestamp subscription should be kept");
 }
 
 void testCustomStrategyGroupsRenderForMihomoAndSingBox() {
@@ -6006,6 +6453,211 @@ void testWorkspaceMigrateCopiesDurableDataOnly() {
     fs::remove_all(to);
 }
 
+void testRegistryContainsCurrentConfigKeys() {
+    const auto keys = subcli::allConfigKeyNames();
+    require(std::find(keys.begin(), keys.end(), "profile") != keys.end(), "registry should include profile");
+    require(std::find(keys.begin(), keys.end(), "profile_path") != keys.end(), "registry should include profile_path");
+    require(std::find(keys.begin(), keys.end(), "output_dir") != keys.end(), "registry should include output_dir");
+    require(std::find(keys.begin(), keys.end(), "template_dir") != keys.end(), "registry should include template_dir");
+    require(std::find(keys.begin(), keys.end(), "core_paths.mihomo") != keys.end(), "registry should include core_paths.mihomo");
+    require(std::find(keys.begin(), keys.end(), "core_paths.sing_box") != keys.end(), "registry should include core_paths.sing_box");
+    require(std::find(keys.begin(), keys.end(), "core_paths.xray") != keys.end(), "registry should include core_paths.xray");
+    require(std::find(keys.begin(), keys.end(), "node_management.dedupe") != keys.end(), "registry should include node_management.dedupe");
+}
+
+void testRegistryContainsCurrentExportTargets() {
+    const auto targets = subcli::allExportTargetIds();
+    require(targets.size() == 3, "registry should include exactly current built-in export targets");
+    require(std::find(targets.begin(), targets.end(), "mihomo") != targets.end(), "registry should include mihomo");
+    require(std::find(targets.begin(), targets.end(), "sing-box") != targets.end(), "registry should include sing-box");
+    require(std::find(targets.begin(), targets.end(), "xray") != targets.end(), "registry should include xray");
+}
+
+void testExportTargetRegistryHasTemplateAndCoreKeys() {
+    for (const auto& target : subcli::exportTargetRegistry()) {
+        require(!target.id.empty(), "export target id should be non-empty");
+        require(!target.outputFile.empty(), "export target output should be non-empty");
+        require(subcli::findConfigKeyDescriptor(target.coreConfigKey) != nullptr, "export target core key should exist");
+        require(subcli::findConfigKeyDescriptor(target.normalTemplateKey) != nullptr, "export target normal template key should exist");
+        require(subcli::findConfigKeyDescriptor(target.tunTemplateKey) != nullptr, "export target tun template key should exist");
+    }
+}
+
+void testExportTargetEnumRegistryConsistency() {
+    const auto* mihomo = subcli::findExportTargetDescriptor(subcli::ExportTarget::Mihomo);
+    const auto* singBox = subcli::findExportTargetDescriptor(subcli::ExportTarget::SingBox);
+    const auto* xray = subcli::findExportTargetDescriptor(subcli::ExportTarget::Xray);
+    require(mihomo != nullptr && mihomo->id == "mihomo", "Mihomo enum should map to mihomo descriptor");
+    require(singBox != nullptr && singBox->id == "sing-box", "SingBox enum should map to sing-box descriptor");
+    require(xray != nullptr && xray->id == "xray", "Xray enum should map to xray descriptor");
+    require(subcli::exportTargetId(subcli::ExportTarget::Mihomo) == "mihomo", "exportTargetId should resolve mihomo");
+    require(subcli::exportTargetId(subcli::ExportTarget::SingBox) == "sing-box", "exportTargetId should resolve sing-box");
+    require(subcli::exportTargetId(subcli::ExportTarget::Xray) == "xray", "exportTargetId should resolve xray");
+}
+
+void testExportTargetResolveAndOutputPathUseRegistryMetadata() {
+    for (const auto& descriptor : subcli::exportTargetRegistry()) {
+        subcli::ExportTarget resolvedTarget = subcli::ExportTarget::Mihomo;
+        const subcli::ExportTargetDescriptor* resolvedDescriptor = nullptr;
+        require(subcli::resolveExportTarget(descriptor.id, resolvedTarget, resolvedDescriptor), "resolveExportTarget should parse registry target id");
+        require(resolvedDescriptor != nullptr, "resolveExportTarget should return descriptor");
+        require(resolvedDescriptor->id == descriptor.id, "resolved descriptor id should match registry id");
+        require(resolvedTarget == descriptor.target, "resolved target enum should match registry target enum");
+
+        std::string outputPath;
+        require(subcli::exportTargetOutputPath("/tmp/outputs", resolvedTarget, outputPath), "exportTargetOutputPath should resolve for registry target");
+        require(outputPath == std::string("/tmp/outputs/") + descriptor.outputFile, "output path should use registry-defined outputFile");
+    }
+}
+
+void testExportTargetResolveRejectsUnknownTarget() {
+    subcli::ExportTarget target = subcli::ExportTarget::Mihomo;
+    const subcli::ExportTargetDescriptor* descriptor = nullptr;
+    require(!subcli::resolveExportTarget("unknown-target", target, descriptor), "resolveExportTarget should reject unknown ids");
+}
+
+void testRegistryContainsCurrentCommandSurface() {
+    const auto commands = subcli::allCommandNames();
+    for (const auto& command : {"init", "doctor", "sub", "config", "profile", "template", "asset", "export", "workspace", "check", "run", "daemon", "status", "stop", "restart", "completion"}) {
+        require(std::find(commands.begin(), commands.end(), command) != commands.end(), std::string("registry should include command ") + command);
+    }
+}
+
+void testRegistryFindConfigKeySupportsPrefixDescriptors() {
+    const subcli::ConfigKeyDescriptor* descriptor = subcli::findConfigKeyDescriptor("grouping.region_rules.HK");
+    require(descriptor != nullptr, "prefix config key should resolve");
+    require(descriptor->valueType == subcli::ConfigValueType::Prefix, "prefix config key should report Prefix type");
+    require(descriptor->key == "grouping.region_rules.", "prefix config key should match descriptor prefix");
+}
+
+void testRegistryExportDescriptorIncludesExpectedOptions() {
+    const subcli::CommandDescriptor* descriptor = subcli::findCommandDescriptor("export");
+    require(descriptor != nullptr, "export command descriptor should exist");
+    require(std::find(descriptor->options.begin(), descriptor->options.end(), "--strict-capabilities") != descriptor->options.end(), "export descriptor should include --strict-capabilities");
+    require(std::find(descriptor->options.begin(), descriptor->options.end(), "--explain-policy") != descriptor->options.end(), "export descriptor should include --explain-policy");
+    require(std::find(descriptor->options.begin(), descriptor->options.end(), "--json") != descriptor->options.end(), "export descriptor should include --json");
+}
+
+void testRegistrySubDescriptorMentionsDataLifecycleCommands() {
+    const subcli::CommandDescriptor* descriptor = subcli::findCommandDescriptor("sub");
+    require(descriptor != nullptr, "sub command descriptor should exist");
+    require(descriptor->summary.find("import") != std::string::npos, "sub descriptor summary should mention import");
+    require(descriptor->summary.find("export") != std::string::npos, "sub descriptor summary should mention export");
+    require(descriptor->summary.find("check") != std::string::npos, "sub descriptor summary should mention check");
+    require(descriptor->summary.find("prune") != std::string::npos, "sub descriptor summary should mention prune");
+}
+
+void testConfigServiceSetGetRemoveScalarKeys() {
+    subcli::AppConfig cfg;
+    cfg.templateDir = "/tmp/templates";
+
+    std::string error;
+    const auto resolvePath = [](const std::string& value) {
+        return std::string("/resolved/") + value;
+    };
+
+    require(subcli::setConfigValue(cfg, "parallelism", "8", resolvePath, error), "set parallelism should succeed: " + error);
+    require(subcli::setConfigValue(cfg, "tun", "true", resolvePath, error), "set tun should succeed: " + error);
+    require(subcli::setConfigValue(cfg, "output_dir", "outputs", resolvePath, error), "set output_dir should succeed: " + error);
+
+    std::string value;
+    require(subcli::getConfigValue(cfg, "parallelism", value, error), "get parallelism should succeed: " + error);
+    require(value == "8", "parallelism should be updated");
+    require(subcli::getConfigValue(cfg, "tun", value, error), "get tun should succeed: " + error);
+    require(value == "true", "tun should be true");
+    require(subcli::getConfigValue(cfg, "output_dir", value, error), "get output_dir should succeed: " + error);
+    require(value == "/resolved/outputs", "output_dir should use resolver");
+
+    subcli::ConfigServiceOptions options;
+    options.defaultOutputDir = "/defaults/outputs";
+    options.defaultAssetDir = "/defaults/assets";
+    options.defaultTemplateDir = "/defaults/templates";
+
+    require(subcli::removeConfigValue(cfg, "parallelism", options, error), "remove parallelism should succeed: " + error);
+    require(subcli::removeConfigValue(cfg, "tun", options, error), "remove tun should succeed: " + error);
+    require(subcli::removeConfigValue(cfg, "output_dir", options, error), "remove output_dir should succeed: " + error);
+
+    require(subcli::getConfigValue(cfg, "parallelism", value, error), "get parallelism after remove should succeed: " + error);
+    require(value == "4", "parallelism should reset to default");
+    require(subcli::getConfigValue(cfg, "tun", value, error), "get tun after remove should succeed: " + error);
+    require(value == "false", "tun should reset to false");
+    require(subcli::getConfigValue(cfg, "output_dir", value, error), "get output_dir after remove should succeed: " + error);
+    require(value == "/defaults/outputs", "output_dir should reset to provided default");
+}
+
+void testConfigServiceResolvesTemplateAndAssetPathsRelativeToConfigDir() {
+    subcli::AppConfig cfg;
+    cfg.templateDir = "/tmp/templates";
+
+    std::string error;
+    const auto resolvePath = [](const std::string& value) {
+        return std::string("/resolved/") + value;
+    };
+
+    require(subcli::setConfigValue(cfg, "templates.sing-box.normal", "./templates/singbox_base.json", resolvePath, error),
+            "set template path should succeed: " + error);
+    require(subcli::setConfigValue(cfg, "assets.paths.xray.geoip", "./assets/geoip.dat", resolvePath, error),
+            "set asset path should succeed: " + error);
+    require(subcli::setConfigValue(cfg, "assets.urls.xray.geoip", "https://example.invalid/geoip.dat", resolvePath, error),
+            "set asset url should succeed: " + error);
+
+    std::string value;
+    require(subcli::getConfigValue(cfg, "templates.sing-box.normal", value, error), "get template path should succeed: " + error);
+    require(value == "/resolved/./templates/singbox_base.json", "template path should use resolver");
+    require(subcli::getConfigValue(cfg, "assets.paths.xray.geoip", value, error), "get asset path should succeed: " + error);
+    require(value == "/resolved/./assets/geoip.dat", "asset path should use resolver");
+    require(subcli::getConfigValue(cfg, "assets.urls.xray.geoip", value, error), "get asset url should succeed: " + error);
+    require(value == "https://example.invalid/geoip.dat", "asset url should remain literal");
+}
+
+void testConfigServiceRejectsUnknownAndBadValues() {
+    subcli::AppConfig cfg;
+    cfg.templateDir = "/tmp/templates";
+
+    std::string error;
+    const auto resolvePath = [](const std::string& value) {
+        return value;
+    };
+
+    require(!subcli::setConfigValue(cfg, "parallelism", "0", resolvePath, error), "set parallelism 0 should fail");
+    require(error.find("parallelism must be >= 1") != std::string::npos, "parallelism failure should be clear");
+
+    require(!subcli::setConfigValue(cfg, "tun", "maybe", resolvePath, error), "set invalid bool should fail");
+    require(error.find("invalid boolean") != std::string::npos, "invalid bool failure should be clear");
+
+    std::string value;
+    require(!subcli::getConfigValue(cfg, "unknown.key", value, error), "get unknown key should fail");
+    require(error == "unsupported key in v1", "unknown key should use unsupported message");
+
+    subcli::ConfigServiceOptions options;
+    require(!subcli::removeConfigValue(cfg, "unknown.key", options, error), "remove unknown key should fail");
+    require(error == "unsupported key in v1", "remove unknown key should use unsupported message");
+}
+
+void testCMakeVersionIsV025() {
+    const fs::path cmakePath = fs::path(SUBCLI_SOURCE_DIR) / "CMakeLists.txt";
+    std::ifstream in(cmakePath);
+    require(in.is_open(), "CMakeLists.txt should be readable");
+
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::regex projectPattern(R"(project\s*\(\s*subcli\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)\b)", std::regex::icase);
+    std::smatch match;
+    require(std::regex_search(content, match, projectPattern),
+            "CMakeLists.txt should declare subcli project version");
+    require(match.size() >= 2, "CMakeLists.txt project version capture should exist");
+    require(match[1].str() == "0.2.5", "CMakeLists.txt subcli project version should be exactly 0.2.5");
+}
+
+void testConfigDocsMentionRegistryKeys() {
+    const auto docs = subcli::readFile((fs::path(SUBCLI_SOURCE_DIR) / "docs/config-file.md").string());
+    for (const auto& key : subcli::allConfigKeyNames()) {
+        if (!key.empty() && key.back() == '.') {
+            continue;
+        }
+        require(docs.find(key) != std::string::npos, std::string("config docs should mention ") + key);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -6051,9 +6703,12 @@ int main() {
     testProfileExplainFallbackWhenConfigLoadFails();
     testBuiltInAutoGroupsDoNotReferenceProxy();
     testProtocolRegistryCoversOfficialTargets();
+    testDiagnosticServiceReportsConfigAndTargets();
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();
     testBashCompletionContainsCommands();
+    testCompletionScriptContainsRegistryKeysAndTargets();
+    testCompletionSubcommandListIncludesLifecycleVerbs();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
     testDaemonProcessLifecycleWithCustomFiles();
@@ -6078,6 +6733,11 @@ int main() {
     testParseXrayJson();
     testParseUriIgnoresInvalidVmessPort();
     testParseModernUdpUriLinks();
+    testUriClientFingerprintPreservedForTlsNodes();
+    testUriClientFingerprintAliasMappingAndPrecedence();
+    testUriClientFingerprintTrojanAndNonTlsGate();
+    testExporterFingerprintPropagationAcrossTargets();
+    testFingerprintPromotionPrecedenceKeepsStructuredValue();
     testUnknownFormatHintFallsBackToAuto();
     testHintParseFailedFallsBackToAuto();
     testParseMihomoHttpOpts();
@@ -6145,10 +6805,35 @@ int main() {
     testWorkspaceMigrateCopiesDurableDataOnly();
     testStorePersistsOverrideFlags();
     testNormalizeTagsDropsEmptyDedupesAndKeepsOrder();
+    testSubscriptionServiceYamlRoundTrip();
+    testSubscriptionServiceImportRejectsMissingNameAndUrl();
+    testSubscriptionServiceMergeUpdatesByIdAndName();
+    testSubscriptionServiceReplaceModeReturnsOnlyImported();
+    testSubscriptionServiceYamlTypedDecodeErrorDoesNotCrash();
+    testSubscriptionServiceUriListIgnoresCommentsAndRejectsInvalidLines();
+    testSubscriptionServicePruneDisabledDryRun();
+    testSubscriptionServiceBatchSetGroupByTag();
+    testSubscriptionServicePruneFailedDays();
+    testSubscriptionServicePruneFailedDaysKeepsInvalidTimestamp();
     testStorePersistsFetchMaxBytes();
     testStorePersistsProfileAndAssets();
     testStorePersistsProfilePath();
     testStoreDefaultsMissingProfilePathToEmpty();
+    testRegistryContainsCurrentConfigKeys();
+    testRegistryContainsCurrentExportTargets();
+    testExportTargetRegistryHasTemplateAndCoreKeys();
+    testExportTargetEnumRegistryConsistency();
+    testExportTargetResolveAndOutputPathUseRegistryMetadata();
+    testExportTargetResolveRejectsUnknownTarget();
+    testRegistryContainsCurrentCommandSurface();
+    testRegistryFindConfigKeySupportsPrefixDescriptors();
+    testRegistryExportDescriptorIncludesExpectedOptions();
+    testRegistrySubDescriptorMentionsDataLifecycleCommands();
+    testConfigServiceSetGetRemoveScalarKeys();
+    testConfigServiceResolvesTemplateAndAssetPathsRelativeToConfigDir();
+    testConfigServiceRejectsUnknownAndBadValues();
+    testCMakeVersionIsV025();
+    testConfigDocsMentionRegistryKeys();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();

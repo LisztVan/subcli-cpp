@@ -1,6 +1,7 @@
 #include "subcli/capability_matrix.hpp"
 
 #include "subcli/capabilities.hpp"
+#include "subcli/registry.hpp"
 #include "subcli/util.hpp"
 
 #include <set>
@@ -109,7 +110,7 @@ std::vector<CapabilityFinding> assessProfileCapabilities(ExportTarget target, co
                     CapabilityLevel::Unsupported,
                     "route_rule_type",
                     normalizedType + ":" + normalizedValue,
-                    "sing-box v2.1 only supports cn/private for this geosite/geoip rule",
+                    subcli::exportTargetId(target) + " v2.1 only supports cn/private for this geosite/geoip rule",
                 }
             );
         }

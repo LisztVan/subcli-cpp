@@ -1,9 +1,46 @@
 #include "subcli/cli_completion.hpp"
+#include "subcli/registry.hpp"
+
+#include <string>
+#include <vector>
 
 namespace subcli {
 
+namespace {
+
+std::string joinWords(const std::vector<std::string>& words) {
+    std::string out;
+    for (size_t i = 0; i < words.size(); ++i) {
+        if (i > 0) {
+            out += " ";
+        }
+        out += words[i];
+    }
+    return out;
+}
+
+std::string commandWords() {
+    return joinWords(allCommandNames());
+}
+
+std::string configWords(bool includeJson) {
+    auto keys = allConfigKeyNames();
+    if (includeJson) {
+        keys.push_back("--json");
+    }
+    return joinWords(keys);
+}
+
+std::string exportWords() {
+    auto targets = allExportTargetIds();
+    targets.insert(targets.begin(), "all");
+    return joinWords(targets);
+}
+
+} // namespace
+
 std::string generateBashCompletion() {
-    return R"BASH(_subcli_completion() {
+    const std::string scriptTemplate = R"BASH(_subcli_completion() {
     local cur prev cmd subcmd
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
@@ -12,14 +49,14 @@ std::string generateBashCompletion() {
     subcmd="${COMP_WORDS[2]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "init doctor sub config template asset profile export daemon run stop status restart check completion workspace" -- "$cur") )
+        COMPREPLY=( $(compgen -W "@COMMAND_WORDS@" -- "$cur") )
         return 0
     fi
 
     case "$cmd" in
         sub)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "add remove list update enable disable edit validate" -- "$cur") )
+                COMPREPLY=( $(compgen -W "add remove list update enable disable edit validate import export check prune" -- "$cur") )
                 return 0
             fi
             COMPREPLY=( $(compgen -W "--id --name --url --group --format-hint --user-agent --timeout --retry --priority --update-interval --tag --tags --header --force --strict-network --json --enable --disable --clear-headers --remove-header" -- "$cur") )
@@ -30,9 +67,9 @@ std::string generateBashCompletion() {
                 return 0
             fi
             if [[ "$subcmd" == "list" ]]; then
-                COMPREPLY=( $(compgen -W "tun profile profile_path output_dir template_dir asset_dir parallelism timeout retry log_level core_paths.mihomo core_paths.sing_box core_paths.xray node_management.dedupe node_management.rename_template node_management.include_regex node_management.exclude_regex node_management.sort_by fetch_max_bytes --json" -- "$cur") )
+                COMPREPLY=( $(compgen -W "@CONFIG_WORDS_WITH_JSON@" -- "$cur") )
             elif [[ "$subcmd" == "get" || "$subcmd" == "set" || "$subcmd" == "remove" ]]; then
-                COMPREPLY=( $(compgen -W "tun profile profile_path output_dir template_dir asset_dir parallelism timeout retry log_level core_paths.mihomo core_paths.sing_box core_paths.xray node_management.dedupe node_management.rename_template node_management.include_regex node_management.exclude_regex node_management.sort_by fetch_max_bytes" -- "$cur") )
+                COMPREPLY=( $(compgen -W "@CONFIG_WORDS@" -- "$cur") )
             else
                 COMPREPLY=()
             fi
@@ -64,7 +101,7 @@ std::string generateBashCompletion() {
             ;;
         export)
             if [[ $COMP_CWORD -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W "all mihomo sing-box xray" -- "$cur") )
+                COMPREPLY=( $(compgen -W "@EXPORT_WORDS@" -- "$cur") )
                 return 0
             fi
             COMPREPLY=( $(compgen -W "--tun --check --check-timeout --output-dir --profile --sub --tag --strict-network --download-assets --strict-capabilities --explain-policy --json" -- "$cur") )
@@ -104,6 +141,21 @@ std::string generateBashCompletion() {
 
 complete -F _subcli_completion subcli
 )BASH";
+
+    std::string script = scriptTemplate;
+    auto replaceAll = [&script](const std::string& from, const std::string& to) {
+        size_t pos = 0;
+        while ((pos = script.find(from, pos)) != std::string::npos) {
+            script.replace(pos, from.size(), to);
+            pos += to.size();
+        }
+    };
+
+    replaceAll("@COMMAND_WORDS@", commandWords());
+    replaceAll("@CONFIG_WORDS_WITH_JSON@", configWords(true));
+    replaceAll("@CONFIG_WORDS@", configWords(false));
+    replaceAll("@EXPORT_WORDS@", exportWords());
+    return script;
 }
 
 } // namespace subcli

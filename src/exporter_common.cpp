@@ -133,6 +133,11 @@ std::vector<ProxyNode> preprocessNodes(const std::vector<ProxyNode>& nodes, cons
 
     for (auto node : nodes) {
         node.normalize();
+        if (node.tlsConfig.fingerprint.empty() && !node.fingerprint.empty() &&
+            (node.tlsConfig.enabled || node.tlsConfig.reality.enabled)) {
+            node.tlsConfig.fingerprint = node.fingerprint;
+            node.normalize();
+        }
         node.name = renderNodeName(node, config.renameTemplate);
         const std::string matchText = node.name + " " + node.region + " " + node.type + " " + node.sourceId;
         if (!config.includeRegex.empty() && includeValid && !std::regex_search(matchText, includeRegex)) {

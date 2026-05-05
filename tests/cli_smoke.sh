@@ -34,6 +34,14 @@ for summary in \
         exit 1
     fi
 done
+sub_help="$($bin sub --help)"
+if [[ "$sub_help" != *"import    Import subscriptions from a subcli YAML or URI list file."* ||
+      "$sub_help" != *"export    Export subscription records to a portable YAML file."* ||
+      "$sub_help" != *"check     Check selected subscriptions for fetch and parse readiness."* ||
+      "$sub_help" != *"prune     Remove disabled or long-failing subscriptions."* ]]; then
+    printf '%s\n' "$sub_help"
+    exit 1
+fi
 "$bin" template validate >/dev/null
 
 cp "$($bin template get mihomo normal)" "$tmp/valid-mihomo.yaml"
@@ -159,8 +167,20 @@ if [[ "$template_json" != *'"templates"'* ]]; then
 fi
 
 doctor_json="$({ "$bin" doctor --json; } 2>&1 || true)"
-if [[ "$doctor_json" != *'"checks"'* ]]; then
+if [[ "$doctor_json" != *'"findings"'* || "$doctor_json" != *'"ok"'* ]]; then
     printf '%s\n' "$doctor_json"
+    exit 1
+fi
+if [[ "$doctor_json" != *'"failed"'* || "$doctor_json" != *'"checks"'* ]]; then
+    printf 'doctor --json missing compatibility fields: %s\n' "$doctor_json"
+    exit 1
+fi
+if [[ "$doctor_json" != *'"code":"workspace.resolved"'* || "$doctor_json" != *'"code":"config.key.registered"'* || "$doctor_json" != *'"code":"export.target.registered"'* ]]; then
+    printf 'doctor --json missing stable diagnostic codes: %s\n' "$doctor_json"
+    exit 1
+fi
+if [[ "$doctor_json" != *'"code":"template.configured"'* || "$doctor_json" != *'"code":"asset.path.configured"'* ]]; then
+    printf 'doctor --json missing template/asset findings: %s\n' "$doctor_json"
     exit 1
 fi
 if [[ "$doctor_json" != *'"environment"'* || "$doctor_json" != *'"resolution_source"'* || "$doctor_json" != *'"resolved_path_map"'* ]]; then
@@ -168,16 +188,40 @@ if [[ "$doctor_json" != *'"environment"'* || "$doctor_json" != *'"resolution_sou
     exit 1
 fi
 
+missing_cfg="$tmp/missing-config"
+mkdir -p "$missing_cfg"
+"$bin" config set templates.mihomo.normal "$missing_cfg/nope.yaml" >/dev/null
+set +e
+"$bin" doctor --json >/tmp/subcli-doctor-fail.json 2>/tmp/subcli-doctor-fail.err
+doctor_fail_code=$?
+set -e
+doctor_fail_json="$(cat /tmp/subcli-doctor-fail.json)"
+if [[ "$doctor_fail_code" -eq 0 ]]; then
+    printf 'doctor should fail on missing template, got exit 0: %s\n' "$doctor_fail_json"
+    exit 1
+fi
+if [[ "$doctor_fail_json" != *'"failed":1'* || "$doctor_fail_json" != *'"ok":false'* ]]; then
+    printf 'doctor failure json should include failed count and ok=false: %s\n' "$doctor_fail_json"
+    exit 1
+fi
+if [[ "$doctor_fail_json" != *'"name":"templates.mihomo.normal"'* ]]; then
+    printf 'doctor checks should include failed template check: %s\n' "$doctor_fail_json"
+    exit 1
+fi
+cp "$tmp/valid-mihomo.yaml" "$missing_cfg/nope.yaml"
+"$bin" config set templates.mihomo.normal "$missing_cfg/nope.yaml" >/dev/null
+
 workspace_root="$tmp/workspace-env"
 "$bin" workspace init "$workspace_root" >/dev/null
 doctor_env_json="$({ SUBCLI_WORKSPACE="$workspace_root" "$bin" doctor --json; } 2>&1 || true)"
-python3 - "$workspace_root" <<'PY' <<<"$doctor_env_json"
+DOCTOR_ENV_JSON="$doctor_env_json" python3 - "$workspace_root" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
 workspace = pathlib.Path(sys.argv[1]).resolve()
-raw = sys.stdin.read()
+raw = os.environ.get("DOCTOR_ENV_JSON", "")
 try:
     doc = json.loads(raw)
 except Exception as exc:
@@ -243,8 +287,94 @@ if [[ "$out" != *"update failed for tagged"* ]]; then
     exit 1
 fi
 
+"$bin" sub disable tagged >/dev/null
+
+check_disabled_json="$({ "$bin" sub check tagged --json; } 2>/dev/null || true)"
+if [[ "$check_disabled_json" != *'"id":"tagged"'* ]]; then
+    printf '%s\n' "$check_disabled_json"
+    exit 1
+fi
+
+check_disabled_tag_json="$({ "$bin" sub check --tag hk --json; } 2>/dev/null || true)"
+if [[ "$check_disabled_tag_json" != *'"id":"tagged"'* ]]; then
+    printf '%s\n' "$check_disabled_tag_json"
+    exit 1
+fi
+
+strict_out="$({ "$bin" sub check --strict-network; } 2>&1 || true)"
+if [[ "$strict_out" != *"--strict-network is ignored"* ]]; then
+    printf '%s\n' "$strict_out"
+    exit 1
+fi
+
+sub_help="$({ "$bin" sub --help; } 2>&1 || true)"
+if [[ "$sub_help" == *"YAML/JSON"* ]]; then
+    printf 'sub --help should not promise unsupported JSON import/export: %s\n' "$sub_help"
+    exit 1
+fi
+
+strict_json="$({ "$bin" sub check --strict-network --json; } 2>/dev/null || true)"
+if [[ "$strict_json" != *'"checks"'* || "$strict_json" == *"ignored"* ]]; then
+    printf '%s\n' "$strict_json"
+    exit 1
+fi
+
+"$bin" sub edit tagged --tag hk --set-group bad >/dev/null 2>&1 && exit 1 || true
+
+prune_failed_days="$($bin sub prune --failed-days 1 --dry-run)"
+if [[ "$prune_failed_days" != *"dry_run=true"* || "$prune_failed_days" != *"pruned="* ]]; then
+    printf '%s\n' "$prune_failed_days"
+    exit 1
+fi
+
+check_json="$({ "$bin" sub check --json; } 2>/dev/null || true)"
+if [[ "$check_json" != *'"url_present"'* ]]; then
+    printf '%s\n' "$check_json"
+    exit 1
+fi
+
+prune_dry_run_out="$($bin sub prune --disabled --dry-run)"
+if [[ "$prune_dry_run_out" != *"dry_run=true"* ]]; then
+    printf '%s\n' "$prune_dry_run_out"
+    exit 1
+fi
+
+edit_batch_out="$($bin sub edit --tag hk --set-group smoke-group)"
+if [[ "$edit_batch_out" != *"updated="* ]]; then
+    printf '%s\n' "$edit_batch_out"
+    exit 1
+fi
+
 printf '%s\n' 'trojan://password@1.2.3.4:443#HK-Node' > "$tmp/valid-sub.txt"
 "$bin" sub add --name explain --url "file://$tmp/valid-sub.txt" --force >/dev/null
+backup_file="$tmp/sub-backup.yaml"
+"$bin" sub export --file "$backup_file" >/dev/null
+if [[ ! -f "$backup_file" || ! -s "$backup_file" ]]; then
+    printf 'sub export should create non-empty file: %s\n' "$backup_file"
+    exit 1
+fi
+"$bin" sub remove explain >/dev/null
+"$bin" sub import --file "$backup_file" --merge >/dev/null
+sub_list_json="$($bin sub list --json)"
+if [[ "$sub_list_json" != *'"name":"explain"'* ]]; then
+    printf '%s\n' "$sub_list_json"
+    exit 1
+fi
+
+positional_backup="$tmp/sub-backup-positional.yaml"
+"$bin" sub export "$positional_backup" >/dev/null
+if [[ ! -f "$positional_backup" || ! -s "$positional_backup" ]]; then
+    printf 'positional sub export should create non-empty file: %s\n' "$positional_backup"
+    exit 1
+fi
+"$bin" sub remove explain >/dev/null
+"$bin" sub import "$positional_backup" >/dev/null
+positional_json="$($bin sub list --json)"
+if [[ "$positional_json" != *'"name":"explain"'* ]]; then
+    printf '%s\n' "$positional_json"
+    exit 1
+fi
+
 explain_export="$({ "$bin" export mihomo --profile bypass-cn --sub explain --explain-policy; } 2>&1 || true)"
 if [[ "$explain_export" != *"policy explain: profile=bypass-cn"* || "$explain_export" != *"policy explain: target=mihomo"* ]]; then
     printf '%s\n' "$explain_export"

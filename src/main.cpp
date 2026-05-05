@@ -17,25 +17,33 @@
 #include <system_error>
 #include <map>
 #include <tuple>
+#include <unordered_set>
 
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
 
 #include "subcli/assets.hpp"
+#include "subcli/commands/config_command.hpp"
+#include "subcli/commands/doctor_command.hpp"
+#include "subcli/commands/sub_command.hpp"
 #include "subcli/core_check.hpp"
 #include "subcli/core_discovery.hpp"
 #include "subcli/core_runtime.hpp"
 #include "subcli/daemon.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
+#include "subcli/diagnostic_service.hpp"
 #include "subcli/capability_matrix.hpp"
+#include "subcli/config_service.hpp"
 #include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
 #include "subcli/parser.hpp"
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
+#include "subcli/registry.hpp"
 #include "subcli/store.hpp"
+#include "subcli/subscription_service.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
 #include "subcli/workspace.hpp"
@@ -556,6 +564,12 @@ void printSubUsage() {
               << "  subcli sub update [id-or-name ...] [--tag TAG] [--strict-network]\n"
               << "  subcli sub validate [id-or-name]\n"
               << "\n"
+              << "Data Lifecycle:\n"
+              << "  import    Import subscriptions from a subcli YAML or URI list file.\n"
+              << "  export    Export subscription records to a portable YAML file.\n"
+              << "  check     Check selected subscriptions for fetch and parse readiness.\n"
+              << "  prune     Remove disabled or long-failing subscriptions.\n"
+              << "\n"
               << "Add/Edit Options:\n"
               << "  --id ID\n"
               << "  --name NAME\n"
@@ -938,7 +952,7 @@ bool isKnownSubcommand(const std::string& cmd, const std::vector<std::string>& v
     return std::find(values.begin(), values.end(), cmd) != values.end();
 }
 
-int doSubCommand(const std::vector<std::string>& args);
+int legacySubCommand(const std::vector<std::string>& args);
 int doExportCommand(const std::vector<std::string>& args);
 int doRestartCommand(const std::vector<std::string>& args);
 bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile);
@@ -963,6 +977,14 @@ void printSubCommandUsageLine(const std::string& cmd) {
         std::cout << "Usage:\n  subcli sub update [id-or-name ...] [--tag TAG] [--strict-network]\n";
     } else if (cmd == "validate") {
         std::cout << "Usage:\n  subcli sub validate [id-or-name]\n";
+    } else if (cmd == "import") {
+        std::cout << "Usage:\n  subcli sub import --file PATH [--format auto|subcli-yaml|uri-list] [--merge|--replace]\n";
+    } else if (cmd == "export") {
+        std::cout << "Usage:\n  subcli sub export --file PATH [--format subcli-yaml] [--tag TAG] [--group GROUP] [--enabled true|false]\n";
+    } else if (cmd == "check") {
+        std::cout << "Usage:\n  subcli sub check [id-or-name ...] [--tag TAG] [--strict-network] [--json]\n";
+    } else if (cmd == "prune") {
+        std::cout << "Usage:\n  subcli sub prune [--disabled] [--failed-days N] [--dry-run]\n";
     }
 }
 
@@ -1078,7 +1100,7 @@ DaemonOptions buildDaemonOptionsFromCli(int intervalSec, const std::string& targ
 
 DaemonCallbacks makeDaemonCallbacks() {
     DaemonCallbacks callbacks;
-    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return doSubCommand(subArgs); };
+    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return runSubCommand(gEnvResult.paths, subArgs); };
     callbacks.runExportCommand = [&](const std::vector<std::string>& exportArgs) { return doExportCommand(exportArgs); };
     callbacks.isCoreRunning = [&](const std::string& coreTarget, std::string& error) {
         const auto status = inspectCoreRuntime(gPaths.stateDir, coreTarget, error);
@@ -1273,6 +1295,20 @@ bool parseBoolValue(const std::string& raw, const std::string& key, bool& out) {
     }
     std::cerr << "invalid boolean for " << key << ": " << raw << "\n";
     return false;
+}
+
+std::string detectSubImportFormat(const std::string& explicitFormat, const std::string& filePath) {
+    if (explicitFormat == "subcli-yaml" || explicitFormat == "uri-list") {
+        return explicitFormat;
+    }
+    const std::string lower = toLower(filePath);
+    if (lower.size() >= 5 && lower.compare(lower.size() - 5, 5, ".yaml") == 0) {
+        return "subcli-yaml";
+    }
+    if (lower.size() >= 4 && lower.compare(lower.size() - 4, 4, ".txt") == 0) {
+        return "uri-list";
+    }
+    return "subcli-yaml";
 }
 
 bool parseCliArgs(CLI::App& app, const std::vector<std::string>& args) {
@@ -1476,22 +1512,12 @@ bool hasUsableParsedNodes(const ParseResult& parsed, std::string& reason) {
 }
 
 bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile) {
-    if (value == "mihomo") {
-        target = ExportTarget::Mihomo;
-        outFile = "mihomo.yaml";
-        return true;
+    const ExportTargetDescriptor* descriptor = nullptr;
+    if (!resolveExportTarget(value, target, descriptor) || descriptor == nullptr || descriptor->outputFile.empty()) {
+        return false;
     }
-    if (value == "sing-box") {
-        target = ExportTarget::SingBox;
-        outFile = "sing-box.json";
-        return true;
-    }
-    if (value == "xray") {
-        target = ExportTarget::Xray;
-        outFile = "xray.json";
-        return true;
-    }
-    return false;
+    outFile = descriptor->outputFile;
+    return true;
 }
 
 int runConfigCheckForTarget(const AppConfig& cfg, ExportTarget target, const std::string& filePath, int timeoutSec = 30) {
@@ -1781,7 +1807,7 @@ std::vector<std::pair<std::string, std::string>> requiredTemplateFiles(const App
     return files;
 }
 
-int doDoctorCommand(const std::vector<std::string>& args) {
+int legacyDoctorCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         printDoctorUsage();
         return 0;
@@ -1795,19 +1821,19 @@ int doDoctorCommand(const std::vector<std::string>& args) {
         return 1;
     }
     ensureDefaults();
-    int failed = 0;
-    nlohmann::json checks = nlohmann::json::array();
+    AppConfig cfg = loadConfig(gPaths.configPath.string());
+    applyConfigDefaults(cfg);
+    const std::vector<Subscription> subs = loadSubscriptions(gPaths.subPath.string());
+    DiagnosticReport report = buildDiagnosticReport(cfg, subs, gPaths.root.string());
 
-    auto addCheck = [&](const std::string& name, const std::string& status, const std::filesystem::path& path, const std::string& message = "") {
-        checks.push_back({{"name", name}, {"status", status}, {"path", path.string()}, {"message", message}});
-        if (!jsonOutput) {
-            if (status == "ok") {
-                std::cout << "[ OK ] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " " + message) << "\n";
-            } else if (status == "warn") {
-                std::cout << "[WARN] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " " + message) << "\n";
-            } else {
-                std::cout << "[FAIL] " << name << (path.empty() ? "" : "=" + path.string()) << (message.empty() ? "" : " (" + message + ")") << "\n";
-            }
+    nlohmann::json checks = nlohmann::json::array();
+    int failedCount = 0;
+    auto addCheck = [&](const std::string& name, bool ok, const std::filesystem::path& path, const std::string& message = "") {
+        checks.push_back({{"name", name}, {"ok", ok}, {"path", path.string()}, {"message", message}});
+        if (!ok) {
+            ++failedCount;
+            report.findings.push_back({name, DiagnosticSeverity::Error, name, message.empty() ? "check failed" : message, path.string()});
+            report.hasError = true;
         }
     };
 
@@ -1815,11 +1841,10 @@ int doDoctorCommand(const std::vector<std::string>& args) {
         std::error_code ec;
         const bool exists = std::filesystem::exists(path, ec);
         if (ec || (mustExist && !exists)) {
-            ++failed;
-            addCheck(name, "fail", path, ec ? ec.message() : "missing");
+            addCheck(name, false, path, ec ? ec.message() : "missing");
             return;
         }
-        addCheck(name, "ok", path);
+        addCheck(name, true, path);
     };
 
     checkPath("config_path", gPaths.configPath, true);
@@ -1830,50 +1855,44 @@ int doDoctorCommand(const std::vector<std::string>& args) {
     auto checkWritable = [&](const std::string& name, const std::filesystem::path& path) {
         std::string reason;
         if (!checkDirWritable(path, reason)) {
-            ++failed;
-            addCheck(name, "fail", path, reason);
+            addCheck(name, false, path, reason);
             return;
         }
-        addCheck(name, "ok", path, "writable");
+        addCheck(name, true, path, "writable");
     };
-
     checkWritable("config_dir", gPaths.configDir);
     checkWritable("data_dir", gPaths.dataDir);
     checkWritable("cache_dir", gPaths.cacheDir);
     checkWritable("output_dir", gPaths.outputDir);
 
-    AppConfig cfg = loadConfig(gPaths.configPath.string());
-    applyConfigDefaults(cfg);
     for (const auto& item : requiredTemplateFiles(cfg)) {
         std::error_code ec;
-        if (item.second.empty() || !std::filesystem::is_regular_file(item.second, ec) || ec) {
-            ++failed;
-            addCheck(item.first, "fail", item.second, ec ? ec.message() : "missing");
-        } else {
-            addCheck(item.first, "ok", item.second);
-        }
+        const bool ok = !item.second.empty() && std::filesystem::is_regular_file(item.second, ec) && !ec;
+        addCheck(item.first, ok, item.second, ok ? "" : (ec ? ec.message() : "missing"));
     }
-    const auto cores = discoverCorePaths(cfg);
 
+    const auto cores = discoverCorePaths(cfg);
     auto checkCore = [&](const std::string& key, const std::string& value) {
         if (value.empty()) {
-            addCheck(key, "warn", {}, "not found in PATH and not configured");
+            checks.push_back({{"name", key}, {"ok", true}, {"path", ""}, {"message", "not configured"}});
             return;
         }
         if (!isExecutableFile(value)) {
-            ++failed;
-            addCheck(key, "fail", value, "not executable");
+            addCheck(key, false, value, "not executable");
             return;
         }
-        addCheck(key, "ok", value);
+        addCheck(key, true, value);
     };
-
     checkCore("core.mihomo", cores.mihomo);
     checkCore("core.sing-box", cores.singBox);
     checkCore("core.xray", cores.xray);
 
     if (jsonOutput) {
-        nlohmann::json envJson = {
+        nlohmann::json payload = diagnosticReportToJson(report);
+        payload["failed"] = failedCount;
+        payload["has_failed"] = report.hasError;
+        payload["checks"] = checks;
+        payload["environment"] = {
             {"resolution_source", environmentSourceToString(gEnvResult.source)},
             {"active_workspace_root", gEnvResult.root.empty() ? gPaths.root.string() : gEnvResult.root},
             {"resolved_path_map", {
@@ -1889,13 +1908,13 @@ int doDoctorCommand(const std::vector<std::string>& args) {
             }},
         };
         if (!gEnvResult.trace.empty()) {
-            envJson["trace"] = gEnvResult.trace;
+            payload["environment"]["trace"] = gEnvResult.trace;
         }
-        printJsonLine({{"failed", failed}, {"checks", checks}, {"environment", envJson}});
+        printJsonLine(payload);
     } else {
-        std::cout << "doctor summary: failed=" << failed << "\n";
+        std::cout << diagnosticReportToText(report);
     }
-    return failed == 0 ? 0 : 1;
+    return report.hasError ? 1 : 0;
 }
 
 int doCheckCommand(const std::vector<std::string>& args) {
@@ -1982,11 +2001,11 @@ int doCompletionCommand(const std::vector<std::string>& args) {
     return 0;
 }
 
-int doSubCommand(const std::vector<std::string>& args) {
+int legacySubCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
-        if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate"})) {
+        if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export", "check", "prune"})) {
             printSubCommandUsageLine(args[2]);
-        } else if (args.size() == 3 && isHelpToken(args[2]) && isKnownSubcommand(args[1], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate"})) {
+        } else if (args.size() == 3 && isHelpToken(args[2]) && isKnownSubcommand(args[1], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export", "check", "prune"})) {
             printSubCommandUsageLine(args[1]);
         } else {
             printSubUsage();
@@ -2008,6 +2027,7 @@ int doSubCommand(const std::vector<std::string>& args) {
 
     bool listJson = false;
     std::string idOrName;
+    std::string editTargetIdOrName;
     std::vector<std::string> updateIds;
     std::string addId;
     std::string addName;
@@ -2039,9 +2059,29 @@ int doSubCommand(const std::vector<std::string>& args) {
     bool editClearHeaders = false;
     bool editEnable = false;
     bool editDisable = false;
+    std::string editBatchTag;
+    std::string editBatchSetGroup;
 
     std::vector<std::string> updateTags;
     bool updateStrictNetwork = false;
+    std::string importFile;
+    std::string importFilePositional;
+    std::string importFormat = "auto";
+    bool importMerge = false;
+    bool importReplace = false;
+    std::string exportFile;
+    std::string exportFilePositional;
+    std::string exportFormat = "subcli-yaml";
+    std::string exportTag;
+    std::string exportGroup;
+    std::string exportEnabled;
+    std::vector<std::string> checkIds;
+    std::vector<std::string> checkTags;
+    bool checkStrictNetwork = false;
+    bool checkJson = false;
+    bool pruneDisabled = false;
+    std::string pruneFailedDays;
+    bool pruneDryRun = false;
 
     auto* listCmd = parser.add_subcommand("list");
     listCmd->add_flag("--json", listJson);
@@ -2071,7 +2111,7 @@ int doSubCommand(const std::vector<std::string>& args) {
     disableCmd->add_option("id_or_name", idOrName);
 
     auto* editCmd = parser.add_subcommand("edit");
-    editCmd->add_option("id_or_name", idOrName);
+    editCmd->add_option("id_or_name", editTargetIdOrName);
     editCmd->add_option("--name", editName);
     editCmd->add_option("--url", editUrl);
     editCmd->add_option("--group", editGroup);
@@ -2087,6 +2127,8 @@ int doSubCommand(const std::vector<std::string>& args) {
     editCmd->add_flag("--clear-headers", editClearHeaders);
     editCmd->add_flag("--enable", editEnable);
     editCmd->add_flag("--disable", editDisable);
+    editCmd->add_option("--tag", editBatchTag);
+    editCmd->add_option("--set-group", editBatchSetGroup);
 
     auto* validateCmd = parser.add_subcommand("validate");
     validateCmd->add_option("id_or_name", idOrName)->required(false);
@@ -2095,6 +2137,32 @@ int doSubCommand(const std::vector<std::string>& args) {
     updateCmd->add_option("id_or_name", updateIds);
     updateCmd->add_option("--tag", updateTags);
     updateCmd->add_flag("--strict-network", updateStrictNetwork);
+
+    auto* importCmd = parser.add_subcommand("import");
+    importCmd->add_option("path", importFilePositional);
+    importCmd->add_option("--file", importFile);
+    importCmd->add_option("--format", importFormat);
+    importCmd->add_flag("--merge", importMerge);
+    importCmd->add_flag("--replace", importReplace);
+
+    auto* exportCmd = parser.add_subcommand("export");
+    exportCmd->add_option("path", exportFilePositional);
+    exportCmd->add_option("--file", exportFile);
+    exportCmd->add_option("--format", exportFormat);
+    exportCmd->add_option("--tag", exportTag);
+    exportCmd->add_option("--group", exportGroup);
+    exportCmd->add_option("--enabled", exportEnabled);
+
+    auto* checkCmd = parser.add_subcommand("check");
+    checkCmd->add_option("id_or_name", checkIds);
+    checkCmd->add_option("--tag", checkTags);
+    checkCmd->add_flag("--strict-network", checkStrictNetwork);
+    checkCmd->add_flag("--json", checkJson);
+
+    auto* pruneCmd = parser.add_subcommand("prune");
+    pruneCmd->add_flag("--disabled", pruneDisabled);
+    pruneCmd->add_option("--failed-days", pruneFailedDays);
+    pruneCmd->add_flag("--dry-run", pruneDryRun);
 
     if (!parseCliArgs(parser, args)) {
         printSubUsage();
@@ -2110,6 +2178,10 @@ int doSubCommand(const std::vector<std::string>& args) {
     else if (*editCmd) cmd = "edit";
     else if (*validateCmd) cmd = "validate";
     else if (*updateCmd) cmd = "update";
+    else if (*importCmd) cmd = "import";
+    else if (*exportCmd) cmd = "export";
+    else if (*checkCmd) cmd = "check";
+    else if (*pruneCmd) cmd = "prune";
     if (cmd == "list") {
         const bool jsonOutput = listJson;
         if (jsonOutput) {
@@ -2268,13 +2340,28 @@ int doSubCommand(const std::vector<std::string>& args) {
     }
 
     if (cmd == "edit") {
-        if (idOrName.empty()) {
+        const bool batchModeRequested = !editBatchTag.empty() || !editBatchSetGroup.empty();
+        if (batchModeRequested && !editTargetIdOrName.empty()) {
+            std::cerr << "sub edit batch mode cannot be mixed with positional <id|name>\n";
+            return ExitUsage;
+        }
+        if (batchModeRequested && editTargetIdOrName.empty()) {
+            if (editBatchTag.empty() || editBatchSetGroup.empty()) {
+                std::cerr << "sub edit batch mode requires --tag TAG and --set-group GROUP\n";
+                return ExitUsage;
+            }
+            const int updated = batchSetGroupByTag(subs, editBatchTag, editBatchSetGroup);
+            saveSubscriptions(gPaths.subPath.string(), subs);
+            std::cout << "updated=" << updated << "\n";
+            return ExitOk;
+        }
+        if (editTargetIdOrName.empty()) {
             std::cerr << "sub edit requires <id|name>\n";
             return 1;
         }
-        auto* s = findSub(subs, idOrName);
+        auto* s = findSub(subs, editTargetIdOrName);
         if (!s) {
-            std::cerr << "not found: " << idOrName << "\n";
+            std::cerr << "not found: " << editTargetIdOrName << "\n";
             return 1;
         }
         const auto& name = editName;
@@ -2363,6 +2450,120 @@ int doSubCommand(const std::vector<std::string>& args) {
         saveSubscriptions(gPaths.subPath.string(), subs);
         std::cout << "edited subscription: " << s->id << "\n";
         return 0;
+    }
+
+    if (cmd == "check") {
+        std::set<std::string> ids;
+        for (const auto& id : checkIds) {
+            ids.insert(id);
+        }
+        const bool hasFilters = !ids.empty() || !checkTags.empty();
+        if (checkStrictNetwork && !checkJson) {
+            std::cerr << "warning: --strict-network is ignored for local sub check\n";
+        }
+
+        nlohmann::json items = nlohmann::json::array();
+        int okCount = 0;
+        int failCount = 0;
+        for (const auto& sub : subs) {
+            if (!hasFilters && !sub.enabled) {
+                continue;
+            }
+            if (!ids.empty() && !ids.count(sub.id) && !ids.count(sub.name)) {
+                continue;
+            }
+            if (!checkTags.empty()) {
+                bool tagMatched = false;
+                for (const auto& tag : checkTags) {
+                    if (std::find(sub.tags.begin(), sub.tags.end(), tag) != sub.tags.end()) {
+                        tagMatched = true;
+                        break;
+                    }
+                }
+                if (!tagMatched) {
+                    continue;
+                }
+            }
+
+            const bool urlPresent = !sub.url.empty();
+            const std::string cacheFile = resolveCachePath(sub.cachePath);
+            const bool cachePresent = fileExists(cacheFile);
+            const bool successPresent = !sub.lastSuccess.empty();
+            const bool hasError = !sub.lastError.empty();
+            const bool fetchable = sub.enabled && urlPresent && cachePresent && !hasError;
+            const bool parseable = fetchable && successPresent;
+            if (fetchable && parseable) {
+                ++okCount;
+            } else {
+                ++failCount;
+            }
+            std::string error;
+            if (!urlPresent) {
+                error = "missing url";
+            } else if (!cachePresent) {
+                error = "missing cache";
+            } else if (hasError) {
+                error = sub.lastError;
+            } else if (!successPresent) {
+                error = "missing last success";
+            }
+
+            if (checkJson) {
+                items.push_back(
+                    {
+                        {"id", sub.id},
+                        {"name", sub.name},
+                        {"enabled", sub.enabled},
+                        {"url_present", urlPresent},
+                        {"cache_present", cachePresent},
+                        {"last_success_present", successPresent},
+                        {"last_error", sub.lastError},
+                        {"fetchable", fetchable},
+                        {"parseable", parseable},
+                        {"node_count", 0},
+                        {"error", error},
+                    }
+                );
+            } else {
+                std::cout << sub.id << "\tfetchable=" << (fetchable ? "true" : "false") << "\tparseable=" << (parseable ? "true" : "false")
+                          << "\turl_present=" << (urlPresent ? "true" : "false") << "\tcache_present=" << (cachePresent ? "true" : "false")
+                          << "\tlast_success=" << (successPresent ? "true" : "false") << "\terror=" << (error.empty() ? "-" : error) << "\n";
+            }
+        }
+        if (checkJson) {
+            printJsonLine({{"summary", {{"ok", okCount}, {"failed", failCount}}}, {"checks", items}});
+        } else {
+            std::cout << "check summary: ok=" << okCount << " failed=" << failCount << "\n";
+        }
+        return failCount > 0 ? ExitError : ExitOk;
+    }
+
+    if (cmd == "prune") {
+        int failedDays = 0;
+        if (!pruneFailedDays.empty() && !parseBoundedIntValue(pruneFailedDays, "--failed-days", 1, failedDays)) {
+            return ExitUsage;
+        }
+        if (!pruneDisabled && failedDays <= 0) {
+            std::cerr << "sub prune requires --disabled or --failed-days N\n";
+            return ExitUsage;
+        }
+        const auto plan = planPruneSubscriptions(subs, pruneDisabled, failedDays);
+        if (!pruneDryRun) {
+            std::unordered_set<std::string> removeSet(plan.removeIds.begin(), plan.removeIds.end());
+            subs.erase(
+                std::remove_if(
+                    subs.begin(),
+                    subs.end(),
+                    [&](const Subscription& sub) {
+                        return removeSet.find(sub.id) != removeSet.end();
+                    }
+                ),
+                subs.end()
+            );
+            saveSubscriptions(gPaths.subPath.string(), subs);
+        }
+        std::cout << "pruned=" << plan.removeIds.size() << " dry_run=" << (pruneDryRun ? "true" : "false") << "\n";
+        return ExitOk;
     }
 
     if (cmd == "validate") {
@@ -2540,12 +2741,107 @@ int doSubCommand(const std::vector<std::string>& args) {
         return failCount > 0 ? 1 : 0;
     }
 
+    if (cmd == "import") {
+        if (importFile.empty() && !importFilePositional.empty()) {
+            importFile = importFilePositional;
+        }
+        if (importFile.empty()) {
+            std::cerr << "sub import requires --file PATH\n";
+            return ExitUsage;
+        }
+        if (importMerge && importReplace) {
+            std::cerr << "sub import accepts only one mode flag: --merge or --replace\n";
+            return ExitUsage;
+        }
+        const auto mode = importReplace ? SubscriptionImportMode::Replace : SubscriptionImportMode::Merge;
+        const auto format = detectSubImportFormat(importFormat, importFile);
+        if (importFormat != "auto" && importFormat != "subcli-yaml" && importFormat != "uri-list") {
+            std::cerr << "invalid --format for sub import: " << importFormat << "\n";
+            return ExitUsage;
+        }
+
+        const std::string importPath = resolveFromCliCwd(importFile);
+        std::ifstream in(importPath, std::ios::binary);
+        if (!in) {
+            std::cerr << "sub import failed: unable to open file: " << importPath << "\n";
+            return ExitError;
+        }
+        std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+        SubscriptionImportResult result;
+        if (format == "uri-list") {
+            result = importSubscriptionsFromUriList(content, subs, mode);
+        } else {
+            result = importSubscriptionsFromYaml(content, subs, mode);
+        }
+        if (!result.messages.empty()) {
+            for (const auto& message : result.messages) {
+                std::cerr << message << "\n";
+            }
+        }
+        if (result.rejected > 0) {
+            return ExitError;
+        }
+
+        saveSubscriptions(gPaths.subPath.string(), result.subscriptions);
+        std::cout << "created=" << result.created << " updated=" << result.updated << " rejected=" << result.rejected << "\n";
+        return ExitOk;
+    }
+
+    if (cmd == "export") {
+        if (exportFile.empty() && !exportFilePositional.empty()) {
+            exportFile = exportFilePositional;
+        }
+        if (exportFile.empty()) {
+            std::cerr << "sub export requires --file PATH\n";
+            return ExitUsage;
+        }
+        if (exportFormat != "subcli-yaml") {
+            std::cerr << "invalid --format for sub export: " << exportFormat << "\n";
+            return ExitUsage;
+        }
+
+        std::vector<Subscription> selected;
+        selected.reserve(subs.size());
+        bool enabledFilterOn = false;
+        bool enabledFilterValue = false;
+        if (!exportEnabled.empty()) {
+            if (!parseBoolValue(exportEnabled, "--enabled", enabledFilterValue)) {
+                return ExitUsage;
+            }
+            enabledFilterOn = true;
+        }
+        for (const auto& sub : subs) {
+            if (!exportTag.empty() && std::find(sub.tags.begin(), sub.tags.end(), exportTag) == sub.tags.end()) {
+                continue;
+            }
+            if (!exportGroup.empty() && sub.group != exportGroup) {
+                continue;
+            }
+            if (enabledFilterOn && sub.enabled != enabledFilterValue) {
+                continue;
+            }
+            selected.push_back(sub);
+        }
+
+        const std::string yaml = exportSubscriptionsToYaml(selected);
+        std::string error;
+        const std::string outputPath = resolveFromCliCwd(exportFile);
+        if (!writeFile(outputPath, yaml, error)) {
+            std::cerr << "sub export failed: " << error << "\n";
+            return ExitError;
+        }
+
+        std::cout << "exported=" << selected.size() << "\n";
+        return ExitOk;
+    }
+
     std::cerr << "unknown sub command: " << cmd << "\n";
     std::cerr << "Run 'subcli sub --help' to see available subscription commands.\n";
     return 1;
 }
 
-int doConfigCommand(const std::vector<std::string>& args) {
+int legacyConfigCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "get", "set", "remove"})) {
             printConfigSubcommandUsage(args[2]);
@@ -2600,39 +2896,8 @@ int doConfigCommand(const std::vector<std::string>& args) {
             printJsonLine(configToJson(cfg));
             return 0;
         }
-        std::cout << "tun=" << (cfg.tun ? "true" : "false") << "\n";
-        std::cout << "profile=" << cfg.profile << "\n";
-        std::cout << "profile_path=" << cfg.profilePath << "\n";
-        std::cout << "output_dir=" << cfg.outputDir << "\n";
-        std::cout << "template_dir=" << cfg.templateDir << "\n";
-        std::cout << "asset_dir=" << cfg.assetDir << "\n";
-        std::cout << "parallelism=" << cfg.parallelism << "\n";
-        std::cout << "timeout=" << cfg.timeout << "\n";
-        std::cout << "retry=" << cfg.retry << "\n";
-        std::cout << "fetch_max_bytes=" << cfg.fetchMaxBytes << "\n";
-        std::cout << "log_level=" << cfg.logLevel << "\n";
-        std::cout << "core_paths.mihomo=" << cfg.mihomoPath << "\n";
-        std::cout << "core_paths.sing_box=" << cfg.singBoxPath << "\n";
-        std::cout << "core_paths.xray=" << cfg.xrayPath << "\n";
-        std::cout << "node_management.dedupe=" << (cfg.dedupeNodes ? "true" : "false") << "\n";
-        std::cout << "node_management.rename_template=" << cfg.renameTemplate << "\n";
-        std::cout << "node_management.include_regex=" << cfg.includeRegex << "\n";
-        std::cout << "node_management.exclude_regex=" << cfg.excludeRegex << "\n";
-        std::cout << "node_management.sort_by=" << cfg.sortBy << "\n";
-        for (const auto& kv : cfg.templateNormal) {
-            std::cout << "templates." << kv.first << ".normal=" << kv.second << "\n";
-        }
-        for (const auto& kv : cfg.templateTun) {
-            std::cout << "templates." << kv.first << ".tun=" << kv.second << "\n";
-        }
-        for (const auto& kv : cfg.regionRules) {
-            std::cout << "grouping.region_rules." << kv.first << "=" << kv.second << "\n";
-        }
-        for (const auto& kv : cfg.assetPaths) {
-            std::cout << "assets.paths." << kv.first << "=" << kv.second << "\n";
-        }
-        for (const auto& kv : cfg.assetUrls) {
-            std::cout << "assets.urls." << kv.first << "=" << kv.second << "\n";
+        for (const auto& entry : listConfigValues(cfg)) {
+            std::cout << entry.key << "=" << entry.value << "\n";
         }
         return 0;
     }
@@ -2642,126 +2907,14 @@ int doConfigCommand(const std::vector<std::string>& args) {
             std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
-        const auto& key = parsedKey;
-        if (key == "tun") {
-            std::cout << (cfg.tun ? "true" : "false") << "\n";
-            return 0;
+        std::string value;
+        std::string error;
+        if (!getConfigValue(cfg, parsedKey, value, error)) {
+            std::cerr << error << "\n";
+            return 1;
         }
-        if (key == "output_dir") {
-            std::cout << cfg.outputDir << "\n";
-            return 0;
-        }
-        if (key == "profile") {
-            std::cout << cfg.profile << "\n";
-            return 0;
-        }
-        if (key == "profile_path") {
-            std::cout << cfg.profilePath << "\n";
-            return 0;
-        }
-        if (key == "asset_dir") {
-            std::cout << cfg.assetDir << "\n";
-            return 0;
-        }
-        if (key == "template_dir") {
-            std::cout << cfg.templateDir << "\n";
-            return 0;
-        }
-        if (key == "parallelism") {
-            std::cout << cfg.parallelism << "\n";
-            return 0;
-        }
-        if (key == "timeout") {
-            std::cout << cfg.timeout << "\n";
-            return 0;
-        }
-        if (key == "retry") {
-            std::cout << cfg.retry << "\n";
-            return 0;
-        }
-        if (key == "fetch_max_bytes") {
-            std::cout << cfg.fetchMaxBytes << "\n";
-            return 0;
-        }
-        if (key == "log_level") {
-            std::cout << cfg.logLevel << "\n";
-            return 0;
-        }
-        if (key == "core_paths.mihomo") {
-            std::cout << cfg.mihomoPath << "\n";
-            return 0;
-        }
-        if (key == "core_paths.sing_box") {
-            std::cout << cfg.singBoxPath << "\n";
-            return 0;
-        }
-        if (key == "core_paths.xray") {
-            std::cout << cfg.xrayPath << "\n";
-            return 0;
-        }
-        if (key == "node_management.dedupe") {
-            std::cout << (cfg.dedupeNodes ? "true" : "false") << "\n";
-            return 0;
-        }
-        if (key == "node_management.rename_template") {
-            std::cout << cfg.renameTemplate << "\n";
-            return 0;
-        }
-        if (key == "node_management.include_regex") {
-            std::cout << cfg.includeRegex << "\n";
-            return 0;
-        }
-        if (key == "node_management.exclude_regex") {
-            std::cout << cfg.excludeRegex << "\n";
-            return 0;
-        }
-        if (key == "node_management.sort_by") {
-            std::cout << cfg.sortBy << "\n";
-            return 0;
-        }
-        const std::string tplPrefix = "templates.";
-        if (key.rfind(tplPrefix, 0) == 0) {
-            const auto rest = key.substr(tplPrefix.size());
-            auto dot = rest.find('.');
-            if (dot != std::string::npos) {
-                const auto core = rest.substr(0, dot);
-                const auto kind = rest.substr(dot + 1);
-                if (kind == "normal" && cfg.templateNormal.count(core)) {
-                    std::cout << cfg.templateNormal[core] << "\n";
-                    return 0;
-                }
-                if (kind == "tun" && cfg.templateTun.count(core)) {
-                    std::cout << cfg.templateTun[core] << "\n";
-                    return 0;
-                }
-            }
-        }
-        const std::string rrPrefix = "grouping.region_rules.";
-        if (key.rfind(rrPrefix, 0) == 0) {
-            const auto region = key.substr(rrPrefix.size());
-            if (cfg.regionRules.count(region)) {
-                std::cout << cfg.regionRules[region] << "\n";
-                return 0;
-            }
-        }
-        const std::string assetPathPrefix = "assets.paths.";
-        if (key.rfind(assetPathPrefix, 0) == 0) {
-            const auto assetKey = key.substr(assetPathPrefix.size());
-            if (cfg.assetPaths.count(assetKey)) {
-                std::cout << cfg.assetPaths[assetKey] << "\n";
-                return 0;
-            }
-        }
-        const std::string assetUrlPrefix = "assets.urls.";
-        if (key.rfind(assetUrlPrefix, 0) == 0) {
-            const auto assetKey = key.substr(assetUrlPrefix.size());
-            if (cfg.assetUrls.count(assetKey)) {
-                std::cout << cfg.assetUrls[assetKey] << "\n";
-                return 0;
-            }
-        }
-        std::cerr << "unsupported key in v1\n";
-        return 1;
+        std::cout << value << "\n";
+        return 0;
     }
     if (cmd == "set") {
         if (parsedKey.empty() || parsedValue.empty()) {
@@ -2769,121 +2922,13 @@ int doConfigCommand(const std::vector<std::string>& args) {
             std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
-        const auto& key = parsedKey;
-        const auto& value = parsedValue;
-        if (key == "tun") {
-            if (!parseBoolValue(value, "tun", cfg.tun)) {
-                return 1;
-            }
-        } else if (key == "output_dir") {
-            cfg.outputDir = resolveFromConfigDir(value);
-        } else if (key == "profile") {
-            if (!isSupportedProfile(value)) {
-                std::cerr << "unsupported profile: " << value << "\n";
-                return 1;
-            }
-            cfg.profile = value;
-        } else if (key == "profile_path") {
-            cfg.profilePath = resolveFromConfigDir(value);
-        } else if (key == "asset_dir") {
-            cfg.assetDir = resolveFromConfigDir(value);
-        } else if (key == "template_dir") {
-            const std::string oldDir = cfg.templateDir;
-            cfg.templateDir = resolveFromConfigDir(value);
-            updateTemplateDirDefaults(cfg, oldDir);
-        } else if (key == "parallelism") {
-            int parsed = 0;
-            if (!parseBoundedIntValue(value, "parallelism", 1, parsed)) {
-                return 1;
-            }
-            cfg.parallelism = parsed;
-        } else if (key == "timeout") {
-            int parsed = 0;
-            if (!parseBoundedIntValue(value, "timeout", 1, parsed)) {
-                return 1;
-            }
-            cfg.timeout = parsed;
-        } else if (key == "retry") {
-            int parsed = 0;
-            if (!parseBoundedIntValue(value, "retry", 0, parsed)) {
-                return 1;
-            }
-            cfg.retry = parsed;
-        } else if (key == "fetch_max_bytes") {
-            int parsed = 0;
-            if (!parseBoundedIntValue(value, "fetch_max_bytes", 1024, parsed)) {
-                return 1;
-            }
-            cfg.fetchMaxBytes = parsed;
-        } else if (key == "log_level") {
-            cfg.logLevel = value;
-        } else if (key == "core_paths.mihomo") {
-            cfg.mihomoPath = resolveFromConfigDir(value);
-        } else if (key == "core_paths.sing_box") {
-            cfg.singBoxPath = resolveFromConfigDir(value);
-        } else if (key == "core_paths.xray") {
-            cfg.xrayPath = resolveFromConfigDir(value);
-        } else if (key == "node_management.dedupe") {
-            if (!parseBoolValue(value, "node_management.dedupe", cfg.dedupeNodes)) {
-                return 1;
-            }
-        } else if (key == "node_management.rename_template") {
-            cfg.renameTemplate = value;
-        } else if (key == "node_management.include_regex") {
-            cfg.includeRegex = value;
-        } else if (key == "node_management.exclude_regex") {
-            cfg.excludeRegex = value;
-        } else if (key == "node_management.sort_by") {
-            cfg.sortBy = value;
-        } else if (key.rfind("templates.", 0) == 0) {
-            const auto rest = key.substr(std::string("templates.").size());
-            auto dot = rest.find('.');
-            if (dot == std::string::npos) {
-                std::cerr << "invalid template key\n";
-                return 1;
-            }
-            const auto core = rest.substr(0, dot);
-            const auto kind = rest.substr(dot + 1);
-            std::string error;
-            if (!parseTemplateTargetKind(core, kind, error)) {
-                std::cerr << error << "\n";
-                return 1;
-            }
-            if (kind == "normal") {
-                cfg.templateNormal[core] = value;
-            } else if (kind == "tun") {
-                cfg.templateTun[core] = value;
-            } else {
-                std::cerr << "invalid template key\n";
-                return 1;
-            }
-        } else if (key.rfind("grouping.region_rules.", 0) == 0) {
-            const auto region = key.substr(std::string("grouping.region_rules.").size());
-            if (region.empty()) {
-                std::cerr << "invalid region rule key\n";
-                return 1;
-            }
-            cfg.regionRules[region] = value;
-        } else if (key.rfind("assets.paths.", 0) == 0) {
-            const auto assetKey = key.substr(std::string("assets.paths.").size());
-            if (assetKey.empty()) {
-                std::cerr << "invalid asset path key\n";
-                return 1;
-            }
-            cfg.assetPaths[assetKey] = value;
-        } else if (key.rfind("assets.urls.", 0) == 0) {
-            const auto assetKey = key.substr(std::string("assets.urls.").size());
-            if (assetKey.empty()) {
-                std::cerr << "invalid asset URL key\n";
-                return 1;
-            }
-            cfg.assetUrls[assetKey] = value;
-        } else {
-            std::cerr << "unsupported key in v1\n";
+        std::string error;
+        if (!setConfigValue(cfg, parsedKey, parsedValue, resolveFromConfigDir, error)) {
+            std::cerr << error << "\n";
             return 1;
         }
         saveConfig(gPaths.configPath.string(), cfg);
-        std::cout << "updated config: " << key << "\n";
+        std::cout << "updated config: " << parsedKey << "\n";
         return 0;
     }
     if (cmd == "remove") {
@@ -2892,83 +2937,18 @@ int doConfigCommand(const std::vector<std::string>& args) {
             std::cerr << "Run 'subcli config --help' to view supported keys and examples.\n";
             return 1;
         }
-        const auto& key = parsedKey;
-        if (key == "output_dir") {
-            cfg.outputDir = gPaths.outputDir.string();
-        } else if (key == "profile") {
-            cfg.profile = "bypass-cn";
-        } else if (key == "profile_path") {
-            cfg.profilePath.clear();
-        } else if (key == "asset_dir") {
-            cfg.assetDir = (gPaths.dataDir / "assets").string();
-        } else if (key == "template_dir") {
-            const std::string oldDir = cfg.templateDir;
-            cfg.templateDir = gPaths.templateDir.string();
-            updateTemplateDirDefaults(cfg, oldDir);
-        } else if (key == "tun") {
-            cfg.tun = false;
-        } else if (key == "parallelism") {
-            cfg.parallelism = 4;
-        } else if (key == "timeout") {
-            cfg.timeout = 15;
-        } else if (key == "retry") {
-            cfg.retry = 2;
-        } else if (key == "fetch_max_bytes") {
-            cfg.fetchMaxBytes = 10 * 1024 * 1024;
-        } else if (key == "log_level") {
-            cfg.logLevel = "info";
-        } else if (key == "core_paths.mihomo") {
-            cfg.mihomoPath.clear();
-        } else if (key == "core_paths.sing_box") {
-            cfg.singBoxPath.clear();
-        } else if (key == "core_paths.xray") {
-            cfg.xrayPath.clear();
-        } else if (key == "node_management.dedupe") {
-            cfg.dedupeNodes = true;
-        } else if (key == "node_management.rename_template") {
-            cfg.renameTemplate = "{name}";
-        } else if (key == "node_management.include_regex") {
-            cfg.includeRegex.clear();
-        } else if (key == "node_management.exclude_regex") {
-            cfg.excludeRegex.clear();
-        } else if (key == "node_management.sort_by") {
-            cfg.sortBy = "region,name";
-        } else if (key.rfind("templates.", 0) == 0) {
-            const auto rest = key.substr(std::string("templates.").size());
-            auto dot = rest.find('.');
-            if (dot == std::string::npos) {
-                std::cerr << "invalid template key\n";
-                return 1;
-            }
-            const auto core = rest.substr(0, dot);
-            const auto kind = rest.substr(dot + 1);
-            std::string error;
-            if (!parseTemplateTargetKind(core, kind, error)) {
-                std::cerr << error << "\n";
-                return 1;
-            }
-            if (kind == "normal") {
-                cfg.templateNormal.erase(core);
-            } else if (kind == "tun") {
-                cfg.templateTun.erase(core);
-            } else {
-                std::cerr << "invalid template key\n";
-                return 1;
-            }
-        } else if (key.rfind("grouping.region_rules.", 0) == 0) {
-            const auto region = key.substr(std::string("grouping.region_rules.").size());
-            cfg.regionRules.erase(region);
-        } else if (key.rfind("assets.paths.", 0) == 0) {
-            cfg.assetPaths.erase(key.substr(std::string("assets.paths.").size()));
-        } else if (key.rfind("assets.urls.", 0) == 0) {
-            cfg.assetUrls.erase(key.substr(std::string("assets.urls.").size()));
-        } else {
-            std::cerr << "unsupported key in v1\n";
+        ConfigServiceOptions options;
+        options.defaultOutputDir = gPaths.outputDir.string();
+        options.defaultAssetDir = (gPaths.dataDir / "assets").string();
+        options.defaultTemplateDir = gPaths.templateDir.string();
+        std::string error;
+        if (!removeConfigValue(cfg, parsedKey, options, error)) {
+            std::cerr << error << "\n";
             return 1;
         }
         applyConfigDefaults(cfg);
         saveConfig(gPaths.configPath.string(), cfg);
-        std::cout << "removed config key: " << key << "\n";
+        std::cout << "removed config key: " << parsedKey << "\n";
         return 0;
     }
     std::cerr << "unknown config command: " << cmd << "\n";
@@ -3845,18 +3825,32 @@ int doExportCommand(const std::vector<std::string>& args) {
         }
     }
 
+    const auto outputPathForTarget = [&](ExportTarget exportTarget, std::string& outputPath) {
+        return exportTargetOutputPath(outputDir, exportTarget, outputPath);
+    };
+
     auto runMihomo = [&]() {
-        auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, exportProfile, outputDir + "/mihomo.yaml", error);
+        std::string targetOutput;
+        if (!outputPathForTarget(ExportTarget::Mihomo, targetOutput)) {
+            error = "missing export target metadata for mihomo";
+            if (!jsonOutput) {
+                std::cerr << "mihomo export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "mihomo"}, {"ok", false}, {"error", error}});
+            ++failed;
+            return;
+        }
+        auto result = exportForTarget(ExportTarget::Mihomo, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::Mihomo);
             if (!jsonOutput) {
-                std::cout << "exported mihomo: " << outputDir << "/mihomo.yaml\n";
+                std::cout << "exported mihomo: " << targetOutput << "\n";
                 printCapabilitySummaryForTarget(ExportTarget::Mihomo, "mihomo");
                 if (result.skipped > 0) {
                     std::cout << "mihomo skipped nodes: " << result.skipped << "\n";
                 }
             }
-            exportTargets.push_back({{"target", "mihomo"}, {"ok", true}, {"output", outputDir + "/mihomo.yaml"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Mihomo)}});
+            exportTargets.push_back({{"target", "mihomo"}, {"ok", true}, {"output", targetOutput}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Mihomo)}});
             ++success;
             mihomoOk = true;
         } else {
@@ -3869,17 +3863,27 @@ int doExportCommand(const std::vector<std::string>& args) {
     };
 
     auto runSing = [&]() {
-        auto result = exportForTarget(ExportTarget::SingBox, allNodes, cfg, tun, exportProfile, outputDir + "/sing-box.json", error);
+        std::string targetOutput;
+        if (!outputPathForTarget(ExportTarget::SingBox, targetOutput)) {
+            error = "missing export target metadata for sing-box";
+            if (!jsonOutput) {
+                std::cerr << "sing-box export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "sing-box"}, {"ok", false}, {"error", error}});
+            ++failed;
+            return;
+        }
+        auto result = exportForTarget(ExportTarget::SingBox, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::SingBox);
             if (!jsonOutput) {
-                std::cout << "exported sing-box: " << outputDir << "/sing-box.json\n";
+                std::cout << "exported sing-box: " << targetOutput << "\n";
                 printCapabilitySummaryForTarget(ExportTarget::SingBox, "sing-box");
                 if (result.skipped > 0) {
                     std::cout << "sing-box skipped nodes: " << result.skipped << "\n";
                 }
             }
-            exportTargets.push_back({{"target", "sing-box"}, {"ok", true}, {"output", outputDir + "/sing-box.json"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::SingBox)}});
+            exportTargets.push_back({{"target", "sing-box"}, {"ok", true}, {"output", targetOutput}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::SingBox)}});
             ++success;
             singOk = true;
         } else {
@@ -3892,17 +3896,27 @@ int doExportCommand(const std::vector<std::string>& args) {
     };
 
     auto runXray = [&]() {
-        auto result = exportForTarget(ExportTarget::Xray, allNodes, cfg, tun, exportProfile, outputDir + "/xray.json", error);
+        std::string targetOutput;
+        if (!outputPathForTarget(ExportTarget::Xray, targetOutput)) {
+            error = "missing export target metadata for xray";
+            if (!jsonOutput) {
+                std::cerr << "xray export failed: " << error << "\n";
+            }
+            exportTargets.push_back({{"target", "xray"}, {"ok", false}, {"error", error}});
+            ++failed;
+            return;
+        }
+        auto result = exportForTarget(ExportTarget::Xray, allNodes, cfg, tun, exportProfile, targetOutput, error);
         if (result.ok) {
             const auto counts = capabilityCountsForTarget(ExportTarget::Xray);
             if (!jsonOutput) {
-                std::cout << "exported xray: " << outputDir << "/xray.json\n";
+                std::cout << "exported xray: " << targetOutput << "\n";
                 printCapabilitySummaryForTarget(ExportTarget::Xray, "xray");
                 if (result.skipped > 0) {
                     std::cout << "xray skipped nodes: " << result.skipped << "\n";
                 }
             }
-            exportTargets.push_back({{"target", "xray"}, {"ok", true}, {"output", outputDir + "/xray.json"}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Xray)}});
+            exportTargets.push_back({{"target", "xray"}, {"ok", true}, {"output", targetOutput}, {"skipped", result.skipped}, {"capabilities", counts}, {"findings", capabilityFindingsForTarget(ExportTarget::Xray)}});
             ++success;
             xrayOk = true;
         } else {
@@ -3948,37 +3962,55 @@ int doExportCommand(const std::vector<std::string>& args) {
 
     if (checkFlag) {
         int checkFailed = 0;
+        std::string mihomoOutput;
+        std::string singBoxOutput;
+        std::string xrayOutput;
+        const bool hasMihomoOutput = outputPathForTarget(ExportTarget::Mihomo, mihomoOutput);
+        const bool hasSingBoxOutput = outputPathForTarget(ExportTarget::SingBox, singBoxOutput);
+        const bool hasXrayOutput = outputPathForTarget(ExportTarget::Xray, xrayOutput);
         if ((target == "all" || target == "mihomo") && mihomoOk) {
+            if (!hasMihomoOutput) {
+                std::cerr << "check failed: missing export target metadata for mihomo\n";
+                ++checkFailed;
+            } else
             if (jsonOutput) {
-                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Mihomo, outputDir + "/mihomo.yaml", checkTimeoutSec);
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Mihomo, mihomoOutput, checkTimeoutSec);
                 setJsonTargetCheck("mihomo", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
                 if (!check.ok) {
                     ++checkFailed;
                 }
             } else {
-                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Mihomo, outputDir + "/mihomo.yaml", checkTimeoutSec);
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Mihomo, mihomoOutput, checkTimeoutSec);
             }
         }
         if ((target == "all" || target == "sing-box") && singOk) {
+            if (!hasSingBoxOutput) {
+                std::cerr << "check failed: missing export target metadata for sing-box\n";
+                ++checkFailed;
+            } else
             if (jsonOutput) {
-                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::SingBox, outputDir + "/sing-box.json", checkTimeoutSec);
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::SingBox, singBoxOutput, checkTimeoutSec);
                 setJsonTargetCheck("sing-box", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
                 if (!check.ok) {
                     ++checkFailed;
                 }
             } else {
-                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::SingBox, outputDir + "/sing-box.json", checkTimeoutSec);
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::SingBox, singBoxOutput, checkTimeoutSec);
             }
         }
         if ((target == "all" || target == "xray") && xrayOk) {
+            if (!hasXrayOutput) {
+                std::cerr << "check failed: missing export target metadata for xray\n";
+                ++checkFailed;
+            } else
             if (jsonOutput) {
-                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Xray, outputDir + "/xray.json", checkTimeoutSec);
+                const auto check = runConfigCheckForTargetResult(cfg, ExportTarget::Xray, xrayOutput, checkTimeoutSec);
                 setJsonTargetCheck("xray", {{"requested", true}, {"ok", check.ok}, {"message", check.ok ? std::string("check passed") : check.message}});
                 if (!check.ok) {
                     ++checkFailed;
                 }
             } else {
-                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Xray, outputDir + "/xray.json", checkTimeoutSec);
+                checkFailed += runConfigCheckForTarget(cfg, ExportTarget::Xray, xrayOutput, checkTimeoutSec);
             }
         }
         if (checkFailed > 0) {
@@ -4283,6 +4315,22 @@ int doDaemonCommand(const std::vector<std::string>& args) {
 
 } // namespace
 
+namespace subcli {
+
+int runConfigCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
+    return legacyConfigCommand(args);
+}
+
+int runSubCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
+    return legacySubCommand(args);
+}
+
+int runDoctorCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
+    return legacyDoctorCommand(args);
+}
+
+} // namespace subcli
+
 int main(int argc, char** argv) {
     struct CurlGlobal {
         CurlGlobal() { curl_global_init(CURL_GLOBAL_DEFAULT); }
@@ -4377,16 +4425,16 @@ int main(int argc, char** argv) {
         }
 
         if (cmd == "sub") {
-            return doSubCommand(buildTail("sub", extra));
+            return runSubCommand(gEnvResult.paths, buildTail("sub", extra));
         }
         if (cmd == "init") {
             return doInitCommand(buildTail("init", extra));
         }
         if (cmd == "doctor") {
-            return doDoctorCommand(buildTail("doctor", extra));
+            return runDoctorCommand(gEnvResult.paths, buildTail("doctor", extra));
         }
         if (cmd == "config") {
-            return doConfigCommand(buildTail("config", extra));
+            return runConfigCommand(gEnvResult.paths, buildTail("config", extra));
         }
         if (cmd == "template") {
             return doTemplateCommand(buildTail("template", extra));

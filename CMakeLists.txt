@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
-project(subcli VERSION 0.1.0 LANGUAGES C CXX)
+project(subcli VERSION 0.2.5 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -98,6 +98,13 @@ set(SUBCLI_SOURCES
     src/profile.cpp
     src/profile_explain.cpp
     src/protocol_registry.cpp
+    src/registry.cpp
+    src/config_service.cpp
+    src/subscription_service.cpp
+    src/diagnostic_service.cpp
+    src/commands/config_command.cpp
+    src/commands/sub_command.cpp
+    src/commands/doctor_command.cpp
     src/node.cpp
     src/capabilities.cpp
     src/capability_matrix.cpp

@@ -78,6 +78,12 @@ subcli sub remove airport-a
 subcli sub update
 subcli sub update --strict-network
 subcli sub validate airport-a
+subcli sub check --json
+subcli sub prune --disabled --dry-run
+subcli sub edit --tag hk --set-group asia
+subcli sub export --file ./backup/subs.yaml
+subcli sub import --file ./backup/subs.yaml --merge
+subcli sub export --file ./backup/enabled-hk.yaml --tag hk --enabled true
 
 subcli config list
 subcli config list --json
@@ -177,6 +183,18 @@ subcli sub edit airport-a --remove-header Authorization
 subcli sub edit airport-a --clear-headers
 ```
 
+Lifecycle backup/import examples:
+
+```bash
+subcli sub export --file ./backup/subscriptions.yaml
+subcli sub remove airport-a
+subcli sub import --file ./backup/subscriptions.yaml --merge
+subcli sub export --file ./backup/hk-enabled.yaml --tag hk --enabled true
+subcli sub export --file ./backup/default-group.yaml --group default
+```
+
+`sub export` writes subcli YAML snapshots. `sub import` accepts those YAML snapshots or plain URI list files.
+
 ## Config Management
 
 `config list`, `config get`, `config set`, and `config remove` manage stored config values.
@@ -257,6 +275,7 @@ subcli export all --profile bypass-cn --strict-capabilities
 - `profile explain --target all` is the pre-export capability interpretation check.
 - `export ... --json` is machine-readable evidence of per-target capability findings.
 - `--strict-capabilities` blocks degraded or unsupported exports for selected target(s).
+- GitHub `release-validation` workflow triggers on `v*` tags, enforces tag == `v<project version>` from `CMakeLists.txt`, and uploads `build/subcli-*.tar.gz`.
 
 Advanced template merge behavior is also profile-driven via `template_policy`.
 
@@ -365,6 +384,20 @@ subcli template validate --json
 ```
 
 JSON output is emitted as a single compact JSON object on stdout. Warnings and failures remain represented in the JSON payload instead of relying on terminal formatting.
+
+`doctor --json` returns `{"ok":<bool>,"findings":[...],"failed":<int>,"checks":[...]}`.
+
+For v0.2.5 transition compatibility, legacy `failed` and `checks` are retained while new `ok` and `findings` are added.
+
+- `failed` is the legacy failure count retained for compatibility (`0` means command exits zero, `>0` means command exits nonzero).
+- `checks` retains compatibility entries (`name`, `ok`, `path`, `message`).
+
+- `workspace.resolved`
+- `config.key.registered`
+- `export.target.registered`
+- `profile.configured` / `profile.missing`
+- `subscription.enabled` / `subscription.disabled`
+- `subscription.last_error`
 
 ## Shell Completion
 

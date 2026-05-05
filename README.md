@@ -18,6 +18,10 @@
 - Support built-in `bypass-cn`, `global`, and `direct` profiles plus custom profile files.
 - Render custom strategy groups for Mihomo/sing-box, including `fallback` and `load-balance` types.
 - Manage geo/rule assets with `subcli asset list|validate|update`.
+- Import/export subscription records for portable backups and workspace migration.
+- Check, prune, and batch-edit subscriptions from the CLI.
+- Use registry-backed command/config/target metadata to keep help, completion, and docs aligned.
+- Run structured diagnostics with `subcli doctor --json`.
 - Validate exported configs with external cores via `--check`.
 - Use XDG runtime directories for config, data, cache, state, and outputs.
 - Preserve cache fallback visibility and support strict network mode.
@@ -35,6 +39,8 @@ Package archive:
 ```bash
 cmake --build build --target package
 ```
+
+Release-validation workflow triggers on `v*` tags, enforces tag == `v<project version>` from `CMakeLists.txt`, then runs configure/build/test/package.
 
 ## Quick Start
 

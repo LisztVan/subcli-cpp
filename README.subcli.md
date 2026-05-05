@@ -383,11 +383,11 @@ subcli template validate --json
 
 JSON output is emitted as a single compact JSON object on stdout. Warnings and failures remain represented in the JSON payload instead of relying on terminal formatting.
 
-`doctor --json` returns `{"ok":<bool>,"findings":[...],"failed":<bool>,"checks":[...]}`.
+`doctor --json` returns `{"ok":<bool>,"findings":[...],"failed":<int>,"checks":[...]}`.
 
 For v0.2.5 transition compatibility, legacy `failed` and `checks` are retained while new `ok` and `findings` are added.
 
-- `failed` mirrors doctor failure state (`true` means command exits nonzero).
+- `failed` is the legacy failure count retained for compatibility (`0` means command exits zero, `>0` means command exits nonzero).
 - `checks` retains compatibility entries (`name`, `ok`, `path`, `message`).
 
 - `workspace.resolved`

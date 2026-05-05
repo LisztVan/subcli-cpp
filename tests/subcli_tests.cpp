@@ -6612,6 +6612,16 @@ void testCMakeVersionIsV025() {
     require(match[1].str() == "0.2.5", "CMakeLists.txt subcli project version should be exactly 0.2.5");
 }
 
+void testConfigDocsMentionRegistryKeys() {
+    const auto docs = subcli::readFile((fs::path(SUBCLI_SOURCE_DIR) / "docs/config-file.md").string());
+    for (const auto& key : subcli::allConfigKeyNames()) {
+        if (!key.empty() && key.back() == '.') {
+            continue;
+        }
+        require(docs.find(key) != std::string::npos, std::string("config docs should mention ") + key);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -6786,6 +6796,7 @@ int main() {
     testConfigServiceSetGetRemoveScalarKeys();
     testConfigServiceRejectsUnknownAndBadValues();
     testCMakeVersionIsV025();
+    testConfigDocsMentionRegistryKeys();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();
     testCustomRoutingRulesMapToAllTargets();

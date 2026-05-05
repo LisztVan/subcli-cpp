@@ -36,12 +36,16 @@ Common scalar/object keys:
 - `profile_path`
 - `output_dir`
 - `template_dir`
+- `asset_dir`
 - `parallelism`, `timeout`, `retry`, `fetch_max_bytes`, `log_level`
 - `core_paths.mihomo`, `core_paths.sing_box`, `core_paths.xray`
 - `node_management.dedupe`, `node_management.rename_template`, `node_management.include_regex`, `node_management.exclude_regex`, `node_management.sort_by`
 
 Common structured prefixes:
 
+- `templates.mihomo.normal`, `templates.mihomo.tun`
+- `templates.sing-box.normal`, `templates.sing-box.tun`
+- `templates.xray.normal`, `templates.xray.tun`
 - `templates.<target>.<normal|tun>`
 - `grouping.region_rules.<REGION>`
 - `assets.paths.<asset-key>`

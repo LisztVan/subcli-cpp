@@ -23,6 +23,9 @@
 #include <nlohmann/json.hpp>
 
 #include "subcli/assets.hpp"
+#include "subcli/commands/config_command.hpp"
+#include "subcli/commands/doctor_command.hpp"
+#include "subcli/commands/sub_command.hpp"
 #include "subcli/core_check.hpp"
 #include "subcli/core_discovery.hpp"
 #include "subcli/core_runtime.hpp"
@@ -949,7 +952,7 @@ bool isKnownSubcommand(const std::string& cmd, const std::vector<std::string>& v
     return std::find(values.begin(), values.end(), cmd) != values.end();
 }
 
-int doSubCommand(const std::vector<std::string>& args);
+int legacySubCommand(const std::vector<std::string>& args);
 int doExportCommand(const std::vector<std::string>& args);
 int doRestartCommand(const std::vector<std::string>& args);
 bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile);
@@ -1097,7 +1100,7 @@ DaemonOptions buildDaemonOptionsFromCli(int intervalSec, const std::string& targ
 
 DaemonCallbacks makeDaemonCallbacks() {
     DaemonCallbacks callbacks;
-    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return doSubCommand(subArgs); };
+    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return runSubCommand(gEnvResult.paths, subArgs); };
     callbacks.runExportCommand = [&](const std::vector<std::string>& exportArgs) { return doExportCommand(exportArgs); };
     callbacks.isCoreRunning = [&](const std::string& coreTarget, std::string& error) {
         const auto status = inspectCoreRuntime(gPaths.stateDir, coreTarget, error);
@@ -1804,7 +1807,7 @@ std::vector<std::pair<std::string, std::string>> requiredTemplateFiles(const App
     return files;
 }
 
-int doDoctorCommand(const std::vector<std::string>& args) {
+int legacyDoctorCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         printDoctorUsage();
         return 0;
@@ -1998,7 +2001,7 @@ int doCompletionCommand(const std::vector<std::string>& args) {
     return 0;
 }
 
-int doSubCommand(const std::vector<std::string>& args) {
+int legacySubCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export", "check", "prune"})) {
             printSubCommandUsageLine(args[2]);
@@ -2838,7 +2841,7 @@ int doSubCommand(const std::vector<std::string>& args) {
     return 1;
 }
 
-int doConfigCommand(const std::vector<std::string>& args) {
+int legacyConfigCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "get", "set", "remove"})) {
             printConfigSubcommandUsage(args[2]);
@@ -4312,6 +4315,22 @@ int doDaemonCommand(const std::vector<std::string>& args) {
 
 } // namespace
 
+namespace subcli {
+
+int runConfigCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
+    return legacyConfigCommand(args);
+}
+
+int runSubCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
+    return legacySubCommand(args);
+}
+
+int runDoctorCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
+    return legacyDoctorCommand(args);
+}
+
+} // namespace subcli
+
 int main(int argc, char** argv) {
     struct CurlGlobal {
         CurlGlobal() { curl_global_init(CURL_GLOBAL_DEFAULT); }
@@ -4406,16 +4425,16 @@ int main(int argc, char** argv) {
         }
 
         if (cmd == "sub") {
-            return doSubCommand(buildTail("sub", extra));
+            return runSubCommand(gEnvResult.paths, buildTail("sub", extra));
         }
         if (cmd == "init") {
             return doInitCommand(buildTail("init", extra));
         }
         if (cmd == "doctor") {
-            return doDoctorCommand(buildTail("doctor", extra));
+            return runDoctorCommand(gEnvResult.paths, buildTail("doctor", extra));
         }
         if (cmd == "config") {
-            return doConfigCommand(buildTail("config", extra));
+            return runConfigCommand(gEnvResult.paths, buildTail("config", extra));
         }
         if (cmd == "template") {
             return doTemplateCommand(buildTail("template", extra));

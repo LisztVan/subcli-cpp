@@ -102,6 +102,9 @@ set(SUBCLI_SOURCES
     src/config_service.cpp
     src/subscription_service.cpp
     src/diagnostic_service.cpp
+    src/commands/config_command.cpp
+    src/commands/sub_command.cpp
+    src/commands/doctor_command.cpp
     src/node.cpp
     src/capabilities.cpp
     src/capability_matrix.cpp

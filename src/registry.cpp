@@ -17,11 +17,12 @@ const std::vector<CommandDescriptor> kCommands = {
     {"export", "Render all/mihomo/sing-box/xray configs.", {"--tun", "--check", "--check-timeout", "--output-dir", "--profile", "--sub", "--tag", "--strict-network", "--strict-capabilities", "--download-assets", "--explain-policy", "--json"}},
     {"workspace", "Init/status/use/unset/migrate/doctor workspace roots.", {"--json"}},
     {"check", "Validate exported config with installed core.", {"--file", "--output-dir", "--timeout"}},
-    {"run", "Run one core with an exported config.", {"--file", "--output-dir"}},
+    {"run", "Run one core with an exported config.", {"--file", "--output-dir", "--foreground", "--log-file"}},
     {"daemon", "Once/run/start/stop/status periodic helper.", {"--json"}},
     {"status", "Show helper process status.", {"--json"}},
     {"stop", "Stop a helper process.", {}},
-    {"restart", "Restart a helper process.", {}},
+    {"restart", "Restart a helper process.", {"--file", "--output-dir", "--foreground", "--log-file"}},
+    {"logs", "Read managed core or daemon logs.", {"--tail", "--follow", "--file"}},
     {"completion", "Generate shell completion scripts.", {"--shell"}},
 };
 

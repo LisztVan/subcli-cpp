@@ -3,6 +3,8 @@
 #include <chrono>
 #include <cerrno>
 #include <csignal>
+#include <cstring>
+#include <filesystem>
 #include <fcntl.h>
 #include <string>
 #include <thread>
@@ -36,6 +38,7 @@ bool startCoreRuntime(
     const std::string& binaryPath,
     const std::vector<std::string>& args,
     const std::string& configPath,
+    const std::string& logPath,
     std::string& error
 ) {
     error.clear();
@@ -64,21 +67,41 @@ bool startCoreRuntime(
         return false;
     }
 
+    const std::filesystem::path resolvedLogPath = logPath.empty() ? runtimeLogPathForTarget(stateDir, target) : std::filesystem::path(logPath);
+    const auto logDir = resolvedLogPath.parent_path();
+    if (!logDir.empty()) {
+        std::error_code logEc;
+        std::filesystem::create_directories(logDir, logEc);
+        if (logEc) {
+            error = "failed to create runtime log directory: " + logEc.message();
+            return false;
+        }
+    }
+
+    const int logFd = open(resolvedLogPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (logFd < 0) {
+        error = "failed to open runtime log file: " + resolvedLogPath.string() + ": " + std::strerror(errno);
+        return false;
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
+        close(logFd);
         error = "failed to fork runtime process";
         return false;
     }
 
     if (pid == 0) {
         setsid();
-        const int devNull = open("/dev/null", O_RDWR);
-        if (devNull >= 0) {
-            dup2(devNull, STDIN_FILENO);
-            dup2(devNull, STDOUT_FILENO);
-            dup2(devNull, STDERR_FILENO);
-            close(devNull);
+        const int stdinFd = open("/dev/null", O_RDONLY);
+        if (stdinFd >= 0) {
+            dup2(stdinFd, STDIN_FILENO);
+            close(stdinFd);
         }
+
+        dup2(logFd, STDOUT_FILENO);
+        dup2(logFd, STDERR_FILENO);
+        close(logFd);
 
         std::vector<char*> argv;
         argv.reserve(args.size() + 2);
@@ -90,6 +113,7 @@ bool startCoreRuntime(
         execv(binaryPath.c_str(), argv.data());
         _exit(127);
     }
+    close(logFd);
 
     RuntimeStatus state;
     state.hasState = true;
@@ -98,6 +122,8 @@ bool startCoreRuntime(
     state.target = target;
     state.binaryPath = binaryPath;
     state.configPath = configPath;
+    state.logPath = resolvedLogPath.string();
+    state.startedAt = nowIso8601();
     if (!saveRuntimeState(statePath, state, error)) {
         kill(pid, SIGTERM);
         return false;

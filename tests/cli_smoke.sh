@@ -14,7 +14,7 @@ export XDG_STATE_HOME="$tmp/state"
 
 "$bin" init >/dev/null
 root_help="$($bin --help)"
-for cmd in init doctor sub config profile template asset export workspace check run daemon status stop restart completion; do
+for cmd in init doctor sub config profile template asset export workspace check run daemon status stop restart logs completion; do
     if [[ "$root_help" != *"  $cmd"* ]]; then
         printf 'root help missing command: %s\n%s\n' "$cmd" "$root_help"
         exit 1
@@ -28,7 +28,8 @@ for summary in \
     "asset     list/status/validate/update" \
     "export    all/mihomo/sing-box/xray" \
     "workspace init/status/use/unset/migrate/doctor" \
-    "daemon    once/run/start/stop/status"; do
+    "daemon    once/run/start/stop/status" \
+    "logs     Read managed core or daemon logs."; do
     if [[ "$root_help" != *"$summary"* ]]; then
         printf 'root help missing summary: %s\n%s\n' "$summary" "$root_help"
         exit 1
@@ -43,6 +44,33 @@ if [[ "$sub_help" != *"import    Import subscriptions from a subcli YAML or URI 
     exit 1
 fi
 "$bin" template validate >/dev/null
+
+logs_help="$($bin logs --help)"
+if [[ "$logs_help" != *"subcli logs <mihomo|sing-box|xray|daemon>"* || "$logs_help" != *"--tail N"* || "$logs_help" != *"--follow"* ]]; then
+    printf 'logs --help incomplete: %s\n' "$logs_help"
+    exit 1
+fi
+"$bin" run --help | grep -q -- "--foreground"
+printf 'one\ntwo\nthree\n' >"$tmp/logs-input.log"
+logs_tail="$($bin logs sing-box --file "$tmp/logs-input.log" --tail 2)"
+if [[ "$logs_tail" != $'two\nthree' ]]; then
+    printf 'logs tail mismatch: %s\n' "$logs_tail"
+    exit 1
+fi
+set +e
+logs_negative_out="$({ "$bin" logs sing-box --file "$tmp/logs-input.log" --tail -1; } 2>&1)"
+logs_negative_code=$?
+logs_unknown_out="$({ "$bin" logs unknown --file "$tmp/logs-input.log"; } 2>&1)"
+logs_unknown_code=$?
+set -e
+if [[ "$logs_negative_code" -ne 2 || "$logs_negative_out" != *"--tail must be non-negative"* ]]; then
+    printf 'expected negative logs tail usage rejection, code=%s out=%s\n' "$logs_negative_code" "$logs_negative_out"
+    exit 1
+fi
+if [[ "$logs_unknown_code" -ne 2 || "$logs_unknown_out" != *"unknown logs target: unknown"* ]]; then
+    printf 'expected unknown logs target usage rejection, code=%s out=%s\n' "$logs_unknown_code" "$logs_unknown_out"
+    exit 1
+fi
 
 cp "$($bin template get mihomo normal)" "$tmp/valid-mihomo.yaml"
 cp "$($bin template get sing-box normal)" "$tmp/valid-singbox.json"
@@ -402,6 +430,68 @@ if [[ "$check_export_json" != *'"check"'* || "$check_export_json" != *'"requeste
     printf '%s\n' "$check_export_json"
     exit 1
 fi
+
+runtime_core="$tmp/fake-mihomo-core"
+cat >"$runtime_core" <<'SH'
+#!/usr/bin/env sh
+while :; do sleep 1; done
+SH
+chmod +x "$runtime_core"
+runtime_config="$tmp/mihomo-runtime.yaml"
+printf 'port: 7890\nproxies: []\nproxy-groups: []\nrules: []\n' >"$runtime_config"
+"$bin" config set core_paths.mihomo /bin/true >/dev/null
+
+cleanup_runtime() {
+    "$bin" stop mihomo >/dev/null 2>&1 || true
+}
+
+set +e
+foreground_log_out="$({ "$bin" run mihomo --file "$runtime_config" --foreground --log-file "$tmp/foreground.log"; } 2>&1)"
+foreground_log_code=$?
+set -e
+if [[ "$foreground_log_code" -ne 2 || "$foreground_log_out" != *"--log-file is only supported for background runtime"* ]]; then
+    printf 'expected foreground --log-file usage rejection, code=%s out=%s\n' "$foreground_log_code" "$foreground_log_out"
+    exit 1
+fi
+
+"$bin" config set core_paths.mihomo "$runtime_core" >/dev/null
+trap 'cleanup_runtime; rm -rf "$tmp"' EXIT
+"$bin" run mihomo --file "$runtime_config" --log-file "$tmp/runtime.log" >/dev/null
+"$bin" config set core_paths.mihomo /bin/true >/dev/null
+set +e
+restart_foreground_log_out="$({ "$bin" restart mihomo --file "$runtime_config" --foreground --log-file "$tmp/foreground-restart.log"; } 2>&1)"
+restart_foreground_log_code=$?
+set -e
+if [[ "$restart_foreground_log_code" -ne 2 || "$restart_foreground_log_out" != *"--log-file is only supported for background runtime"* ]]; then
+    printf 'expected restart foreground --log-file usage rejection, code=%s out=%s\n' "$restart_foreground_log_code" "$restart_foreground_log_out"
+    "$bin" stop mihomo >/dev/null 2>&1 || true
+    exit 1
+fi
+runtime_status="$($bin status mihomo)"
+if [[ "$runtime_status" != *"mihomo"*$'\t'"running"* ]]; then
+    printf 'restart foreground --log-file should not stop existing runtime: %s\n' "$runtime_status"
+    exit 1
+fi
+
+"$bin" config set core_paths.mihomo "$runtime_core" >/dev/null
+invalid_runtime_log="$tmp/not-a-log-file"
+mkdir "$invalid_runtime_log"
+set +e
+restart_invalid_log_out="$({ "$bin" restart mihomo --file "$runtime_config" --log-file "$invalid_runtime_log"; } 2>&1)"
+restart_invalid_log_code=$?
+set -e
+if [[ "$restart_invalid_log_code" -ne 1 || "$restart_invalid_log_out" != *"runtime log file is not writable: $invalid_runtime_log"* ]]; then
+    printf 'expected restart invalid log rejection, code=%s out=%s\n' "$restart_invalid_log_code" "$restart_invalid_log_out"
+    "$bin" stop mihomo >/dev/null 2>&1 || true
+    exit 1
+fi
+runtime_status="$($bin status mihomo)"
+if [[ "$runtime_status" != *"mihomo"*$'\t'"running"* ]]; then
+    printf 'restart invalid log path should not stop existing runtime: %s\n' "$runtime_status"
+    exit 1
+fi
+"$bin" stop mihomo >/dev/null
+trap 'rm -rf "$tmp"' EXIT
 
 "$bin" export all --profile bypass-cn --sub explain --strict-capabilities >/dev/null 2>&1 && exit 1 || true
 

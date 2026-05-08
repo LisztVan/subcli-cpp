@@ -11,6 +11,8 @@ namespace subcli {
 
 std::filesystem::path runtimeStatePathForTarget(const std::filesystem::path& stateDir, const std::string& target);
 
+std::filesystem::path runtimeLogPathForTarget(const std::filesystem::path& stateDir, const std::string& target);
+
 bool loadRuntimeState(const std::filesystem::path& statePath, RuntimeStatus& status, std::string& error);
 
 bool saveRuntimeState(const std::filesystem::path& statePath, const RuntimeStatus& status, std::string& error);

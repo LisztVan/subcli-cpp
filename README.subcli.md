@@ -123,10 +123,12 @@ subcli export xray --profile /path/to/custom-profile.json --output-dir ./outputs
 
 subcli daemon once --target all --strict-network   # optional helper
 
-subcli run sing-box                                # optional helper
-subcli status                                      # optional helper
+subcli run sing-box                                # optional managed background helper
+subcli status sing-box                             # optional helper
+subcli logs sing-box --tail 100                    # optional helper
+subcli logs sing-box --follow                      # optional helper
+subcli restart sing-box --log-file /tmp/subcli-sing-box.log
 subcli stop sing-box                               # optional helper
-subcli restart sing-box                            # optional helper
 
 subcli check sing-box --file ./outputs/sing-box.json --timeout 30
 subcli completion bash
@@ -449,13 +451,15 @@ subcli daemon once --target all --strict-network
 subcli daemon run --interval 1800 --target sing-box --update-assets
 subcli daemon start --interval 1800 --target sing-box --update-assets
 subcli daemon start --target sing-box --pid-file /tmp/subcli-daemon.pid --log-file /tmp/subcli-daemon.log
+subcli daemon start --target sing-box --log-file /tmp/subcli-daemon.log
+subcli logs daemon --tail 200
 subcli daemon status
 subcli daemon stop
 ```
 
 - `once`: run one cycle (`sub update` -> `export`) and exit.
 - `run`: loop forever with the configured interval in seconds.
-- `start`: fork a background daemon process and persist pid/state under XDG state dir.
+- `start`: fork a background daemon process and persist pid/state under active state directory.
 - `status`: show whether the managed daemon process is running and its configured target/interval.
 - `stop`: terminate the managed background daemon process.
 - `--target`: choose `all|mihomo|sing-box|xray` export target.
@@ -467,6 +471,7 @@ subcli daemon stop
 - `--log-file`: override the default daemon log file path.
 
 `daemon status` may also surface the last cycle summary as `last=ok` or `last=failed(...)`, which reflects the most recent `sub update -> export -> restart-running-cores` result, not just whether the process is still alive.
+Daemon logs can be inspected through `subcli logs daemon`; use `daemon start --log-file PATH` to choose the daemon log destination.
 
 ### systemd user service example
 
@@ -517,14 +522,19 @@ sing-box run -c ~/.local/share/subcli/outputs/sing-box.json
 xray run -config ~/.local/share/subcli/outputs/xray.json
 ```
 
-You can also let `subcli` manage runtime lifecycle directly, but this remains an optional helper outside the primary profile-driven export scope:
+You can also let `subcli` manage runtime lifecycle directly, but this remains an optional helper outside the primary profile-driven export scope. By default, `subcli run <target>` starts a managed background process, records runtime state under the active state directory, and uses the generated config for that target. Use `--foreground` to keep the core attached to the current terminal instead of managing it in the background.
 
 ```bash
 subcli run sing-box
-subcli status
+subcli status sing-box
+subcli logs sing-box --tail 100
+subcli logs sing-box --follow
+subcli restart sing-box --log-file /tmp/subcli-sing-box.log
 subcli stop sing-box
-subcli restart sing-box
+subcli run sing-box --foreground
 ```
+
+When a core is running, `subcli status` shows the managed pid, config path, log path, and start time.
 
 Mihomo and sing-box TUN configs can be run directly when the core has the required platform permissions. Xray has no native TUN device; `xray_tun.json` is a transparent-proxy helper and still needs OS redirect/tproxy/tun2socks-style plumbing.
 

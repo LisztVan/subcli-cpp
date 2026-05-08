@@ -13,6 +13,8 @@ struct RuntimeStatus {
     std::string target;
     std::string binaryPath;
     std::string configPath;
+    std::string logPath;
+    std::string startedAt;
 };
 
 bool startCoreRuntime(
@@ -21,6 +23,7 @@ bool startCoreRuntime(
     const std::string& binaryPath,
     const std::vector<std::string>& args,
     const std::string& configPath,
+    const std::string& logPath,
     std::string& error
 );
 

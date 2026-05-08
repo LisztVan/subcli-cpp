@@ -122,10 +122,17 @@ std::string generateBashCompletion() {
                 COMPREPLY=( $(compgen -W "mihomo sing-box xray" -- "$cur") )
                 return 0
             fi
-            COMPREPLY=( $(compgen -W "--file --output-dir" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--file --output-dir --foreground --log-file" -- "$cur") )
             ;;
         stop|status)
             COMPREPLY=( $(compgen -W "mihomo sing-box xray" -- "$cur") )
+            ;;
+        logs)
+            if [[ $COMP_CWORD -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "mihomo sing-box xray daemon" -- "$cur") )
+                return 0
+            fi
+            COMPREPLY=( $(compgen -W "--tail --follow --file" -- "$cur") )
             ;;
         check)
             COMPREPLY=( $(compgen -W "mihomo sing-box xray --file --output-dir --timeout" -- "$cur") )

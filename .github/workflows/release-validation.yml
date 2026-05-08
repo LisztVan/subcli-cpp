@@ -24,14 +24,14 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME}"
           project_version="$(python3 - <<'PY'
-import re
+          import re
 
-with open('CMakeLists.txt', 'r', encoding='utf-8') as f:
-    content = f.read()
+          with open('CMakeLists.txt', 'r', encoding='utf-8') as f:
+              content = f.read()
 
-match = re.search(r'project\s*\(\s*subcli\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)\b', content, re.IGNORECASE)
-print(match.group(1) if match else '')
-PY
+          match = re.search(r'project\s*\(\s*subcli\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)\b', content, re.IGNORECASE)
+          print(match.group(1) if match else '')
+          PY
           )"
 
           if [ -z "$project_version" ]; then

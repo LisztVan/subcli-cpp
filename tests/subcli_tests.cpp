@@ -20,11 +20,13 @@
 #include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
+#include "subcli/logs.hpp"
 #include "subcli/node.hpp"
 #include "subcli/parser.hpp"
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
 #include "subcli/protocol_registry.hpp"
+#include "subcli/runtime_process.hpp"
 #include "subcli/store.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
@@ -1584,7 +1586,7 @@ void testCliOutputDiagnosticsJson() {
 void testBashCompletionContainsCommands() {
     const auto script = subcli::generateBashCompletion();
     require(script.find("_subcli_completion") != std::string::npos, "completion should define function");
-    require(script.find("init doctor sub config template asset profile export daemon run stop status restart check completion workspace") != std::string::npos, "completion should include root commands");
+    require(script.find("init doctor sub config template asset profile export daemon run stop status restart logs check completion workspace") != std::string::npos, "completion should include root commands");
     require(script.find("add remove list update enable disable edit validate") != std::string::npos, "completion should include sub commands");
     require(script.find("list get validate explain") != std::string::npos, "completion should include profile subcommand list");
     require(script.find("once run start stop status") != std::string::npos, "completion should include daemon modes");
@@ -1592,7 +1594,14 @@ void testBashCompletionContainsCommands() {
     require(script.find("--strict-capabilities") != std::string::npos, "completion should include strict-capabilities option");
     require(script.find("--download-assets") != std::string::npos, "completion should include export download-assets option");
     require(script.find("--explain-policy") != std::string::npos, "completion should include explain-policy export option");
+    require(script.find("--foreground") != std::string::npos, "completion should include runtime foreground option");
+    require(script.find("--log-file") != std::string::npos, "completion should include runtime log-file option");
     require(script.find("--json") != std::string::npos, "completion should include json option");
+}
+
+void testCMakeVersionIs026() {
+    const std::string cmake = subcli::readFile((fs::path(SUBCLI_SOURCE_DIR) / "CMakeLists.txt").string());
+    require(cmake.find("project(subcli VERSION 0.2.6") != std::string::npos, "CMake project version should be 0.2.6");
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -1701,6 +1710,32 @@ void testDaemonProcessLifecycleWithCustomFiles() {
     require(!fs::exists(options.pidFile), "pid file should be removed after stop");
 
     fs::remove_all(dir);
+}
+
+void testStartDaemonProcessFailsWhenLogFileCannotOpen() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-daemon-bad-log-file-tests";
+    fs::remove_all(stateDir);
+    fs::create_directories(stateDir);
+
+    const fs::path badPath = stateDir / "not-a-log-file";
+    fs::create_directories(badPath);
+
+    subcli::DaemonOptions options;
+    options.logFile = badPath.string();
+    std::string error;
+
+    const bool started = subcli::startDaemonProcess(stateDir, "/bin/sleep", {"30"}, options, error);
+
+    require(!started, "startDaemonProcess should fail when daemon log file cannot be opened");
+    require(error.find("daemon log file") != std::string::npos ||
+                error.find("failed to open daemon log file") != std::string::npos,
+            "startDaemonProcess should report daemon log file failure: " + error);
+    const auto status = subcli::inspectDaemonProcess(stateDir, error);
+    require(error.empty(), "inspectDaemonProcess should not fail after bad log start: " + error);
+    require(!status.hasState, "failed daemon log start should not leave daemon state");
+    require(!status.running, "failed daemon log start should not report running");
+
+    fs::remove_all(stateDir);
 }
 
 void testStartDaemonProcessFailsWhenExecCannotStart() {
@@ -5478,6 +5513,152 @@ void testLoadConfigMalformedYamlThrows() {
     fs::remove(path);
 }
 
+void testReadLogTailLines() {
+    const fs::path dir = makeUniqueTestDir("subcli-log-tail-tests");
+    const fs::path logPath = dir / "sample.log";
+    {
+        std::ofstream out(logPath);
+        out << "one\n";
+        out << "two\n";
+        out << "three\n";
+    }
+
+    std::string error;
+    const auto lastTwo = subcli::readLogTailLines(logPath, 2, error);
+    require(error.empty(), "readLogTailLines should not fail: " + error);
+    require(lastTwo.size() == 2, "tail 2 should return two lines");
+    require(lastTwo[0] == "two", "tail 2 should include second line");
+    require(lastTwo[1] == "three", "tail 2 should include third line");
+
+    const auto all = subcli::readLogTailLines(logPath, 0, error);
+    require(error.empty(), "readLogTailLines whole file should not fail: " + error);
+    require(all.size() == 3, "tail 0 should return whole file");
+
+    fs::remove_all(dir);
+}
+
+void testRuntimeStatePersistsLogMetadata() {
+    const fs::path dir = makeUniqueTestDir("subcli-runtime-state-metadata");
+    const fs::path statePath = subcli::runtimeStatePathForTarget(dir, "sing-box");
+
+    subcli::RuntimeStatus status;
+    status.hasState = true;
+    status.running = true;
+    status.pid = 1234;
+    status.target = "sing-box";
+    status.binaryPath = "/bin/sleep";
+    status.configPath = "/tmp/sing-box.json";
+    status.logPath = (dir / "runtime" / "sing_box.log").string();
+    status.startedAt = "2026-05-05T00:00:00Z";
+
+    std::string error;
+    require(subcli::saveRuntimeState(statePath, status, error), "saveRuntimeState should persist metadata: " + error);
+
+    subcli::RuntimeStatus loaded;
+    require(subcli::loadRuntimeState(statePath, loaded, error), "loadRuntimeState should read metadata: " + error);
+    require(loaded.hasState, "loaded runtime state should exist");
+    require(loaded.pid == 1234, "loaded runtime pid should be preserved");
+    require(loaded.target == "sing-box", "loaded runtime target should be preserved");
+    require(loaded.binaryPath == "/bin/sleep", "loaded runtime binary should be preserved");
+    require(loaded.configPath == "/tmp/sing-box.json", "loaded runtime config should be preserved");
+    require(loaded.logPath == status.logPath, "loaded runtime log path should be preserved");
+    require(loaded.startedAt == "2026-05-05T00:00:00Z", "loaded runtime start time should be preserved");
+
+    fs::remove_all(dir);
+}
+
+void testRuntimeLogPathNormalizesTarget() {
+    const fs::path stateDir = fs::temp_directory_path() / "subcli-runtime-log-path-tests";
+    const auto path = subcli::runtimeLogPathForTarget(stateDir, "sing-box");
+    require(path == stateDir / "runtime" / "sing_box.log", "runtime log path should normalize target dashes");
+}
+
+void testStartCoreRuntimeWritesConfiguredLog() {
+    const fs::path dir = makeUniqueTestDir("subcli-runtime-log-write");
+    const fs::path logPath = dir / "runtime.log";
+    std::string error;
+
+    const bool started = subcli::startCoreRuntime(
+        dir,
+        "mihomo",
+        "/bin/sh",
+        {"-c", "printf 'runtime-log-line\n'; sleep 2"},
+        "/tmp/mihomo.yaml",
+        logPath.string(),
+        error
+    );
+    require(started, "startCoreRuntime should start shell process: " + error);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    require(fs::exists(logPath), "runtime log file should be created");
+    const std::string contents = subcli::readFile(logPath.string());
+    require(contents.find("runtime-log-line") != std::string::npos, "runtime stdout should be written to log file");
+
+    auto status = subcli::inspectCoreRuntime(dir, "mihomo", error);
+    require(error.empty(), "inspectCoreRuntime should succeed: " + error);
+    require(status.logPath == logPath.string(), "runtime status should expose configured log path");
+    require(!status.startedAt.empty(), "runtime status should expose start time");
+
+    require(subcli::stopCoreRuntime(dir, "mihomo", 1, error), "stopCoreRuntime should stop shell process: " + error);
+    fs::remove_all(dir);
+}
+
+void testStartCoreRuntimeAcceptsBasenameLogPath() {
+    struct CurrentPathGuard {
+        fs::path original;
+        ~CurrentPathGuard() {
+            std::error_code ec;
+            fs::current_path(original, ec);
+        }
+    } guard{fs::current_path()};
+
+    const fs::path dir = makeUniqueTestDir("subcli-runtime-basename-log");
+    fs::current_path(dir);
+
+    std::string error;
+    const bool started = subcli::startCoreRuntime(
+        dir,
+        "mihomo",
+        "/bin/sh",
+        {"-c", "printf 'runtime-basename-line\n'; sleep 2"},
+        "/tmp/mihomo.yaml",
+        "runtime.log",
+        error
+    );
+    require(started, "startCoreRuntime should accept basename log path: " + error);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    require(fs::exists(dir / "runtime.log"), "runtime basename log file should be created in cwd");
+
+    require(subcli::stopCoreRuntime(dir, "mihomo", 1, error), "stopCoreRuntime should stop basename log process: " + error);
+    fs::remove_all(dir);
+}
+
+void testStartCoreRuntimeRejectsInvalidLogPath() {
+    const fs::path dir = makeUniqueTestDir("subcli-runtime-invalid-log");
+    const fs::path logPath = dir / "not-a-file.log";
+    fs::create_directory(logPath);
+
+    std::string error;
+    const bool started = subcli::startCoreRuntime(
+        dir,
+        "mihomo",
+        "/bin/sh",
+        {"-c", "printf 'should-not-start\n'; sleep 2"},
+        "/tmp/mihomo.yaml",
+        logPath.string(),
+        error
+    );
+    require(!started, "startCoreRuntime should reject directory log path");
+    require(error.find("runtime log file") != std::string::npos, "invalid log path error should mention runtime log file");
+
+    auto status = subcli::inspectCoreRuntime(dir, "mihomo", error);
+    require(error.empty(), "inspectCoreRuntime should succeed after invalid log path: " + error);
+    require(!status.hasState, "invalid log path should not leave runtime state");
+
+    fs::remove_all(dir);
+}
+
 void testCoreRuntimeLifecycle() {
     const fs::path stateDir = fs::temp_directory_path() / "subcli-tests-runtime";
     fs::remove_all(stateDir);
@@ -5490,6 +5671,7 @@ void testCoreRuntimeLifecycle() {
         "/bin/sleep",
         {"30"},
         "/tmp/subcli-tests-runtime-config.json",
+        subcli::runtimeLogPathForTarget(stateDir, "sing-box").string(),
         error
     );
     require(started, "startCoreRuntime should start process: " + error);
@@ -5506,6 +5688,7 @@ void testCoreRuntimeLifecycle() {
         "/bin/sleep",
         {"30"},
         "/tmp/subcli-tests-runtime-config.json",
+        subcli::runtimeLogPathForTarget(stateDir, "sing-box").string(),
         error
     );
     require(!secondStart, "startCoreRuntime should reject duplicate start");
@@ -5559,6 +5742,7 @@ void testStartCoreRuntimeInvalidBinaryLeavesNoState() {
         "/definitely/missing/subcli-binary",
         {"run"},
         "/tmp/subcli-tests-runtime-config.json",
+        subcli::runtimeLogPathForTarget(stateDir, "sing-box").string(),
         error
     );
     require(!started, "startCoreRuntime should fail when binary is missing");
@@ -6054,9 +6238,11 @@ int main() {
     testCliOutputStatusJson();
     testCliOutputDiagnosticsJson();
     testBashCompletionContainsCommands();
+    testCMakeVersionIs026();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
     testDaemonProcessLifecycleWithCustomFiles();
+    testStartDaemonProcessFailsWhenLogFileCannotOpen();
     testStartDaemonProcessFailsWhenExecCannotStart();
     testRunDaemonCycleWithStateUpdatesSuccessSummary();
     testInspectDaemonProcessExposesLastCycleFailure();
@@ -6123,6 +6309,12 @@ int main() {
     testInvalidRegexIsIgnored();
     testWriteFileCreatesParentDirectories();
     testLoadConfigMalformedYamlThrows();
+    testReadLogTailLines();
+    testRuntimeStatePersistsLogMetadata();
+    testRuntimeLogPathNormalizesTarget();
+    testStartCoreRuntimeWritesConfiguredLog();
+    testStartCoreRuntimeAcceptsBasenameLogPath();
+    testStartCoreRuntimeRejectsInvalidLogPath();
     testCoreRuntimeLifecycle();
     testStopCoreRuntimeRemovesStaleStateFile();
     testStartCoreRuntimeInvalidBinaryLeavesNoState();

@@ -181,8 +181,25 @@ bool startDaemonProcess(
         cleanupDaemonStateAndPid(stateDir, current.options);
     }
 
+    const auto logPath = configuredDaemonLogPath(stateDir, options);
+    const auto logDir = logPath.parent_path();
+    if (!logDir.empty()) {
+        std::error_code logEc;
+        std::filesystem::create_directories(logDir, logEc);
+        if (logEc) {
+            error = "failed to create daemon log dir: " + logEc.message();
+            return false;
+        }
+    }
+    const int logFd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (logFd < 0) {
+        error = "failed to open daemon log file: " + logPath.string();
+        return false;
+    }
+
     int pipeFd[2] = {-1, -1};
     if (pipe(pipeFd) != 0) {
+        close(logFd);
         error = "failed to create daemon handshake pipe";
         return false;
     }
@@ -195,6 +212,7 @@ bool startDaemonProcess(
     if (pid < 0) {
         close(pipeFd[0]);
         close(pipeFd[1]);
+        close(logFd);
         error = "failed to fork daemon process";
         return false;
     }
@@ -209,15 +227,9 @@ bool startDaemonProcess(
             close(stdinFd);
         }
 
-        const auto logPath = configuredDaemonLogPath(stateDir, options);
-        std::error_code logEc;
-        std::filesystem::create_directories(logPath.parent_path(), logEc);
-        const int logFd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-        if (logFd >= 0) {
-            dup2(logFd, STDOUT_FILENO);
-            dup2(logFd, STDERR_FILENO);
-            close(logFd);
-        }
+        dup2(logFd, STDOUT_FILENO);
+        dup2(logFd, STDERR_FILENO);
+        close(logFd);
 
         std::vector<char*> argv;
         argv.reserve(processArgs.size() + 2);
@@ -233,6 +245,7 @@ bool startDaemonProcess(
         _exit(127);
     }
 
+    close(logFd);
     close(pipeFd[1]);
     int execErr = 0;
     const ssize_t readCount = read(pipeFd[0], &execErr, sizeof(execErr));

@@ -18,6 +18,10 @@
 #include <map>
 #include <tuple>
 
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
 
@@ -26,15 +30,18 @@
 #include "subcli/core_discovery.hpp"
 #include "subcli/core_runtime.hpp"
 #include "subcli/daemon.hpp"
+#include "subcli/daemon_process.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
 #include "subcli/capability_matrix.hpp"
 #include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
+#include "subcli/logs.hpp"
 #include "subcli/parser.hpp"
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
+#include "subcli/runtime_process.hpp"
 #include "subcli/store.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
@@ -497,6 +504,7 @@ void printRootUsage() {
               << "  status    Show helper process status.\n"
               << "  stop      Stop a helper process.\n"
               << "  restart   Restart a helper process.\n"
+              << "  logs     Read managed core or daemon logs.\n"
               << "\n"
               << "Shell:\n"
               << "  completion  Generate shell completion scripts.\n"
@@ -889,11 +897,13 @@ void printCheckUsage() {
 
 void printRunUsage() {
     std::cout << "Usage:\n"
-              << "  subcli run <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR]\n"
+              << "  subcli run <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR] [--foreground] [--log-file PATH]\n"
               << "\n"
               << "Examples:\n"
               << "  subcli run sing-box\n"
-              << "  subcli run xray --file ./outputs/xray.json\n";
+              << "  subcli run xray --file ./outputs/xray.json\n"
+              << "  subcli run sing-box --foreground\n"
+              << "  subcli run mihomo --log-file ./runtime.log\n";
 }
 
 void printStopUsage() {
@@ -915,11 +925,23 @@ void printStatusUsage() {
 
 void printRestartUsage() {
     std::cout << "Usage:\n"
-              << "  subcli restart <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR]\n"
+              << "  subcli restart <mihomo|sing-box|xray> [--file PATH] [--output-dir DIR] [--foreground] [--log-file PATH]\n"
               << "\n"
               << "Examples:\n"
               << "  subcli restart sing-box\n"
-              << "  subcli restart xray --output-dir ./outputs\n";
+              << "  subcli restart xray --output-dir ./outputs\n"
+              << "  subcli restart sing-box --foreground\n"
+              << "  subcli restart mihomo --log-file ./runtime.log\n";
+}
+
+void printLogsUsage() {
+    std::cout << "Usage:\n"
+              << "  subcli logs <mihomo|sing-box|xray|daemon> [--tail N] [--follow] [--file PATH]\n"
+              << "\n"
+              << "Examples:\n"
+              << "  subcli logs sing-box\n"
+              << "  subcli logs sing-box --tail 50\n"
+              << "  subcli logs daemon --follow\n";
 }
 
 void printCompletionUsage() {
@@ -938,10 +960,17 @@ bool isKnownSubcommand(const std::string& cmd, const std::vector<std::string>& v
     return std::find(values.begin(), values.end(), cmd) != values.end();
 }
 
+bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile);
+
+bool isRuntimeTargetName(const std::string& targetName) {
+    ExportTarget target;
+    std::string defaultFile;
+    return parseExportTarget(targetName, target, defaultFile);
+}
+
 int doSubCommand(const std::vector<std::string>& args);
 int doExportCommand(const std::vector<std::string>& args);
 int doRestartCommand(const std::vector<std::string>& args);
-bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile);
 
 void printExportTargetUsage(const std::string& target) {
     std::cout << "Usage:\n  subcli export " << target
@@ -1071,8 +1100,8 @@ DaemonOptions buildDaemonOptionsFromCli(int intervalSec, const std::string& targ
     options.strictNetwork = strictNetwork;
     options.check = check;
     options.restartRunning = !noRestart;
-    options.pidFile = pidFile;
-    options.logFile = logFile;
+    options.pidFile = pidFile.empty() ? "" : resolveFromCliCwd(pidFile);
+    options.logFile = logFile.empty() ? "" : resolveFromCliCwd(logFile);
     return options;
 }
 
@@ -1544,6 +1573,60 @@ std::vector<std::string> runtimeArgsForTarget(ExportTarget target, const std::st
     return {"run", "-config", configPath};
 }
 
+int runCoreRuntimeForeground(const std::string& binary, const std::vector<std::string>& coreArgs) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        std::cerr << "foreground runtime fork failed\n";
+        return ExitError;
+    }
+    if (pid == 0) {
+        std::vector<char*> argv;
+        argv.reserve(coreArgs.size() + 2);
+        argv.push_back(const_cast<char*>(binary.c_str()));
+        for (const auto& arg : coreArgs) {
+            argv.push_back(const_cast<char*>(arg.c_str()));
+        }
+        argv.push_back(nullptr);
+        execv(binary.c_str(), argv.data());
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        std::cerr << "foreground runtime wait failed\n";
+        return ExitError;
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return ExitError;
+}
+
+bool validateRuntimeLogFileForCli(const std::string& logPath, std::string& error) {
+    const std::filesystem::path path(logPath);
+    const auto parent = path.parent_path();
+    std::error_code ec;
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            error = "runtime log file is not writable: " + logPath;
+            return false;
+        }
+    }
+
+    const int fd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd < 0) {
+        error = "runtime log file is not writable: " + logPath;
+        return false;
+    }
+    close(fd);
+    error.clear();
+    return true;
+}
+
 std::string runtimeConfigPathFromArgs(const std::vector<std::string>& args, const AppConfig& cfg, const std::string& defaultFile) {
     if (hasOption(args, "--file")) {
         return resolveFromCliCwd(argValue(args, "--file"));
@@ -1564,9 +1647,13 @@ int startRuntimeForTarget(const std::vector<std::string>& args, bool restart) {
     std::string targetName;
     std::string fileOpt;
     std::string outputDirOpt;
+    bool foreground = false;
+    std::string logFileOpt;
     parser.add_option("target", targetName);
     parser.add_option("--file", fileOpt);
     parser.add_option("--output-dir", outputDirOpt);
+    parser.add_flag("--foreground", foreground);
+    parser.add_option("--log-file", logFileOpt);
     if (!parseCliArgs(parser, args)) {
         return ExitUsage;
     }
@@ -1578,6 +1665,10 @@ int startRuntimeForTarget(const std::vector<std::string>& args, bool restart) {
     std::string defaultFile;
     if (!parseExportTarget(targetName, target, defaultFile)) {
         std::cerr << "unknown target: " << targetName << "\n";
+        return ExitUsage;
+    }
+    if (foreground && !logFileOpt.empty()) {
+        std::cerr << "--log-file is only supported for background runtime\n";
         return ExitUsage;
     }
 
@@ -1612,12 +1703,22 @@ int startRuntimeForTarget(const std::vector<std::string>& args, bool restart) {
         return ExitError;
     }
 
+    const auto coreArgs = runtimeArgsForTarget(target, configPath);
+    const std::string logPath = logFileOpt.empty() ? runtimeLogPathForTarget(gPaths.stateDir, targetName).string() : resolveFromCliCwd(logFileOpt);
     std::string error;
+    if (!foreground && !validateRuntimeLogFileForCli(logPath, error)) {
+        std::cerr << error << "\n";
+        return ExitError;
+    }
     if (restart && !stopCoreRuntime(gPaths.stateDir, targetName, 5, error)) {
         std::cerr << "restart stop failed: " << error << "\n";
         return ExitError;
     }
-    if (!startCoreRuntime(gPaths.stateDir, targetName, binary, runtimeArgsForTarget(target, configPath), configPath, error)) {
+    if (foreground) {
+        return runCoreRuntimeForeground(binary, coreArgs);
+    }
+
+    if (!startCoreRuntime(gPaths.stateDir, targetName, binary, coreArgs, configPath, logPath, error)) {
         std::cerr << "runtime start failed: " << error << "\n";
         return ExitError;
     }
@@ -1627,7 +1728,7 @@ int startRuntimeForTarget(const std::vector<std::string>& args, bool restart) {
         std::cerr << "runtime status read failed: " << error << "\n";
         return ExitError;
     }
-    std::cout << "running " << targetName << " pid=" << status.pid << " config=" << configPath << "\n";
+    std::cout << "running " << targetName << " pid=" << status.pid << " config=" << configPath << " log=" << logPath << "\n";
     return ExitOk;
 }
 
@@ -1693,11 +1794,50 @@ int printRuntimeStatus(const std::string& target) {
     }
     std::cout << target << "\t";
     if (status.running) {
-        std::cout << "running\tpid=" << status.pid << "\tconfig=" << status.configPath << "\n";
+        std::cout << "running\tpid=" << status.pid << "\tconfig=" << status.configPath;
+        if (!status.logPath.empty()) {
+            std::cout << "\tlog=" << status.logPath;
+        }
+        if (!status.startedAt.empty()) {
+            std::cout << "\tstarted_at=" << status.startedAt;
+        }
+        std::cout << "\n";
     } else {
         std::cout << "stopped\n";
     }
     return ExitOk;
+}
+
+std::filesystem::path resolveLogsPath(const std::string& targetName, const std::string& fileOpt, std::string& error) {
+    error.clear();
+    if (targetName == "daemon") {
+        if (!fileOpt.empty()) {
+            return resolveFromCliCwd(fileOpt);
+        }
+        const auto status = inspectDaemonProcess(gPaths.stateDir, error);
+        if (!error.empty()) {
+            return {};
+        }
+        if (!status.options.logFile.empty()) {
+            return status.options.logFile;
+        }
+        return daemonLogPath(gPaths.stateDir);
+    }
+
+    if (isRuntimeTargetName(targetName)) {
+        if (!fileOpt.empty()) {
+            return resolveFromCliCwd(fileOpt);
+        }
+        RuntimeStatus status;
+        std::string stateError;
+        if (loadRuntimeState(runtimeStatePathForTarget(gPaths.stateDir, targetName), status, stateError) && !status.logPath.empty()) {
+            return status.logPath;
+        }
+        return runtimeLogPathForTarget(gPaths.stateDir, targetName);
+    }
+
+    error = "unknown logs target: " + targetName;
+    return {};
 }
 
 int doStatusCommand(const std::vector<std::string>& args) {
@@ -1727,6 +1867,54 @@ int doStatusCommand(const std::vector<std::string>& args) {
         return ExitUsage;
     }
     return printRuntimeStatus(targetName);
+}
+
+int doLogsCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        printLogsUsage();
+        return ExitOk;
+    }
+
+    CLI::App parser("logs");
+    parser.set_help_flag("");
+    parser.allow_extras(false);
+    std::string targetName;
+    int tailLines = 200;
+    bool follow = false;
+    std::string fileOpt;
+    parser.add_option("target", targetName);
+    parser.add_option("--tail", tailLines);
+    parser.add_flag("--follow", follow);
+    parser.add_option("--file", fileOpt);
+    if (!parseCliArgs(parser, args)) {
+        printLogsUsage();
+        return ExitUsage;
+    }
+    if (targetName.empty()) {
+        printLogsUsage();
+        return ExitUsage;
+    }
+    if (tailLines < 0) {
+        std::cerr << "--tail must be non-negative\n";
+        return ExitUsage;
+    }
+
+    std::string error;
+    const auto path = resolveLogsPath(targetName, fileOpt, error);
+    if (!error.empty()) {
+        std::cerr << error << "\n";
+        return ExitUsage;
+    }
+
+    if (!printLogTail(path, tailLines, error)) {
+        std::cerr << "logs failed: " << error << "\n";
+        return ExitError;
+    }
+    if (follow && !followLog(path, error)) {
+        std::cerr << "logs follow failed: " << error << "\n";
+        return ExitError;
+    }
+    return ExitOk;
 }
 
 int doInitCommand(const std::vector<std::string>& args) {
@@ -4308,7 +4496,7 @@ int main(int argc, char** argv) {
         commandOption->check(CLI::IsMember(
             {
                 "init", "doctor", "sub", "config", "template", "asset", "profile", "export", "daemon", "run", "stop", "status",
-                "restart", "check", "completion", "workspace"
+                "restart", "logs", "check", "completion", "workspace"
             }
         ));
 
@@ -4414,6 +4602,9 @@ int main(int argc, char** argv) {
         }
         if (cmd == "restart") {
             return doRestartCommand(buildTail("restart", extra));
+        }
+        if (cmd == "logs") {
+            return doLogsCommand(buildTail("logs", extra));
         }
         if (cmd == "check") {
             return doCheckCommand(buildTail("check", extra));

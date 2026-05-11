@@ -32,7 +32,12 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
+        if: matrix.os != 'windows-latest'
         run: cmake --build build --config Release -j
+
+      - name: Build Windows package target binary
+        if: matrix.os == 'windows-latest'
+        run: cmake --build build --config Release --target subcli -j
 
       - name: Test
         if: matrix.os != 'windows-latest'

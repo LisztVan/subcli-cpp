@@ -8,11 +8,13 @@
 #include <algorithm>
 #include <thread>
 
+#ifndef _WIN32
 #include <fcntl.h>
-#include <nlohmann/json.hpp>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
+#include <nlohmann/json.hpp>
 
 #include "subcli/daemon_process.hpp"
 #include "subcli/util.hpp"
@@ -161,6 +163,14 @@ bool startDaemonProcess(
     std::string& error
 ) {
     error.clear();
+#ifdef _WIN32
+    (void)stateDir;
+    (void)binaryPath;
+    (void)processArgs;
+    (void)options;
+    error = "daemon process management is not supported on Windows";
+    return false;
+#else
     if (binaryPath.empty()) {
         error = "daemon binary path is empty";
         return false;
@@ -275,10 +285,22 @@ bool startDaemonProcess(
         return false;
     }
     return true;
+#endif
 }
 
 bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, std::string& error) {
     error.clear();
+#ifdef _WIN32
+    (void)timeoutSec;
+    const auto state = inspectDaemonProcess(stateDir, error);
+    if (!error.empty()) {
+        return false;
+    }
+    if (state.hasState) {
+        cleanupDaemonStateAndPid(stateDir, state.options);
+    }
+    return true;
+#else
     const auto state = inspectDaemonProcess(stateDir, error);
     if (!error.empty()) {
         return false;
@@ -316,6 +338,7 @@ bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, st
     (void)waitpid(pid, &waitStatus, WNOHANG);
     cleanupDaemonStateAndPid(stateDir, state.options);
     return true;
+#endif
 }
 
 int runDaemonCycleWithState(const std::filesystem::path& stateDir, const DaemonOptions& options, const DaemonCallbacks& callbacks) {

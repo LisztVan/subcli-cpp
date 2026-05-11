@@ -5,13 +5,15 @@
 #include <csignal>
 #include <cstring>
 #include <filesystem>
+#ifndef _WIN32
 #include <fcntl.h>
-#include <string>
 #include <thread>
 #include <unistd.h>
-#include <vector>
 #include <sys/types.h>
 #include <sys/wait.h>
+#endif
+#include <string>
+#include <vector>
 
 #include "subcli/runtime_process.hpp"
 #include "subcli/util.hpp"
@@ -42,6 +44,16 @@ bool startCoreRuntime(
     std::string& error
 ) {
     error.clear();
+#ifdef _WIN32
+    (void)stateDir;
+    (void)target;
+    (void)binaryPath;
+    (void)args;
+    (void)configPath;
+    (void)logPath;
+    error = "managed runtime processes are not supported on Windows";
+    return false;
+#else
     if (target.empty()) {
         error = "runtime target is empty";
         return false;
@@ -129,10 +141,22 @@ bool startCoreRuntime(
         return false;
     }
     return true;
+#endif
 }
 
 bool stopCoreRuntime(const std::filesystem::path& stateDir, const std::string& target, int timeoutSec, std::string& error) {
     error.clear();
+#ifdef _WIN32
+    (void)timeoutSec;
+    auto status = inspectCoreRuntime(stateDir, target, error);
+    if (!error.empty()) {
+        return false;
+    }
+    if (!status.hasState) {
+        return true;
+    }
+    return removeRuntimeStateFile(runtimeStatePathForTarget(stateDir, target), error);
+#else
     auto status = inspectCoreRuntime(stateDir, target, error);
     if (!error.empty()) {
         return false;
@@ -171,6 +195,7 @@ bool stopCoreRuntime(const std::filesystem::path& stateDir, const std::string& t
     (void)waitpid(pid, &waitStatus, WNOHANG);
 
     return removeRuntimeStateFile(statePath, error);
+#endif
 }
 
 } // namespace subcli

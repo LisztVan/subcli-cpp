@@ -3,8 +3,6 @@
 #include <filesystem>
 #include <string>
 
-#include <sys/types.h>
-
 #include "subcli/core_runtime.hpp"
 
 namespace subcli {
@@ -17,7 +15,7 @@ bool loadRuntimeState(const std::filesystem::path& statePath, RuntimeStatus& sta
 
 bool saveRuntimeState(const std::filesystem::path& statePath, const RuntimeStatus& status, std::string& error);
 
-bool isRuntimePidRunning(pid_t pid);
+bool isRuntimePidRunning(int pid);
 
 bool removeRuntimeStateFile(const std::filesystem::path& statePath, std::string& error);
 

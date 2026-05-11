@@ -5,13 +5,16 @@
 #include <cstring>
 #include <cerrno>
 #include <chrono>
+#ifndef _WIN32
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <string>
 #include <thread>
 #include <unistd.h>
+#endif
+#include <filesystem>
+#include <string>
 #include <vector>
 
 namespace subcli {
@@ -22,7 +25,12 @@ bool isExecutable(const std::string& path) {
     if (path.empty()) {
         return false;
     }
+#ifdef _WIN32
+    std::error_code ec;
+    return std::filesystem::is_regular_file(path, ec) && !ec;
+#else
     return access(path.c_str(), X_OK) == 0;
+#endif
 }
 
 CoreCheckResult runProcess(const std::string& binaryPath, const std::vector<std::string>& args, int timeoutSec) {
@@ -33,6 +41,20 @@ CoreCheckResult runProcess(const std::string& binaryPath, const std::vector<std:
         return result;
     }
 
+#ifdef _WIN32
+    (void)timeoutSec;
+    std::string command = "\"" + binaryPath + "\"";
+    for (const auto& arg : args) {
+        command += " \"" + arg + "\"";
+    }
+    const int rc = std::system(command.c_str());
+    result.exitCode = rc;
+    result.ok = (rc == 0);
+    if (!result.ok) {
+        result.message = "command failed with exit code " + std::to_string(rc);
+    }
+    return result;
+#else
     int pipeFd[2] = {-1, -1};
     if (pipe(pipeFd) != 0) {
         result.message = std::string("failed to create pipe: ") + std::strerror(errno);
@@ -125,6 +147,7 @@ CoreCheckResult runProcess(const std::string& binaryPath, const std::vector<std:
         }
     }
     return result;
+#endif
 }
 
 } // namespace

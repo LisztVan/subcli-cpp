@@ -19,9 +19,11 @@
 #include <tuple>
 #include <unordered_set>
 
+#ifndef _WIN32
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
@@ -1599,6 +1601,13 @@ std::vector<std::string> runtimeArgsForTarget(ExportTarget target, const std::st
 }
 
 int runCoreRuntimeForeground(const std::string& binary, const std::vector<std::string>& coreArgs) {
+#ifdef _WIN32
+    std::string command = "\"" + binary + "\"";
+    for (const auto& arg : coreArgs) {
+        command += " \"" + arg + "\"";
+    }
+    return std::system(command.c_str());
+#else
     pid_t pid = fork();
     if (pid < 0) {
         std::cerr << "foreground runtime fork failed\n";
@@ -1628,6 +1637,7 @@ int runCoreRuntimeForeground(const std::string& binary, const std::vector<std::s
         return 128 + WTERMSIG(status);
     }
     return ExitError;
+#endif
 }
 
 bool validateRuntimeLogFileForCli(const std::string& logPath, std::string& error) {
@@ -1642,12 +1652,20 @@ bool validateRuntimeLogFileForCli(const std::string& logPath, std::string& error
         }
     }
 
+#ifdef _WIN32
+    std::ofstream out(logPath, std::ios::app);
+    if (!out) {
+        error = "runtime log file is not writable: " + logPath;
+        return false;
+    }
+#else
     const int fd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (fd < 0) {
         error = "runtime log file is not writable: " + logPath;
         return false;
     }
     close(fd);
+#endif
     error.clear();
     return true;
 }

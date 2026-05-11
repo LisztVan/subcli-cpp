@@ -4,7 +4,10 @@
 #include <csignal>
 #include <nlohmann/json.hpp>
 #include <system_error>
+
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #include "subcli/util.hpp"
 
@@ -62,7 +65,7 @@ bool loadRuntimeState(const std::filesystem::path& statePath, RuntimeStatus& sta
     status.configPath = configPath;
     status.logPath = logPath;
     status.startedAt = startedAt;
-    status.running = isRuntimePidRunning(static_cast<pid_t>(pid));
+    status.running = isRuntimePidRunning(pid);
     return true;
 }
 
@@ -79,14 +82,18 @@ bool saveRuntimeState(const std::filesystem::path& statePath, const RuntimeStatu
     return writeFile(statePath.string(), state.dump(2), error);
 }
 
-bool isRuntimePidRunning(pid_t pid) {
+bool isRuntimePidRunning(int pid) {
     if (pid <= 0) {
         return false;
     }
-    if (kill(pid, 0) == 0) {
+#ifdef _WIN32
+    return false;
+#else
+    if (kill(static_cast<pid_t>(pid), 0) == 0) {
         return true;
     }
     return errno != ESRCH;
+#endif
 }
 
 bool removeRuntimeStateFile(const std::filesystem::path& statePath, std::string& error) {
@@ -137,10 +144,18 @@ bool validateRuntimeLaunchBinary(const std::string& binaryPath, std::string& err
         error = "runtime binary path is empty";
         return false;
     }
+#ifdef _WIN32
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(binaryPath, ec) || ec) {
+        error = "runtime binary path is not executable: " + binaryPath;
+        return false;
+    }
+#else
     if (access(binaryPath.c_str(), X_OK) != 0) {
         error = "runtime binary path is not executable: " + binaryPath;
         return false;
     }
+#endif
     return true;
 }
 

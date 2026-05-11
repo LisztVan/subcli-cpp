@@ -33,10 +33,14 @@ bool isPidRunning(int pid) {
     if (pid <= 0) {
         return false;
     }
+#ifdef _WIN32
+    return false;
+#else
     if (kill(static_cast<pid_t>(pid), 0) == 0) {
         return true;
     }
     return errno != ESRCH;
+#endif
 }
 
 bool ensureDaemonDir(const std::filesystem::path& stateDir, std::string& error) {

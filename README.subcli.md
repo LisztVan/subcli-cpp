@@ -278,6 +278,7 @@ subcli export all --profile bypass-cn --strict-capabilities
 - `export ... --json` is machine-readable evidence of per-target capability findings.
 - `--strict-capabilities` blocks degraded or unsupported exports for selected target(s).
 - GitHub `release-validation` workflow triggers on `v*` tags, enforces tag == `v<project version>` from `CMakeLists.txt`, and uploads `build/subcli-*.tar.gz`.
+- GitHub `release` workflow builds Linux, macOS, and Windows packages on `v*` tags and publishes them as GitHub Release assets.
 
 Advanced template merge behavior is also profile-driven via `template_policy`.
 
@@ -523,6 +524,8 @@ xray run -config ~/.local/share/subcli/outputs/xray.json
 ```
 
 You can also let `subcli` manage runtime lifecycle directly, but this remains an optional helper outside the primary profile-driven export scope. By default, `subcli run <target>` starts a managed background process, records runtime state under the active state directory, and uses the generated config for that target. Use `--foreground` to keep the core attached to the current terminal instead of managing it in the background.
+
+Managed background runtime and daemon process hosting use POSIX process primitives and are supported on Unix-like systems. Windows packages support the primary config-generation workflow; managed process hosting commands may return an explicit unsupported-platform error on Windows.
 
 ```bash
 subcli run sing-box

@@ -188,6 +188,19 @@ if [[ "$sub_json" != *'"subscriptions"'* ]]; then
     exit 1
 fi
 
+"$bin" sub add --name dup-tags --url "file://$tmp/missing" --force --tag hk --tag hk --tags hk,sg,sg >/dev/null
+dup_tags_json="$($bin sub list --json)"
+python3 - "$dup_tags_json" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+match = [s for s in payload.get("subscriptions", []) if s.get("name") == "dup-tags"]
+if not match or match[0].get("tags") != ["hk", "sg"]:
+    print("duplicate tags were not normalized:", payload)
+    sys.exit(1)
+PY
+"$bin" sub disable dup-tags >/dev/null
+
 template_json="$($bin template list --json)"
 if [[ "$template_json" != *'"templates"'* ]]; then
     printf '%s\n' "$template_json"

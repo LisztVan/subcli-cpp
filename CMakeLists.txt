@@ -146,15 +146,17 @@ install(DIRECTORY profiles/ DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/profiles
 install(FILES packaging/systemd/subcli-daemon.service DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/systemd)
 install(FILES README.subcli.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
-enable_testing()
+if(NOT WIN32)
+    enable_testing()
 
-add_executable(subcli_tests tests/subcli_tests.cpp ${SUBCLI_SOURCES})
-target_include_directories(subcli_tests PRIVATE include src)
-target_link_libraries(subcli_tests PRIVATE yaml-cpp nlohmann_json::nlohmann_json libcurl)
-target_compile_definitions(subcli_tests PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    add_executable(subcli_tests tests/subcli_tests.cpp ${SUBCLI_SOURCES})
+    target_include_directories(subcli_tests PRIVATE include src)
+    target_link_libraries(subcli_tests PRIVATE yaml-cpp nlohmann_json::nlohmann_json libcurl)
+    target_compile_definitions(subcli_tests PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-add_test(NAME subcli_tests COMMAND subcli_tests)
-add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
+    add_test(NAME subcli_tests COMMAND subcli_tests)
+    add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
+endif()
 
 set(CPACK_PACKAGE_NAME "subcli")
 set(CPACK_PACKAGE_VENDOR "subcli")

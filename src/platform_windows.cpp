@@ -520,13 +520,31 @@ ProcessRunResult runProcessCapture(const std::string& binaryPath, const std::vec
                 result.timedOut = true;
                 if (!TerminateProcess(processHandle.get(), 124)) {
                     const DWORD terminateError = GetLastError();
-                    DWORD currentExitCode = STILL_ACTIVE;
-                    if (!GetExitCodeProcess(processHandle.get(), &currentExitCode) || currentExitCode == STILL_ACTIVE) {
+                    const DWORD postFailureWait = WaitForSingleObject(processHandle.get(), 0);
+                    if (postFailureWait == WAIT_FAILED) {
+                        result.exitCode = 124;
+                        result.error = lastWindowsError("failed to check timed out process state after termination failure");
+                        return result;
+                    }
+                    if (postFailureWait != WAIT_OBJECT_0) {
+                        result.exitCode = 124;
                         result.error = lastWindowsError("failed to terminate timed out process", terminateError);
                         return result;
                     }
                 }
-                WaitForSingleObject(processHandle.get(), 5000);
+
+                const DWORD terminateWait = WaitForSingleObject(processHandle.get(), 5000);
+                if (terminateWait != WAIT_OBJECT_0) {
+                    result.exitCode = 124;
+                    if (terminateWait == WAIT_TIMEOUT) {
+                        result.error = "timed out process termination did not complete within 5 seconds";
+                    } else if (terminateWait == WAIT_FAILED) {
+                        result.error = lastWindowsError("failed to wait for timed out process termination");
+                    } else {
+                        result.error = "unexpected wait state while waiting for timed out process termination";
+                    }
+                    return result;
+                }
 
                 const ULONGLONG timeoutDrainDeadline = GetTickCount64() + 500ULL;
                 while (GetTickCount64() < timeoutDrainDeadline) {
@@ -681,16 +699,17 @@ bool isProcessRunning(int pid) {
         return false;
     }
 
-    UniqueHandle processHandle(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid)));
+    UniqueHandle processHandle(OpenProcess(
+        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+        FALSE,
+        static_cast<DWORD>(pid)
+    ));
     if (!processHandle.valid()) {
         return false;
     }
 
-    DWORD exitCode = 0;
-    if (!GetExitCodeProcess(processHandle.get(), &exitCode)) {
-        return false;
-    }
-    return exitCode == STILL_ACTIVE;
+    const DWORD waitResult = WaitForSingleObject(processHandle.get(), 0);
+    return waitResult == WAIT_TIMEOUT;
 }
 
 bool terminateProcess(int pid, int timeoutSec, std::string& error) {
@@ -713,15 +732,28 @@ bool terminateProcess(int pid, int timeoutSec, std::string& error) {
         return false;
     }
 
-    DWORD exitCode = 0;
-    if (GetExitCodeProcess(processHandle.get(), &exitCode) && exitCode != STILL_ACTIVE) {
+    const DWORD initialWait = WaitForSingleObject(processHandle.get(), 0);
+    if (initialWait == WAIT_OBJECT_0) {
         return true;
+    }
+    if (initialWait == WAIT_FAILED) {
+        error = lastWindowsError("failed to check process before termination");
+        return false;
+    }
+    if (initialWait != WAIT_TIMEOUT) {
+        error = "unexpected process wait state before termination";
+        return false;
     }
 
     if (!TerminateProcess(processHandle.get(), 1)) {
         const DWORD terminateError = GetLastError();
-        if (GetExitCodeProcess(processHandle.get(), &exitCode) && exitCode != STILL_ACTIVE) {
+        const DWORD postFailureWait = WaitForSingleObject(processHandle.get(), 0);
+        if (postFailureWait == WAIT_OBJECT_0) {
             return true;
+        }
+        if (postFailureWait == WAIT_FAILED) {
+            error = lastWindowsError("failed to check process after termination failure");
+            return false;
         }
         error = lastWindowsError("failed to terminate process", terminateError);
         return false;

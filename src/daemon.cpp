@@ -1,27 +1,30 @@
 #include "subcli/daemon.hpp"
 
-#include <chrono>
-#include <csignal>
-#include <cerrno>
-#include <cstring>
 #include <filesystem>
-#include <algorithm>
-#include <thread>
-
-#ifndef _WIN32
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#endif
-#include <nlohmann/json.hpp>
+#include <string>
+#include <vector>
 
 #include "subcli/daemon_process.hpp"
+#include "subcli/platform.hpp"
 #include "subcli/util.hpp"
 
 namespace subcli {
 
 namespace {
+
+std::string daemonBackgroundProcessError(const std::string& platformError) {
+    const std::string createLogPrefix = "failed to create log directory:";
+    if (platformError.rfind(createLogPrefix, 0) == 0) {
+        return "failed to create daemon log dir:" + platformError.substr(createLogPrefix.size());
+    }
+
+    const std::string openLogPrefix = "failed to open log file:";
+    if (platformError.rfind(openLogPrefix, 0) == 0) {
+        return "failed to open daemon log file:" + platformError.substr(openLogPrefix.size());
+    }
+
+    return platformError;
+}
 
 bool updateDaemonCycleSummary(const std::filesystem::path& stateDir, const DaemonOptions& options, int exitCode, const std::string& message) {
     std::string error;
@@ -163,14 +166,6 @@ bool startDaemonProcess(
     std::string& error
 ) {
     error.clear();
-#ifdef _WIN32
-    (void)stateDir;
-    (void)binaryPath;
-    (void)processArgs;
-    (void)options;
-    error = "daemon process management is not supported on Windows";
-    return false;
-#else
     if (binaryPath.empty()) {
         error = "daemon binary path is empty";
         return false;
@@ -201,106 +196,38 @@ bool startDaemonProcess(
             return false;
         }
     }
-    const int logFd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (logFd < 0) {
-        error = "failed to open daemon log file: " + logPath.string();
-        return false;
-    }
 
-    int pipeFd[2] = {-1, -1};
-    if (pipe(pipeFd) != 0) {
-        close(logFd);
-        error = "failed to create daemon handshake pipe";
-        return false;
-    }
-    const int flags = fcntl(pipeFd[1], F_GETFD);
-    if (flags >= 0) {
-        (void)fcntl(pipeFd[1], F_SETFD, flags | FD_CLOEXEC);
-    }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(pipeFd[0]);
-        close(pipeFd[1]);
-        close(logFd);
-        error = "failed to fork daemon process";
-        return false;
-    }
-
-    if (pid == 0) {
-        close(pipeFd[0]);
-        setsid();
-
-        const int stdinFd = open("/dev/null", O_RDONLY);
-        if (stdinFd >= 0) {
-            dup2(stdinFd, STDIN_FILENO);
-            close(stdinFd);
-        }
-
-        dup2(logFd, STDOUT_FILENO);
-        dup2(logFd, STDERR_FILENO);
-        close(logFd);
-
-        std::vector<char*> argv;
-        argv.reserve(processArgs.size() + 2);
-        argv.push_back(const_cast<char*>(binaryPath.c_str()));
-        for (const auto& arg : processArgs) {
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        argv.push_back(nullptr);
-        execv(binaryPath.c_str(), argv.data());
-        const int execErr = errno;
-        (void)write(pipeFd[1], &execErr, sizeof(execErr));
-        close(pipeFd[1]);
-        _exit(127);
-    }
-
-    close(logFd);
-    close(pipeFd[1]);
-    int execErr = 0;
-    const ssize_t readCount = read(pipeFd[0], &execErr, sizeof(execErr));
-    close(pipeFd[0]);
-    if (readCount > 0) {
-        int waitStatus = 0;
-        (void)waitpid(pid, &waitStatus, 0);
-        error = "failed to exec daemon process: " + std::string(std::strerror(execErr));
+    const auto started = startBackgroundProcess(binaryPath, processArgs, logPath);
+    if (!started.started) {
+        error = daemonBackgroundProcessError(started.error);
         return false;
     }
 
     DaemonProcessStatus state;
     state.hasState = true;
     state.running = true;
-    state.pid = static_cast<int>(pid);
+    state.pid = started.pid;
     state.binaryPath = binaryPath;
     state.intervalSec = options.intervalSec;
     state.exportTarget = options.exportTarget;
     state.options = options;
     if (!writeDaemonStateFile(stateDir, state, error)) {
-        kill(pid, SIGTERM);
+        std::string stopError;
+        (void)terminateProcess(started.pid, 2, stopError);
+        removeDaemonStateFile(stateDir);
         return false;
     }
     if (!writeDaemonPidFile(stateDir, state, error)) {
-        kill(pid, SIGTERM);
+        std::string stopError;
+        (void)terminateProcess(started.pid, 2, stopError);
         removeDaemonStateFile(stateDir);
         return false;
     }
     return true;
-#endif
 }
 
 bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, std::string& error) {
     error.clear();
-#ifdef _WIN32
-    (void)timeoutSec;
-    const auto state = inspectDaemonProcess(stateDir, error);
-    if (!error.empty()) {
-        return false;
-    }
-    if (state.hasState) {
-        cleanupDaemonStateAndPid(stateDir, state.options);
-    }
-    return true;
-#else
     const auto state = inspectDaemonProcess(stateDir, error);
     if (!error.empty()) {
         return false;
@@ -313,32 +240,12 @@ bool stopDaemonProcess(const std::filesystem::path& stateDir, int timeoutSec, st
         return true;
     }
 
-    const pid_t pid = static_cast<pid_t>(state.pid);
-    if (kill(pid, SIGTERM) != 0 && errno != ESRCH) {
-        error = "failed to send SIGTERM to daemon";
+    if (!terminateProcess(state.pid, timeoutSec, error)) {
         return false;
     }
 
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(1, timeoutSec));
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (!isPidRunning(static_cast<int>(pid))) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
-    if (isPidRunning(static_cast<int>(pid))) {
-        if (kill(pid, SIGKILL) != 0 && errno != ESRCH) {
-            error = "failed to send SIGKILL to daemon";
-            return false;
-        }
-    }
-
-    int waitStatus = 0;
-    (void)waitpid(pid, &waitStatus, WNOHANG);
     cleanupDaemonStateAndPid(stateDir, state.options);
     return true;
-#endif
 }
 
 int runDaemonCycleWithState(const std::filesystem::path& stateDir, const DaemonOptions& options, const DaemonCallbacks& callbacks) {

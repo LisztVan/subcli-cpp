@@ -1,14 +1,9 @@
 #include "subcli/runtime_process.hpp"
 
-#include <cerrno>
-#include <csignal>
 #include <nlohmann/json.hpp>
 #include <system_error>
 
-#ifndef _WIN32
-#include <unistd.h>
-#endif
-
+#include "subcli/platform.hpp"
 #include "subcli/util.hpp"
 
 namespace subcli {
@@ -83,17 +78,7 @@ bool saveRuntimeState(const std::filesystem::path& statePath, const RuntimeStatu
 }
 
 bool isRuntimePidRunning(int pid) {
-    if (pid <= 0) {
-        return false;
-    }
-#ifdef _WIN32
-    return false;
-#else
-    if (kill(static_cast<pid_t>(pid), 0) == 0) {
-        return true;
-    }
-    return errno != ESRCH;
-#endif
+    return isProcessRunning(pid);
 }
 
 bool removeRuntimeStateFile(const std::filesystem::path& statePath, std::string& error) {
@@ -144,18 +129,10 @@ bool validateRuntimeLaunchBinary(const std::string& binaryPath, std::string& err
         error = "runtime binary path is empty";
         return false;
     }
-#ifdef _WIN32
-    std::error_code ec;
-    if (!std::filesystem::is_regular_file(binaryPath, ec) || ec) {
+    if (!isExecutablePath(binaryPath)) {
         error = "runtime binary path is not executable: " + binaryPath;
         return false;
     }
-#else
-    if (access(binaryPath.c_str(), X_OK) != 0) {
-        error = "runtime binary path is not executable: " + binaryPath;
-        return false;
-    }
-#endif
     return true;
 }
 

@@ -1,24 +1,32 @@
 #include "subcli/core_runtime.hpp"
 
-#include <chrono>
-#include <cerrno>
-#include <csignal>
-#include <cstring>
 #include <filesystem>
-#ifndef _WIN32
-#include <fcntl.h>
-#include <thread>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#endif
 #include <string>
 #include <vector>
 
+#include "subcli/platform.hpp"
 #include "subcli/runtime_process.hpp"
 #include "subcli/util.hpp"
 
 namespace subcli {
+
+namespace {
+
+std::string runtimeBackgroundProcessError(const std::string& platformError) {
+    const std::string createLogPrefix = "failed to create log directory:";
+    if (platformError.rfind(createLogPrefix, 0) == 0) {
+        return "failed to create runtime log directory:" + platformError.substr(createLogPrefix.size());
+    }
+
+    const std::string openLogPrefix = "failed to open log file:";
+    if (platformError.rfind(openLogPrefix, 0) == 0) {
+        return "failed to open runtime log file:" + platformError.substr(openLogPrefix.size());
+    }
+
+    return platformError;
+}
+
+} // namespace
 
 RuntimeStatus inspectCoreRuntime(const std::filesystem::path& stateDir, const std::string& target, std::string& error) {
     error.clear();
@@ -44,16 +52,6 @@ bool startCoreRuntime(
     std::string& error
 ) {
     error.clear();
-#ifdef _WIN32
-    (void)stateDir;
-    (void)target;
-    (void)binaryPath;
-    (void)args;
-    (void)configPath;
-    (void)logPath;
-    error = "managed runtime processes are not supported on Windows";
-    return false;
-#else
     if (target.empty()) {
         error = "runtime target is empty";
         return false;
@@ -90,73 +88,31 @@ bool startCoreRuntime(
         }
     }
 
-    const int logFd = open(resolvedLogPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (logFd < 0) {
-        error = "failed to open runtime log file: " + resolvedLogPath.string() + ": " + std::strerror(errno);
+    const auto started = startBackgroundProcess(binaryPath, args, resolvedLogPath);
+    if (!started.started) {
+        error = runtimeBackgroundProcessError(started.error);
         return false;
     }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(logFd);
-        error = "failed to fork runtime process";
-        return false;
-    }
-
-    if (pid == 0) {
-        setsid();
-        const int stdinFd = open("/dev/null", O_RDONLY);
-        if (stdinFd >= 0) {
-            dup2(stdinFd, STDIN_FILENO);
-            close(stdinFd);
-        }
-
-        dup2(logFd, STDOUT_FILENO);
-        dup2(logFd, STDERR_FILENO);
-        close(logFd);
-
-        std::vector<char*> argv;
-        argv.reserve(args.size() + 2);
-        argv.push_back(const_cast<char*>(binaryPath.c_str()));
-        for (const auto& arg : args) {
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        argv.push_back(nullptr);
-        execv(binaryPath.c_str(), argv.data());
-        _exit(127);
-    }
-    close(logFd);
 
     RuntimeStatus state;
     state.hasState = true;
     state.running = true;
-    state.pid = static_cast<int>(pid);
+    state.pid = started.pid;
     state.target = target;
     state.binaryPath = binaryPath;
     state.configPath = configPath;
     state.logPath = resolvedLogPath.string();
     state.startedAt = nowIso8601();
     if (!saveRuntimeState(statePath, state, error)) {
-        kill(pid, SIGTERM);
+        std::string stopError;
+        (void)terminateProcess(started.pid, 2, stopError);
         return false;
     }
     return true;
-#endif
 }
 
 bool stopCoreRuntime(const std::filesystem::path& stateDir, const std::string& target, int timeoutSec, std::string& error) {
     error.clear();
-#ifdef _WIN32
-    (void)timeoutSec;
-    auto status = inspectCoreRuntime(stateDir, target, error);
-    if (!error.empty()) {
-        return false;
-    }
-    if (!status.hasState) {
-        return true;
-    }
-    return removeRuntimeStateFile(runtimeStatePathForTarget(stateDir, target), error);
-#else
     auto status = inspectCoreRuntime(stateDir, target, error);
     if (!error.empty()) {
         return false;
@@ -170,32 +126,10 @@ bool stopCoreRuntime(const std::filesystem::path& stateDir, const std::string& t
         return removeRuntimeStateFile(statePath, error);
     }
 
-    const pid_t pid = static_cast<pid_t>(status.pid);
-    if (kill(pid, SIGTERM) != 0 && errno != ESRCH) {
-        error = "failed to send SIGTERM";
+    if (!terminateProcess(status.pid, timeoutSec, error)) {
         return false;
     }
-
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(1, timeoutSec));
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (!isRuntimePidRunning(pid)) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
-    if (isRuntimePidRunning(pid)) {
-        if (kill(pid, SIGKILL) != 0 && errno != ESRCH) {
-            error = "failed to send SIGKILL";
-            return false;
-        }
-    }
-
-    int waitStatus = 0;
-    (void)waitpid(pid, &waitStatus, WNOHANG);
-
     return removeRuntimeStateFile(statePath, error);
-#endif
 }
 
 } // namespace subcli

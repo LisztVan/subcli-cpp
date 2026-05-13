@@ -19,10 +19,10 @@ CoreCheckResult runProcess(const std::string& binaryPath, const std::vector<std:
     result.ok = process.started && !process.timedOut && process.exitCode == 0;
     result.exitCode = process.exitCode;
     if (!result.ok) {
-        if (!process.error.empty()) {
-            result.message = process.error;
-        } else if (!process.output.empty()) {
+        if (!process.output.empty()) {
             result.message = process.output;
+        } else if (!process.error.empty()) {
+            result.message = process.error;
         } else {
             result.message = "command failed with exit code " + std::to_string(process.exitCode);
         }

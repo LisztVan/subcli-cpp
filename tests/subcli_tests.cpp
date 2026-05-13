@@ -21,6 +21,7 @@
 #include "subcli/daemon_process.hpp"
 #include "subcli/diagnostic_service.hpp"
 #include "subcli/config_service.hpp"
+#include "subcli/core_check.hpp"
 #include "subcli/core_runtime.hpp"
 #include "subcli/environment.hpp"
 #include "subcli/exporter.hpp"
@@ -1741,6 +1742,30 @@ void testPlatformRunProcessCaptureTimeout() {
     require(result.timedOut, "long-running command should time out");
     require(result.exitCode == 124, "timed out command should return exit code 124");
     require(elapsed < std::chrono::seconds(4), "timeout should return before long-running command completes");
+}
+
+void testCoreCheckPreservesCapturedOutputForFailedChecks() {
+    const fs::path dir = makeUniqueTestDir("subcli-core-check-output-tests");
+    const fs::path core = dir / "fake-core";
+    {
+        std::ofstream out(core);
+        out << "#!/bin/sh\n";
+        out << "printf 'useful core diagnostic\\n'\n";
+        out << "exit 7\n";
+    }
+    fs::permissions(
+        core,
+        fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+        fs::perm_options::add
+    );
+
+    const auto result = subcli::runMihomoConfigCheck(core.string(), (dir / "config.yaml").string(), 5);
+    require(!result.ok, "failed core check should not be ok");
+    require(result.exitCode == 7, "failed core check should preserve exit code");
+    require(result.message.find("useful core diagnostic") != std::string::npos, "core check should preserve captured output");
+    require(result.message.find("command failed with exit code") == std::string::npos, "generic error should not override captured output");
+
+    fs::remove_all(dir);
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -6931,6 +6956,7 @@ int main() {
     testPlatformExecutableCheckRecognizesCurrentTestBinary();
     testPlatformRunProcessCaptureSuccessAndFailure();
     testPlatformRunProcessCaptureTimeout();
+    testCoreCheckPreservesCapturedOutputForFailedChecks();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
     testDaemonProcessLifecycleWithCustomFiles();

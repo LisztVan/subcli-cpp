@@ -115,6 +115,24 @@ void writeExecErrorAndExit(int execFd, int errorCode) {
     _exit(127);
 }
 
+int duplicateFdAtLeastOrExit(int fd, int minFd, int execFd) {
+    const int duplicated = fcntl(fd, F_DUPFD, minFd);
+    if (duplicated < 0) {
+        writeExecErrorAndExit(execFd, errno);
+    }
+    return duplicated;
+}
+
+void setCloseOnExecOrExit(int fd, int execFd) {
+    const int flags = fcntl(fd, F_GETFD, 0);
+    if (flags < 0) {
+        writeExecErrorAndExit(execFd, errno);
+    }
+    if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0) {
+        writeExecErrorAndExit(execFd, errno);
+    }
+}
+
 void execChild(
     const std::string& binaryPath,
     const std::vector<std::string>& args,
@@ -354,6 +372,12 @@ bool isExecutablePath(const std::string& path) {
     if (path.empty()) {
         return false;
     }
+
+    std::error_code ec;
+    const bool regular = std::filesystem::is_regular_file(std::filesystem::path(path), ec);
+    if (ec || !regular) {
+        return false;
+    }
     return access(path.c_str(), X_OK) == 0;
 }
 
@@ -582,25 +606,41 @@ BackgroundProcessResult startBackgroundProcess(
 
     if (pid == 0) {
         closeFd(execPipe[0]);
-        if (setsid() < 0) {
-            writeExecErrorAndExit(execPipe[1], errno);
+
+        int execStatusFd = execPipe[1];
+        if (execStatusFd <= STDERR_FILENO) {
+            const int originalExecStatusFd = execStatusFd;
+            execStatusFd = duplicateFdAtLeastOrExit(execStatusFd, STDERR_FILENO + 1, originalExecStatusFd);
+            setCloseOnExecOrExit(execStatusFd, execStatusFd);
+            close(originalExecStatusFd);
         }
+
+        if (setsid() < 0) {
+            writeExecErrorAndExit(execStatusFd, errno);
+        }
+
+        int safeLogFd = logFd;
+        if (safeLogFd <= STDERR_FILENO) {
+            safeLogFd = duplicateFdAtLeastOrExit(logFd, STDERR_FILENO + 1, execStatusFd);
+            close(logFd);
+        }
+        if (dup2(safeLogFd, STDOUT_FILENO) < 0 || dup2(safeLogFd, STDERR_FILENO) < 0) {
+            writeExecErrorAndExit(execStatusFd, errno);
+        }
+        if (safeLogFd > STDERR_FILENO) {
+            close(safeLogFd);
+        }
+
         const int stdinFd = open("/dev/null", O_RDONLY);
         if (stdinFd >= 0) {
             if (dup2(stdinFd, STDIN_FILENO) < 0) {
-                writeExecErrorAndExit(execPipe[1], errno);
+                writeExecErrorAndExit(execStatusFd, errno);
             }
             if (stdinFd > STDERR_FILENO) {
                 close(stdinFd);
             }
         }
-        if (dup2(logFd, STDOUT_FILENO) < 0 || dup2(logFd, STDERR_FILENO) < 0) {
-            writeExecErrorAndExit(execPipe[1], errno);
-        }
-        if (logFd > STDERR_FILENO) {
-            close(logFd);
-        }
-        execChild(binaryPath, args, -1, -1, execPipe[1]);
+        execChild(binaryPath, args, -1, -1, execStatusFd);
     }
 
     close(logFd);

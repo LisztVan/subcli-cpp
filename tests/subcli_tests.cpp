@@ -1,3 +1,4 @@
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -1728,6 +1729,18 @@ void testPlatformRunProcessCaptureSuccessAndFailure() {
     require(failResult.started, "runProcessCapture should start failure command: " + failResult.error);
     require(!failResult.timedOut, "failure command should not time out");
     require(failResult.exitCode != 0, "failure command should return non-zero exit code");
+}
+
+void testPlatformRunProcessCaptureTimeout() {
+    const auto command = subcli::testSupportLongRunningCommand(5);
+    const auto startedAt = std::chrono::steady_clock::now();
+    const auto result = subcli::runProcessCapture(command.binary, command.args, 1);
+    const auto elapsed = std::chrono::steady_clock::now() - startedAt;
+
+    require(result.started, "runProcessCapture should start long-running command: " + result.error);
+    require(result.timedOut, "long-running command should time out");
+    require(result.exitCode == 124, "timed out command should return exit code 124");
+    require(elapsed < std::chrono::seconds(4), "timeout should return before long-running command completes");
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -6917,6 +6930,7 @@ int main() {
     testCMakeVersionIs027();
     testPlatformExecutableCheckRecognizesCurrentTestBinary();
     testPlatformRunProcessCaptureSuccessAndFailure();
+    testPlatformRunProcessCaptureTimeout();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
     testDaemonProcessLifecycleWithCustomFiles();

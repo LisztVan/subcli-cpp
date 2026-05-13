@@ -21,7 +21,6 @@
 
 #ifndef _WIN32
 #include <fcntl.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -47,6 +46,7 @@
 #include "subcli/fetch.hpp"
 #include "subcli/logs.hpp"
 #include "subcli/parser.hpp"
+#include "subcli/platform.hpp"
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
 #include "subcli/registry.hpp"
@@ -1601,43 +1601,13 @@ std::vector<std::string> runtimeArgsForTarget(ExportTarget target, const std::st
 }
 
 int runCoreRuntimeForeground(const std::string& binary, const std::vector<std::string>& coreArgs) {
-#ifdef _WIN32
-    std::string command = "\"" + binary + "\"";
-    for (const auto& arg : coreArgs) {
-        command += " \"" + arg + "\"";
-    }
-    return std::system(command.c_str());
-#else
-    pid_t pid = fork();
-    if (pid < 0) {
-        std::cerr << "foreground runtime fork failed\n";
+    std::string error;
+    const int rc = runProcessForeground(binary, coreArgs, error);
+    if (!error.empty()) {
+        std::cerr << error << "\n";
         return ExitError;
     }
-    if (pid == 0) {
-        std::vector<char*> argv;
-        argv.reserve(coreArgs.size() + 2);
-        argv.push_back(const_cast<char*>(binary.c_str()));
-        for (const auto& arg : coreArgs) {
-            argv.push_back(const_cast<char*>(arg.c_str()));
-        }
-        argv.push_back(nullptr);
-        execv(binary.c_str(), argv.data());
-        _exit(127);
-    }
-
-    int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
-        std::cerr << "foreground runtime wait failed\n";
-        return ExitError;
-    }
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
-    }
-    if (WIFSIGNALED(status)) {
-        return 128 + WTERMSIG(status);
-    }
-    return ExitError;
-#endif
+    return rc;
 }
 
 bool validateRuntimeLogFileForCli(const std::string& logPath, std::string& error) {

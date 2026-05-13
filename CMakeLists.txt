@@ -123,6 +123,7 @@ set(SUBCLI_SOURCES
     src/core_runtime.cpp
     src/runtime_process.cpp
     src/daemon_process.cpp
+    src/platform_common.cpp
     src/daemon.cpp
     src/logs.cpp
     src/cli_completion.cpp
@@ -133,6 +134,12 @@ set(SUBCLI_SOURCES
     src/tag_utils.cpp
     src/util.cpp
 )
+
+if(WIN32)
+    list(APPEND SUBCLI_SOURCES src/platform_windows.cpp)
+else()
+    list(APPEND SUBCLI_SOURCES src/platform_posix.cpp)
+endif()
 
 add_executable(subcli src/main.cpp ${SUBCLI_SOURCES})
 
@@ -149,10 +156,10 @@ install(FILES README.subcli.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 if(NOT WIN32)
     enable_testing()
 
-    add_executable(subcli_tests tests/subcli_tests.cpp ${SUBCLI_SOURCES})
-    target_include_directories(subcli_tests PRIVATE include src)
+    add_executable(subcli_tests tests/subcli_tests.cpp tests/platform_test_support.cpp ${SUBCLI_SOURCES})
+    target_include_directories(subcli_tests PRIVATE include src tests)
     target_link_libraries(subcli_tests PRIVATE yaml-cpp nlohmann_json::nlohmann_json libcurl)
-    target_compile_definitions(subcli_tests PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_compile_definitions(subcli_tests PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}" SUBCLI_TEST_BINARY_PATH="$<TARGET_FILE:subcli_tests>")
 
     add_test(NAME subcli_tests COMMAND subcli_tests)
     add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)

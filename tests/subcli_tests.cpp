@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "exporter_internal.hpp"
+#include "platform_test_support.hpp"
 #include "subcli/assets.hpp"
 #include "subcli/capabilities.hpp"
 #include "subcli/capability_matrix.hpp"
@@ -26,6 +27,7 @@
 #include "subcli/logs.hpp"
 #include "subcli/node.hpp"
 #include "subcli/parser.hpp"
+#include "subcli/platform.hpp"
 #include "subcli/profile.hpp"
 #include "subcli/profile_explain.hpp"
 #include "subcli/protocol_registry.hpp"
@@ -1707,6 +1709,25 @@ void testCompletionSubcommandListIncludesLifecycleVerbs() {
 void testCMakeVersionIs027() {
     const std::string cmake = subcli::readFile((fs::path(SUBCLI_SOURCE_DIR) / "CMakeLists.txt").string());
     require(cmake.find("project(subcli VERSION 0.2.7") != std::string::npos, "CMake project version should be 0.2.7");
+}
+
+void testPlatformExecutableCheckRecognizesCurrentTestBinary() {
+    const fs::path self = fs::absolute(fs::path(SUBCLI_TEST_BINARY_PATH));
+    require(subcli::isExecutablePath(self.string()), "platform executable check should recognize test binary");
+}
+
+void testPlatformRunProcessCaptureSuccessAndFailure() {
+    const auto ok = subcli::testSupportSuccessCommand();
+    const auto okResult = subcli::runProcessCapture(ok.binary, ok.args, 5);
+    require(okResult.started, "runProcessCapture should start success command: " + okResult.error);
+    require(!okResult.timedOut, "success command should not time out");
+    require(okResult.exitCode == 0, "success command should exit 0");
+
+    const auto fail = subcli::testSupportFailureCommand();
+    const auto failResult = subcli::runProcessCapture(fail.binary, fail.args, 5);
+    require(failResult.started, "runProcessCapture should start failure command: " + failResult.error);
+    require(!failResult.timedOut, "failure command should not time out");
+    require(failResult.exitCode != 0, "failure command should return non-zero exit code");
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -6894,6 +6915,8 @@ int main() {
     testCompletionScriptContainsRegistryKeysAndTargets();
     testCompletionSubcommandListIncludesLifecycleVerbs();
     testCMakeVersionIs027();
+    testPlatformExecutableCheckRecognizesCurrentTestBinary();
+    testPlatformRunProcessCaptureSuccessAndFailure();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
     testDaemonProcessLifecycleWithCustomFiles();

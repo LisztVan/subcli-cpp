@@ -2,13 +2,10 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
-#include <netinet/in.h>
 #include <regex>
-#include <sys/socket.h>
 #include <thread>
 #include <stdexcept>
 #include <string>
-#include <unistd.h>
 
 #include "exporter_internal.hpp"
 #include "platform_test_support.hpp"
@@ -1745,6 +1742,9 @@ void testPlatformRunProcessCaptureTimeout() {
 }
 
 void testCoreCheckPreservesCapturedOutputForFailedChecks() {
+#ifdef _WIN32
+    return;
+#else
     const fs::path dir = makeUniqueTestDir("subcli-core-check-output-tests");
     const fs::path core = dir / "fake-core";
     {
@@ -1766,6 +1766,7 @@ void testCoreCheckPreservesCapturedOutputForFailedChecks() {
     require(result.message.find("command failed with exit code") == std::string::npos, "generic error should not override captured output");
 
     fs::remove_all(dir);
+#endif
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -1824,7 +1825,8 @@ void testDaemonProcessLifecycle() {
     options.updateAssets = true;
     std::string error;
 
-    const bool started = subcli::startDaemonProcess(stateDir, "/bin/sleep", {"30"}, options, error);
+    const auto sleep = subcli::testSupportLongRunningCommand(30);
+    const bool started = subcli::startDaemonProcess(stateDir, sleep.binary, sleep.args, options, error);
     require(started, "startDaemonProcess should start daemon process: " + error);
 
     auto status = subcli::inspectDaemonProcess(stateDir, error);
@@ -1835,7 +1837,7 @@ void testDaemonProcessLifecycle() {
     require(status.intervalSec == 120, "inspectDaemonProcess should expose interval");
     require(status.exportTarget == "sing-box", "inspectDaemonProcess should expose export target");
 
-    const bool duplicate = subcli::startDaemonProcess(stateDir, "/bin/sleep", {"30"}, options, error);
+    const bool duplicate = subcli::startDaemonProcess(stateDir, sleep.binary, sleep.args, options, error);
     require(!duplicate, "startDaemonProcess should reject duplicate start");
 
     const bool stopped = subcli::stopDaemonProcess(stateDir, 1, error);
@@ -1861,7 +1863,8 @@ void testDaemonProcessLifecycleWithCustomFiles() {
     options.logFile = (dir / "daemon.log").string();
     std::string error;
 
-    const bool started = subcli::startDaemonProcess(dir, "/bin/sleep", {"30"}, options, error);
+    const auto sleep = subcli::testSupportLongRunningCommand(30);
+    const bool started = subcli::startDaemonProcess(dir, sleep.binary, sleep.args, options, error);
     require(started, "startDaemonProcess should support custom file paths: " + error);
     require(fs::exists(options.pidFile), "custom pid file should be created");
     require(fs::exists(options.logFile), "custom log file should be created");
@@ -1888,7 +1891,8 @@ void testStartDaemonProcessFailsWhenLogFileCannotOpen() {
     options.logFile = badPath.string();
     std::string error;
 
-    const bool started = subcli::startDaemonProcess(stateDir, "/bin/sleep", {"30"}, options, error);
+    const auto sleep = subcli::testSupportLongRunningCommand(30);
+    const bool started = subcli::startDaemonProcess(stateDir, sleep.binary, sleep.args, options, error);
 
     require(!started, "startDaemonProcess should fail when daemon log file cannot be opened");
     require(error.find("daemon log file") != std::string::npos ||
@@ -1912,7 +1916,7 @@ void testStartDaemonProcessFailsWhenExecCannotStart() {
 
     const bool started = subcli::startDaemonProcess(
         stateDir,
-        "/definitely/missing/subcli-binary",
+        subcli::testSupportMissingExecutablePath(),
         {"daemon", "run"},
         options,
         error
@@ -1959,7 +1963,8 @@ void testInspectDaemonProcessExposesLastCycleFailure() {
 
     subcli::DaemonOptions options;
     std::string error;
-    require(subcli::startDaemonProcess(stateDir, "/bin/sleep", {"30"}, options, error), "daemon start should succeed");
+    const auto sleep = subcli::testSupportLongRunningCommand(30);
+    require(subcli::startDaemonProcess(stateDir, sleep.binary, sleep.args, options, error), "daemon start should succeed");
 
     subcli::DaemonCallbacks callbacks;
     callbacks.runSubCommand = [&](const std::vector<std::string>&) { return 1; };
@@ -2787,34 +2792,22 @@ void testParseMihomoRemoteProxyProvider() {
 }
 
 void testParseMihomoRemoteProxyProviderWithHttpFields() {
-    const int serverFd = ::socket(AF_INET, SOCK_STREAM, 0);
-    require(serverFd >= 0, "test server socket should create");
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr.sin_port = 0;
-    require(::bind(serverFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "test server bind should succeed");
-    require(::listen(serverFd, 1) == 0, "test server listen should succeed");
-
-    sockaddr_in bound{};
-    socklen_t boundLen = sizeof(bound);
-    require(::getsockname(serverFd, reinterpret_cast<sockaddr*>(&bound), &boundLen) == 0, "test server should report bound port");
-    const int port = ntohs(bound.sin_port);
+    auto server = subcli::testSupportCreateLoopbackServer();
+    const int port = server.port;
 
     std::promise<std::string> requestPromise;
     auto requestFuture = requestPromise.get_future();
-    std::thread serverThread([serverFd, p = std::move(requestPromise)]() mutable {
-        int client = ::accept(serverFd, nullptr, nullptr);
+    std::thread serverThread([server, p = std::move(requestPromise)]() mutable {
+        int client = subcli::testSupportAccept(server);
         if (client < 0) {
             p.set_value("");
-            ::close(serverFd);
+            subcli::testSupportCloseServer(server);
             return;
         }
         std::string request;
         char buf[1024];
         while (request.find("\r\n\r\n") == std::string::npos) {
-            const ssize_t n = ::recv(client, buf, sizeof(buf), 0);
+            const int n = subcli::testSupportRecv(client, buf, static_cast<int>(sizeof(buf)));
             if (n <= 0) {
                 break;
             }
@@ -2836,9 +2829,9 @@ void testParseMihomoRemoteProxyProviderWithHttpFields() {
             "\r\n"
             "Connection: close\r\n\r\n" +
             body;
-        (void)::send(client, response.c_str(), response.size(), 0);
-        ::close(client);
-        ::close(serverFd);
+        (void)subcli::testSupportSend(client, response.c_str(), static_cast<int>(response.size()));
+        subcli::testSupportCloseClient(client);
+        subcli::testSupportCloseServer(server);
         p.set_value(request);
     });
 
@@ -6052,8 +6045,9 @@ void testRuntimeStatePersistsLogMetadata() {
     status.running = true;
     status.pid = 1234;
     status.target = "sing-box";
-    status.binaryPath = "/bin/sleep";
-    status.configPath = "/tmp/sing-box.json";
+    const auto sleep = subcli::testSupportLongRunningCommand(30);
+    status.binaryPath = sleep.binary;
+    status.configPath = (dir / "sing-box.json").string();
     status.logPath = (dir / "runtime" / "sing_box.log").string();
     status.startedAt = "2026-05-05T00:00:00Z";
 
@@ -6065,8 +6059,8 @@ void testRuntimeStatePersistsLogMetadata() {
     require(loaded.hasState, "loaded runtime state should exist");
     require(loaded.pid == 1234, "loaded runtime pid should be preserved");
     require(loaded.target == "sing-box", "loaded runtime target should be preserved");
-    require(loaded.binaryPath == "/bin/sleep", "loaded runtime binary should be preserved");
-    require(loaded.configPath == "/tmp/sing-box.json", "loaded runtime config should be preserved");
+    require(loaded.binaryPath == sleep.binary, "loaded runtime binary should be preserved");
+    require(loaded.configPath == status.configPath, "loaded runtime config should be preserved");
     require(loaded.logPath == status.logPath, "loaded runtime log path should be preserved");
     require(loaded.startedAt == "2026-05-05T00:00:00Z", "loaded runtime start time should be preserved");
 
@@ -6083,13 +6077,14 @@ void testStartCoreRuntimeWritesConfiguredLog() {
     const fs::path dir = makeUniqueTestDir("subcli-runtime-log-write");
     const fs::path logPath = dir / "runtime.log";
     std::string error;
+    const auto command = subcli::testSupportShellCommand("echo 'runtime-log-line'; sleep 2");
 
     const bool started = subcli::startCoreRuntime(
         dir,
         "mihomo",
-        "/bin/sh",
-        {"-c", "printf 'runtime-log-line\n'; sleep 2"},
-        "/tmp/mihomo.yaml",
+        command.binary,
+        command.args,
+        (dir / "mihomo.yaml").string(),
         logPath.string(),
         error
     );
@@ -6122,12 +6117,13 @@ void testStartCoreRuntimeAcceptsBasenameLogPath() {
     fs::current_path(dir);
 
     std::string error;
+    const auto command = subcli::testSupportShellCommand("echo 'runtime-basename-line'; sleep 2");
     const bool started = subcli::startCoreRuntime(
         dir,
         "mihomo",
-        "/bin/sh",
-        {"-c", "printf 'runtime-basename-line\n'; sleep 2"},
-        "/tmp/mihomo.yaml",
+        command.binary,
+        command.args,
+        (dir / "mihomo.yaml").string(),
         "runtime.log",
         error
     );
@@ -6146,12 +6142,13 @@ void testStartCoreRuntimeRejectsInvalidLogPath() {
     fs::create_directory(logPath);
 
     std::string error;
+    const auto command = subcli::testSupportShellCommand("echo 'should-not-start'; sleep 2");
     const bool started = subcli::startCoreRuntime(
         dir,
         "mihomo",
-        "/bin/sh",
-        {"-c", "printf 'should-not-start\n'; sleep 2"},
-        "/tmp/mihomo.yaml",
+        command.binary,
+        command.args,
+        (dir / "mihomo.yaml").string(),
         logPath.string(),
         error
     );
@@ -6171,12 +6168,13 @@ void testCoreRuntimeLifecycle() {
     fs::create_directories(stateDir);
 
     std::string error;
+    const auto sleep = subcli::testSupportLongRunningCommand(30);
     const bool started = subcli::startCoreRuntime(
         stateDir,
         "sing-box",
-        "/bin/sleep",
-        {"30"},
-        "/tmp/subcli-tests-runtime-config.json",
+        sleep.binary,
+        sleep.args,
+        (stateDir / "subcli-tests-runtime-config.json").string(),
         subcli::runtimeLogPathForTarget(stateDir, "sing-box").string(),
         error
     );
@@ -6191,9 +6189,9 @@ void testCoreRuntimeLifecycle() {
     const bool secondStart = subcli::startCoreRuntime(
         stateDir,
         "sing-box",
-        "/bin/sleep",
-        {"30"},
-        "/tmp/subcli-tests-runtime-config.json",
+        sleep.binary,
+        sleep.args,
+        (stateDir / "subcli-tests-runtime-config.json").string(),
         subcli::runtimeLogPathForTarget(stateDir, "sing-box").string(),
         error
     );
@@ -6219,8 +6217,8 @@ void testStopCoreRuntimeRemovesStaleStateFile() {
     nlohmann::json stale = {
         {"pid", 999999},
         {"target", "sing-box"},
-        {"binary_path", "/bin/sleep"},
-        {"config_path", "/tmp/subcli-tests-runtime-config.json"},
+        {"binary_path", subcli::testSupportLongRunningCommand(30).binary},
+        {"config_path", (stateDir / "subcli-tests-runtime-config.json").string()},
     };
     {
         std::ofstream out(statePath);
@@ -6245,9 +6243,9 @@ void testStartCoreRuntimeInvalidBinaryLeavesNoState() {
     const bool started = subcli::startCoreRuntime(
         stateDir,
         "sing-box",
-        "/definitely/missing/subcli-binary",
+        subcli::testSupportMissingExecutablePath(),
         {"run"},
-        "/tmp/subcli-tests-runtime-config.json",
+        (stateDir / "subcli-tests-runtime-config.json").string(),
         subcli::runtimeLogPathForTarget(stateDir, "sing-box").string(),
         error
     );
@@ -6747,9 +6745,10 @@ void testExportTargetResolveAndOutputPathUseRegistryMetadata() {
         require(resolvedDescriptor->id == descriptor.id, "resolved descriptor id should match registry id");
         require(resolvedTarget == descriptor.target, "resolved target enum should match registry target enum");
 
+        const fs::path outputDir = fs::temp_directory_path() / "subcli-output-tests";
         std::string outputPath;
-        require(subcli::exportTargetOutputPath("/tmp/outputs", resolvedTarget, outputPath), "exportTargetOutputPath should resolve for registry target");
-        require(outputPath == std::string("/tmp/outputs/") + descriptor.outputFile, "output path should use registry-defined outputFile");
+        require(subcli::exportTargetOutputPath(outputDir.string(), resolvedTarget, outputPath), "exportTargetOutputPath should resolve for registry target");
+        require(fs::path(outputPath) == outputDir / descriptor.outputFile, "output path should use registry-defined outputFile");
     }
 }
 

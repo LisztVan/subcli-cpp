@@ -1704,9 +1704,9 @@ void testCompletionSubcommandListIncludesLifecycleVerbs() {
     require(script.find(subStanza) != std::string::npos, "completion sub stanza should include lifecycle verbs");
 }
 
-void testCMakeVersionIs026() {
+void testCMakeVersionIs027() {
     const std::string cmake = subcli::readFile((fs::path(SUBCLI_SOURCE_DIR) / "CMakeLists.txt").string());
-    require(cmake.find("project(subcli VERSION 0.2.6") != std::string::npos, "CMake project version should be 0.2.6");
+    require(cmake.find("project(subcli VERSION 0.2.7") != std::string::npos, "CMake project version should be 0.2.7");
 }
 
 void testDaemonBuildsExpectedArgs() {
@@ -6818,7 +6818,7 @@ void testConfigServiceRejectsUnknownAndBadValues() {
     require(error == "unsupported key in v1", "remove unknown key should use unsupported message");
 }
 
-void testCMakeVersionIsV026() {
+void testCMakeVersionIsV027() {
     const fs::path cmakePath = fs::path(SUBCLI_SOURCE_DIR) / "CMakeLists.txt";
     std::ifstream in(cmakePath);
     require(in.is_open(), "CMakeLists.txt should be readable");
@@ -6829,7 +6829,7 @@ void testCMakeVersionIsV026() {
     require(std::regex_search(content, match, projectPattern),
             "CMakeLists.txt should declare subcli project version");
     require(match.size() >= 2, "CMakeLists.txt project version capture should exist");
-    require(match[1].str() == "0.2.6", "CMakeLists.txt subcli project version should be exactly 0.2.6");
+    require(match[1].str() == "0.2.7", "CMakeLists.txt subcli project version should be exactly 0.2.7");
 }
 
 void testConfigDocsMentionRegistryKeys() {
@@ -6893,7 +6893,7 @@ int main() {
     testBashCompletionContainsCommands();
     testCompletionScriptContainsRegistryKeysAndTargets();
     testCompletionSubcommandListIncludesLifecycleVerbs();
-    testCMakeVersionIs026();
+    testCMakeVersionIs027();
     testDaemonBuildsExpectedArgs();
     testDaemonProcessLifecycle();
     testDaemonProcessLifecycleWithCustomFiles();
@@ -7024,7 +7024,7 @@ int main() {
     testConfigServiceSetGetRemoveScalarKeys();
     testConfigServiceResolvesTemplateAndAssetPathsRelativeToConfigDir();
     testConfigServiceRejectsUnknownAndBadValues();
-    testCMakeVersionIsV026();
+    testCMakeVersionIsV027();
     testConfigDocsMentionRegistryKeys();
     testStorePersistsRoutingRules();
     testStorePersistsStrategyGroups();

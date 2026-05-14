@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -53,7 +54,15 @@ void runTest(const char* name, void (*test)()) {
 #ifdef _WIN32
     std::cout << "[test] " << name << std::endl;
 #endif
-    test();
+    try {
+        test();
+    } catch (const std::exception& ex) {
+        std::cerr << "[test failure] " << name << ": " << ex.what() << std::endl;
+        std::exit(1);
+    } catch (...) {
+        std::cerr << "[test failure] " << name << ": unknown exception" << std::endl;
+        std::exit(1);
+    }
 }
 
 subcli::AppConfig makeConfig() {

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -75,6 +76,24 @@ bool waitForCondition(Predicate predicate, std::chrono::milliseconds timeout, st
         std::this_thread::sleep_for(interval);
     }
     return predicate();
+}
+
+constexpr const char* kLogHelperArg = "--subcli-test-helper-log-line";
+
+int runLogHelper(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "missing log helper arguments" << std::endl;
+        return 2;
+    }
+
+    std::cout << argv[2] << std::endl;
+    const int seconds = std::max(0, std::stoi(argv[3]));
+    std::this_thread::sleep_for(std::chrono::seconds(seconds));
+    return 0;
+}
+
+subcli::ProcessCommand testBinaryLogCommand(const std::string& line, int seconds) {
+    return {fs::absolute(fs::path(SUBCLI_TEST_BINARY_PATH)).string(), {kLogHelperArg, line, std::to_string(seconds)}};
 }
 
 subcli::AppConfig makeConfig() {
@@ -6106,7 +6125,7 @@ void testStartCoreRuntimeWritesConfiguredLog() {
     const fs::path dir = makeUniqueTestDir("subcli-runtime-log-write");
     const fs::path logPath = dir / "runtime.log";
     std::string error;
-    const auto command = subcli::testSupportShellCommand("echo 'runtime-log-line'; sleep 2");
+    const auto command = testBinaryLogCommand("runtime-log-line", 2);
 
     const bool started = subcli::startCoreRuntime(
         dir,
@@ -6152,7 +6171,7 @@ void testStartCoreRuntimeAcceptsBasenameLogPath() {
     fs::current_path(dir);
 
     std::string error;
-    const auto command = subcli::testSupportShellCommand("echo 'runtime-basename-line'; sleep 2");
+    const auto command = testBinaryLogCommand("runtime-basename-line", 2);
     const bool started = subcli::startCoreRuntime(
         dir,
         "mihomo",
@@ -6939,7 +6958,11 @@ void testConfigDocsMentionRegistryKeys() {
 
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
+    if (argc > 1 && std::string(argv[1]) == kLogHelperArg) {
+        return runLogHelper(argc, argv);
+    }
+
     runTest("testLoadProfileReadsGroupsRulesAndDns", testLoadProfileReadsGroupsRulesAndDns);
     runTest("testLoadProfileRejectsInvalidJson", testLoadProfileRejectsInvalidJson);
     runTest("testLoadProfileRejectsRuleWithoutOutbound", testLoadProfileRejectsRuleWithoutOutbound);

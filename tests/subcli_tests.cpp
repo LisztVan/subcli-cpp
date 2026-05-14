@@ -65,6 +65,18 @@ void runTest(const char* name, void (*test)()) {
     }
 }
 
+template <typename Predicate>
+bool waitForCondition(Predicate predicate, std::chrono::milliseconds timeout, std::chrono::milliseconds interval = std::chrono::milliseconds(50)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(interval);
+    }
+    return predicate();
+}
+
 subcli::AppConfig makeConfig() {
     subcli::AppConfig config;
     const fs::path root = fs::path(SUBCLI_SOURCE_DIR);
@@ -6107,10 +6119,16 @@ void testStartCoreRuntimeWritesConfiguredLog() {
     );
     require(started, "startCoreRuntime should start shell process: " + error);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    std::string contents;
+    const bool logContainsOutput = waitForCondition([&]() {
+        if (!fs::exists(logPath)) {
+            return false;
+        }
+        contents = subcli::readFile(logPath.string());
+        return contents.find("runtime-log-line") != std::string::npos;
+    }, std::chrono::seconds(5));
     require(fs::exists(logPath), "runtime log file should be created");
-    const std::string contents = subcli::readFile(logPath.string());
-    require(contents.find("runtime-log-line") != std::string::npos, "runtime stdout should be written to log file");
+    require(logContainsOutput, "runtime stdout should be written to log file; contents: " + contents);
 
     auto status = subcli::inspectCoreRuntime(dir, "mihomo", error);
     require(error.empty(), "inspectCoreRuntime should succeed: " + error);
@@ -6146,8 +6164,10 @@ void testStartCoreRuntimeAcceptsBasenameLogPath() {
     );
     require(started, "startCoreRuntime should accept basename log path: " + error);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    require(fs::exists(dir / "runtime.log"), "runtime basename log file should be created in cwd");
+    const bool logCreated = waitForCondition([&]() {
+        return fs::exists(dir / "runtime.log");
+    }, std::chrono::seconds(5));
+    require(logCreated, "runtime basename log file should be created in cwd");
 
     require(subcli::stopCoreRuntime(dir, "mihomo", 1, error), "stopCoreRuntime should stop basename log process: " + error);
     fs::remove_all(dir);

@@ -11,19 +11,38 @@ permissions:
 
 jobs:
   validate-release:
-    runs-on: ubuntu-latest
+    name: Validate ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+          - name: macos-arm64
+            os: macos-latest
+          - name: windows-x86_64
+            os: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Install dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake g++ make
 
       - name: Validate tag matches CMake project version
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
-          project_version="$(python3 - <<'PY'
+          if command -v python3 >/dev/null 2>&1; then
+            python_cmd=python3
+          else
+            python_cmd=python
+          fi
+          project_version="$($python_cmd - <<'PY'
           import re
 
           with open('CMakeLists.txt', 'r', encoding='utf-8') as f:
@@ -46,19 +65,27 @@ jobs:
           fi
 
       - name: Configure
-        run: cmake -S . -B build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build --config Release -j
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: Package
-        run: cmake --build build --target package
+        run: cmake --build build --config Release --target package
 
-      - name: Upload package artifact
+      - name: Upload tar.gz package artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: subcli-package
+          name: subcli-${{ matrix.name }}-tar-gz
           path: build/subcli-*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload zip package artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: subcli-${{ matrix.name }}-zip
+          path: build/subcli-*.zip
+          if-no-files-found: error

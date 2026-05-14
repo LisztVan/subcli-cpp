@@ -153,15 +153,26 @@ install(DIRECTORY profiles/ DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/profiles
 install(FILES packaging/systemd/subcli-daemon.service DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/systemd)
 install(FILES README.subcli.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
-if(NOT WIN32)
-    enable_testing()
+enable_testing()
 
-    add_executable(subcli_tests tests/subcli_tests.cpp tests/platform_test_support.cpp ${SUBCLI_SOURCES})
-    target_include_directories(subcli_tests PRIVATE include src tests)
-    target_link_libraries(subcli_tests PRIVATE yaml-cpp nlohmann_json::nlohmann_json libcurl)
-    target_compile_definitions(subcli_tests PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}" SUBCLI_TEST_BINARY_PATH="$<TARGET_FILE:subcli_tests>")
+add_executable(subcli_tests tests/subcli_tests.cpp tests/platform_test_support.cpp ${SUBCLI_SOURCES})
+target_include_directories(subcli_tests PRIVATE include src tests)
+target_link_libraries(subcli_tests PRIVATE yaml-cpp nlohmann_json::nlohmann_json libcurl)
+target_compile_definitions(subcli_tests PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}" SUBCLI_TEST_BINARY_PATH="$<TARGET_FILE:subcli_tests>")
+if(WIN32)
+    target_link_libraries(subcli_tests PRIVATE ws2_32)
+endif()
 
-    add_test(NAME subcli_tests COMMAND subcli_tests)
+add_test(NAME subcli_tests COMMAND subcli_tests)
+add_test(
+    NAME subcli_cli_basic
+    COMMAND ${CMAKE_COMMAND}
+        "-DSUBCLI_BIN=$<TARGET_FILE:subcli>"
+        "-DTEST_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/subcli-cli-basic-$<CONFIG>"
+        "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        -P "${CMAKE_SOURCE_DIR}/tests/cli_basic_smoke.cmake"
+)
+if(UNIX)
     add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
 endif()
 
@@ -170,5 +181,5 @@ set(CPACK_PACKAGE_VENDOR "subcli")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Subscription CLI exporter")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_FILE_NAME "subcli-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
-set(CPACK_GENERATOR "TGZ")
+set(CPACK_GENERATOR "TGZ;ZIP")
 include(CPack)

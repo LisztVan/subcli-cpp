@@ -95,3 +95,7 @@ subcli config remove profile_path
 ```
 
 Use `subcli profile validate <path-or-name>` before export when profile JSON changes.
+
+## Platform Notes
+
+`core_paths.*` accepts absolute paths or binaries discoverable on `PATH`. On Windows, `subcli` also checks executable suffixes from `PATHEXT` when searching `PATH`. Runtime and daemon state stores process ids from the host platform and uses platform-native process APIs for `status`, `stop`, and stale-state cleanup.

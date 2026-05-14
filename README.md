@@ -23,6 +23,7 @@
 - Use registry-backed command/config/target metadata to keep help, completion, and docs aligned.
 - Run structured diagnostics with `subcli doctor --json`.
 - Validate exported configs with external cores via `--check`.
+- Support Linux, macOS, and Windows builds with platform-native process execution for checks, runtime helpers, and daemon helpers.
 - Use XDG runtime directories for config, data, cache, state, and outputs.
 - Preserve cache fallback visibility and support strict network mode.
 - Skip unsupported target protocols with explicit warnings instead of generating invalid configs.

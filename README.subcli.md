@@ -525,7 +525,7 @@ xray run -config ~/.local/share/subcli/outputs/xray.json
 
 You can also let `subcli` manage runtime lifecycle directly, but this remains an optional helper outside the primary profile-driven export scope. By default, `subcli run <target>` starts a managed background process, records runtime state under the active state directory, and uses the generated config for that target. Use `--foreground` to keep the core attached to the current terminal instead of managing it in the background.
 
-Managed background runtime and daemon process hosting use POSIX process primitives and are supported on Unix-like systems. Windows packages support the primary config-generation workflow; managed process hosting commands may return an explicit unsupported-platform error on Windows.
+Managed runtime and daemon helpers use platform-native process primitives: POSIX `fork`/`exec`/signals on Linux and macOS, and Win32 `CreateProcess`/process handles on Windows. They are helper processes, not OS service integrations. On Windows, `daemon start` starts a detached helper process and `daemon stop` terminates it by process id; it does not install a Windows Service.
 
 ```bash
 subcli run sing-box

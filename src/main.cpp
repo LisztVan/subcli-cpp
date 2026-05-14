@@ -19,10 +19,6 @@
 #include <tuple>
 #include <unordered_set>
 
-#ifndef _WIN32
-#include <fcntl.h>
-#include <unistd.h>
-#endif
 
 #include <yaml-cpp/yaml.h>
 #include <nlohmann/json.hpp>
@@ -127,15 +123,7 @@ std::filesystem::path normalizeAbsolutePath(const std::filesystem::path& path) {
 }
 
 std::string detectExecutablePath(const std::string& argv0) {
-    std::error_code ec;
-    const auto procSelf = std::filesystem::read_symlink("/proc/self/exe", ec);
-    if (!ec && !procSelf.empty()) {
-        return normalizeAbsolutePath(procSelf).string();
-    }
-    if (!argv0.empty()) {
-        return normalizeAbsolutePath(argv0).string();
-    }
-    return "";
+    return currentExecutablePath(argv0);
 }
 
 bool looksLikeAppRoot(const std::filesystem::path& path) {
@@ -1622,20 +1610,11 @@ bool validateRuntimeLogFileForCli(const std::string& logPath, std::string& error
         }
     }
 
-#ifdef _WIN32
     std::ofstream out(logPath, std::ios::app);
     if (!out) {
         error = "runtime log file is not writable: " + logPath;
         return false;
     }
-#else
-    const int fd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (fd < 0) {
-        error = "runtime log file is not writable: " + logPath;
-        return false;
-    }
-    close(fd);
-#endif
     error.clear();
     return true;
 }

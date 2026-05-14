@@ -6189,6 +6189,7 @@ void testStartCoreRuntimeAcceptsBasenameLogPath() {
     require(logCreated, "runtime basename log file should be created in cwd");
 
     require(subcli::stopCoreRuntime(dir, "mihomo", 1, error), "stopCoreRuntime should stop basename log process: " + error);
+    fs::current_path(guard.original);
     fs::remove_all(dir);
 }
 

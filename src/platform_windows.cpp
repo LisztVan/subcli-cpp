@@ -269,7 +269,7 @@ UniqueHandle openAppendLogFile(const std::filesystem::path& logPath, std::string
     const std::wstring nativePath = logPath.wstring();
     UniqueHandle handle(CreateFileW(
         nativePath.c_str(),
-        FILE_APPEND_DATA | SYNCHRONIZE,
+        GENERIC_WRITE,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         &security,
         OPEN_ALWAYS,
@@ -278,6 +278,13 @@ UniqueHandle openAppendLogFile(const std::filesystem::path& logPath, std::string
     ));
     if (!handle.valid()) {
         error = lastWindowsError("failed to open log file: " + logPath.string());
+        return handle;
+    }
+
+    LARGE_INTEGER zero{};
+    if (!SetFilePointerEx(handle.get(), zero, nullptr, FILE_END)) {
+        error = lastWindowsError("failed to seek log file to end: " + logPath.string());
+        handle.reset();
     }
     return handle;
 }

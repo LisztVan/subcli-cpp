@@ -2757,7 +2757,7 @@ void testParseMihomoLocalProxyProvider() {
     const std::string content = std::string(R"YAML(proxy-providers:
   airport:
     type: file
-    path: ")YAML") + providerPath.string() + R"YAML("
+    path: ")YAML") + providerPath.generic_string() + R"YAML("
 )YAML";
 
     auto result = subcli::parseSubscription(content, "fixture", "mihomo", makeConfig());
@@ -2788,7 +2788,7 @@ void testParseMihomoRemoteProxyProvider() {
     const std::string content = std::string(R"YAML(proxy-providers:
   airport:
     type: http
-    url: "file://)YAML") + providerPath.string() + R"YAML("
+    url: "file://)YAML") + providerPath.generic_string() + R"YAML("
 )YAML";
 
     auto result = subcli::parseSubscription(content, "fixture", "mihomo", makeConfig());

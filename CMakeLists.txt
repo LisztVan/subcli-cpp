@@ -200,6 +200,16 @@ add_test(
         --test-root "${CMAKE_CURRENT_BINARY_DIR}/subcli-stability-user-$<CONFIG>"
 )
 
+add_test(
+    NAME subcli_stability_package_journey
+    COMMAND ${CMAKE_COMMAND}
+        "-DBUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/subcli-stability-package-$<CONFIG>"
+        "-DSTABILITY_RUNNER=$<TARGET_FILE:subcli_stability_runner>"
+        -P "${CMAKE_SOURCE_DIR}/tests/stability_package_journey.cmake"
+)
+
 if(UNIX)
     add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
 endif()

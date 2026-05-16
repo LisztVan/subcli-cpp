@@ -34,11 +34,11 @@ jobs:
       - name: Build
         run: cmake --build build --config Release -j
 
-      - name: Test
-        run: ctest --test-dir build --build-config Release --output-on-failure
-
       - name: Package
         run: cmake --build build --config Release --target package
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4

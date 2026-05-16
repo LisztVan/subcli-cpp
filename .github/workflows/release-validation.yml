@@ -70,11 +70,11 @@ jobs:
       - name: Build
         run: cmake --build build --config Release -j
 
-      - name: Test
-        run: ctest --test-dir build --build-config Release --output-on-failure
-
       - name: Package
         run: cmake --build build --config Release --target package
+
+      - name: Test
+        run: ctest --test-dir build --build-config Release --output-on-failure
 
       - name: Upload tar.gz package artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

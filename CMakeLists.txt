@@ -210,6 +210,13 @@ add_test(
         -P "${CMAKE_SOURCE_DIR}/tests/stability_package_journey.cmake"
 )
 
+add_test(
+    NAME subcli_platform_boundary_scan
+    COMMAND ${CMAKE_COMMAND}
+        "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        -P "${CMAKE_SOURCE_DIR}/tests/platform_boundary_scan.cmake"
+)
+
 if(UNIX)
     add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
 endif()

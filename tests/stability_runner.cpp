@@ -133,6 +133,15 @@ void runJourney(const Options& options) {
     const std::string status = runOk(options, "workspace status", {"workspace", "status", "--json"});
     requireContains(status, workspace.string(), "workspace status");
 
+    const fs::path overrideWorkspace = options.testRoot / "override workspace";
+    runOk(options, "workspace init override", {"workspace", "init", overrideWorkspace.string()});
+    const std::string switched = runOk(options, "workspace status after switch", {"workspace", "status", "--json"});
+    requireContains(switched, overrideWorkspace.string(), "workspace status after second init");
+
+    runOk(options, "workspace use original", {"workspace", "use", workspace.string()});
+    const std::string restored = runOk(options, "workspace status restored", {"workspace", "status", "--json"});
+    requireContains(restored, workspace.string(), "workspace status after workspace use");
+
     runOk(options, "doctor", {"doctor", "--json"});
     runOk(options, "config list", {"config", "list"});
     runOk(options, "template list", {"template", "list"});

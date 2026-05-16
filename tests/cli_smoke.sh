@@ -7,12 +7,13 @@ trap 'rm -rf "$tmp"' EXIT
 
 repo_root="$(dirname "$(dirname "$bin")")"
 
+export HOME="$tmp/home"
 export XDG_CONFIG_HOME="$tmp/config"
 export XDG_DATA_HOME="$tmp/data"
 export XDG_CACHE_HOME="$tmp/cache"
 export XDG_STATE_HOME="$tmp/state"
 
-"$bin" init >/dev/null
+"$bin" init "$tmp/workspace" >/dev/null
 root_help="$($bin --help)"
 for cmd in init doctor sub config profile template asset export workspace check run daemon status stop restart logs completion; do
     if [[ "$root_help" != *"  $cmd"* ]]; then

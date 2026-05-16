@@ -12,6 +12,7 @@
 
 #include "exporter_internal.hpp"
 #include "platform_test_support.hpp"
+#include "stability_http_server.hpp"
 #include "subcli/assets.hpp"
 #include "subcli/capabilities.hpp"
 #include "subcli/capability_matrix.hpp"
@@ -6647,6 +6648,14 @@ void testPlatformDefaultWorkspaceRootIsNonEmpty() {
     require(root.find("subcli") != std::string::npos, "platform default workspace root should contain subcli");
 }
 
+void testStabilityHttpServerStartsAndServesPort() {
+    const fs::path fixtureDir = fs::path(SUBCLI_SOURCE_DIR) / "tests/stability_fixtures/subscriptions";
+    subcli::StabilityHttpServer server(fixtureDir);
+    server.start();
+    require(server.port() > 0, "stability HTTP server should bind a dynamic port");
+    server.stop();
+}
+
 void testWorkspaceSeedBuiltInsCopiesMissingFilesOnly() {
     const fs::path root = makeUniqueTestDir("subcli-workspace-seed-builtins");
     const fs::path source = makeUniqueTestDir("subcli-workspace-seed-source");
@@ -7166,6 +7175,7 @@ int main(int argc, char* argv[]) {
     runTest("testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault", testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault);
     runTest("testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker", testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker);
     runTest("testPlatformDefaultWorkspaceRootIsNonEmpty", testPlatformDefaultWorkspaceRootIsNonEmpty);
+    runTest("testStabilityHttpServerStartsAndServesPort", testStabilityHttpServerStartsAndServesPort);
     runTest("testWorkspaceSeedBuiltInsCopiesMissingFilesOnly", testWorkspaceSeedBuiltInsCopiesMissingFilesOnly);
     runTest("testWorkspaceInitCreatesExpectedTree", testWorkspaceInitCreatesExpectedTree);
     runTest("testWorkspaceReadMetadataRejectsUnsupportedEnvVersion", testWorkspaceReadMetadataRejectsUnsupportedEnvVersion);

@@ -182,6 +182,40 @@ TestTcpServerHandle testSupportCreateLoopbackServer() {
     return out;
 }
 
+int testSupportConnectLoopback(int port) {
+    testSupportEnsureSocketsReady();
+#ifdef _WIN32
+    SOCKET client = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (client == INVALID_SOCKET) {
+        return -1;
+    }
+#else
+    int client = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (client < 0) {
+        return -1;
+    }
+#endif
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = htons(static_cast<unsigned short>(port));
+    if (::connect(client, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+#ifdef _WIN32
+        closesocket(client);
+#else
+        close(client);
+#endif
+        return -1;
+    }
+
+#ifdef _WIN32
+    return registerClientSocket(client);
+#else
+    return client;
+#endif
+}
+
 int testSupportAccept(TestTcpServerHandle& server) {
 #ifdef _WIN32
     const SOCKET client = ::accept(static_cast<SOCKET>(server.socket), nullptr, nullptr);

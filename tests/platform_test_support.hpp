@@ -24,6 +24,7 @@ struct TestTcpServerHandle {
 
 void testSupportEnsureSocketsReady();
 TestTcpServerHandle testSupportCreateLoopbackServer();
+int testSupportConnectLoopback(int port);
 int testSupportAccept(TestTcpServerHandle& server);
 int testSupportRecv(int client, char* buffer, int length);
 int testSupportSend(int client, const char* buffer, int length);

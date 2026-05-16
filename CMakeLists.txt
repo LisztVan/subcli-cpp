@@ -163,6 +163,14 @@ if(WIN32)
     target_link_libraries(subcli_tests PRIVATE ws2_32)
 endif()
 
+add_executable(subcli_stability_runner tests/stability_runner.cpp tests/stability_http_server.cpp tests/platform_test_support.cpp ${SUBCLI_SOURCES})
+target_include_directories(subcli_stability_runner PRIVATE include src tests)
+target_link_libraries(subcli_stability_runner PRIVATE yaml-cpp nlohmann_json::nlohmann_json libcurl)
+target_compile_definitions(subcli_stability_runner PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+if(WIN32)
+    target_link_libraries(subcli_stability_runner PRIVATE ws2_32)
+endif()
+
 add_test(NAME subcli_tests COMMAND subcli_tests)
 add_test(
     NAME subcli_cli_basic
@@ -172,6 +180,26 @@ add_test(
         "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
         -P "${CMAKE_SOURCE_DIR}/tests/cli_basic_smoke.cmake"
 )
+set(SUBCLI_STABILITY_ENV_ROOT "${CMAKE_CURRENT_BINARY_DIR}/subcli-stability-env-$<CONFIG>")
+add_test(
+    NAME subcli_stability_user_journey
+    COMMAND ${CMAKE_COMMAND} -E env
+        "--unset=SUBCLI_WORKSPACE"
+        "HOME=${SUBCLI_STABILITY_ENV_ROOT}/home"
+        "USERPROFILE=${SUBCLI_STABILITY_ENV_ROOT}/home"
+        "APPDATA=${SUBCLI_STABILITY_ENV_ROOT}/appdata"
+        "LOCALAPPDATA=${SUBCLI_STABILITY_ENV_ROOT}/localappdata"
+        "XDG_CONFIG_HOME=${SUBCLI_STABILITY_ENV_ROOT}/xdg-config"
+        "XDG_DATA_HOME=${SUBCLI_STABILITY_ENV_ROOT}/xdg-data"
+        "XDG_CACHE_HOME=${SUBCLI_STABILITY_ENV_ROOT}/xdg-cache"
+        "XDG_STATE_HOME=${SUBCLI_STABILITY_ENV_ROOT}/xdg-state"
+        $<TARGET_FILE:subcli_stability_runner>
+        --mode user
+        --subcli-bin $<TARGET_FILE:subcli>
+        --source-dir ${CMAKE_SOURCE_DIR}
+        --test-root "${CMAKE_CURRENT_BINARY_DIR}/subcli-stability-user-$<CONFIG>"
+)
+
 if(UNIX)
     add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
 endif()

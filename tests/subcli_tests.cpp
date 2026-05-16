@@ -5712,6 +5712,22 @@ void testReadmeDeclaresConfigGenerationAsPrimaryGoal() {
             "README should direct advanced routing and strategy policy to profile files");
 }
 
+void testReadmeLinksChineseGlossary() {
+    const auto readme = subcli::readFile((fs::path(SUBCLI_SOURCE_DIR) / "README.md").string());
+    require(readme.find("docs/cli-glossary.zh-CN.md") != std::string::npos, "README should link Chinese CLI glossary");
+}
+
+void testChineseGlossaryExistsAndMentionsFirstUse() {
+    const fs::path glossaryPath = fs::path(SUBCLI_SOURCE_DIR) / "docs/cli-glossary.zh-CN.md";
+    require(fs::exists(glossaryPath), "Chinese CLI glossary should exist");
+    const auto glossary = subcli::readFile(glossaryPath.string());
+    require(glossary.find("第一次使用") != std::string::npos, "Chinese glossary should include first-use section");
+    require(glossary.find("subcli init") != std::string::npos, "Chinese glossary should mention subcli init");
+    require(glossary.find("subcli sub add") != std::string::npos, "Chinese glossary should mention subscription add flow");
+    require(glossary.find("--workspace") != std::string::npos, "Chinese glossary should translate --workspace");
+    require(glossary.find("--output-dir") != std::string::npos, "Chinese glossary should translate --output-dir");
+}
+
 void testFetchRejectsUnsupportedScheme() {
     subcli::Subscription sub;
     sub.id = "bad";
@@ -7217,6 +7233,8 @@ int main(int argc, char* argv[]) {
     runTest("testUpdateAssetFailureKeepsPreviousFile", testUpdateAssetFailureKeepsPreviousFile);
     runTest("testSystemdUserServiceExampleExists", testSystemdUserServiceExampleExists);
     runTest("testReadmeDeclaresConfigGenerationAsPrimaryGoal", testReadmeDeclaresConfigGenerationAsPrimaryGoal);
+    runTest("testReadmeLinksChineseGlossary", testReadmeLinksChineseGlossary);
+    runTest("testChineseGlossaryExistsAndMentionsFirstUse", testChineseGlossaryExistsAndMentionsFirstUse);
     runTest("testFetchRejectsUnsupportedScheme", testFetchRejectsUnsupportedScheme);
     runTest("testFetchFileHonorsMaxBytes", testFetchFileHonorsMaxBytes);
     runTest("testFetchFileUrlDecodesPercentEscapes", testFetchFileUrlDecodesPercentEscapes);

@@ -21,6 +21,16 @@ The generated archive is written under `build/`.
 ```bash
 subcli init
 subcli doctor --json
+subcli sub add --name airport-a --url https://example/sub
+subcli sub update
+subcli export mihomo
+```
+
+`subcli init` creates and remembers a default workspace. Later commands use that workspace automatically.
+
+Useful next steps:
+
+```bash
 subcli completion bash > ~/.local/share/bash-completion/completions/subcli
 subcli config set core_paths.sing_box /path/to/sing-box
 subcli config set core_paths.xray /path/to/xray
@@ -33,8 +43,6 @@ subcli profile validate ./profiles/bypass-cn.json
 subcli config set profile_path /path/to/profile.json
 subcli template list
 subcli asset update
-subcli sub add --name airport-a --url https://example/sub
-subcli sub update
 subcli export all --profile bypass-cn --check
 ```
 
@@ -140,10 +148,10 @@ subcli completion bash
 
 `subcli` supports workspace-scoped runtime/config/data layout, so multiple independent environments can coexist.
 
-- `subcli workspace init [DIR]`: initialize a workspace layout.
+- `subcli workspace init [DIR]`: initialize a workspace layout and remember it as the default workspace.
 - `subcli workspace status`: show the active workspace and key paths.
-- `subcli workspace use <DIR>`: set the active workspace.
-- `subcli workspace unset`: clear workspace override and fall back to default XDG layout.
+- `subcli workspace use <DIR>`: switch the remembered default workspace later.
+- `subcli workspace unset`: clear the remembered default workspace and fall back to platform defaults.
 - `subcli workspace migrate [--dry-run] [--overwrite]`: migrate legacy/default files into the active workspace.
 - `subcli workspace doctor`: validate workspace structure and required files.
 
@@ -160,7 +168,7 @@ Migration notes:
 - `--dry-run` prints planned file moves/copies without writing changes.
 - `--overwrite` allows replacing existing destination files during migration.
 
-Precedence for workspace selection is `--workspace` > `SUBCLI_WORKSPACE` > persisted workspace selection > default XDG paths.
+Precedence for workspace selection is `--workspace` > `SUBCLI_WORKSPACE` > workspace marker discovery > persisted workspace selection > platform default paths. `subcli init [DIR]` and `subcli workspace init [DIR]` both persist the initialized workspace as the default.
 
 Subscriptions support normal CRUD through `sub add`, `sub list`, `sub edit`, and `sub remove`. Subscription ids and names must be unique; `sub add` will not overwrite an existing subscription. Use `sub edit <id|name>` for changes.
 

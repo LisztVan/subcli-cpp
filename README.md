@@ -47,9 +47,15 @@ Release-validation workflow triggers on `v*` tags, enforces tag == `v<project ve
 
 ```bash
 subcli init
-subcli workspace init .
-subcli workspace use "$(pwd)"
 subcli doctor --json
+subcli sub add --name airport-a --url https://example/sub
+subcli sub update
+subcli export all --profile bypass-cn
+```
+
+Useful next steps:
+
+```bash
 subcli completion bash > ~/.local/share/bash-completion/completions/subcli
 subcli config set core_paths.mihomo /path/to/mihomo
 subcli config set core_paths.sing_box /path/to/sing-box
@@ -59,9 +65,6 @@ subcli template list
 subcli asset update
 subcli profile list
 subcli profile get bypass-cn
-subcli config set profile_path /path/to/profile.json
-subcli sub add --name airport-a --url https://example/sub
-subcli sub update
 subcli profile explain --target all bypass-cn
 subcli export all --profile bypass-cn --json
 subcli export all --profile bypass-cn --check
@@ -82,7 +85,7 @@ On Linux, `subcli` uses XDG directories:
 - State: `${XDG_STATE_HOME:-~/.local/state}/subcli/`
 - Outputs: `${XDG_DATA_HOME:-~/.local/share}/subcli/outputs/`
 
-When a workspace is active via `--workspace DIR` or a persisted default, paths are resolved from the workspace root instead.
+`subcli init` and `subcli workspace init [DIR]` initialize a workspace and remember it as the default. When a workspace is active via `--workspace DIR`, `SUBCLI_WORKSPACE`, marker discovery, or a persisted default, paths are resolved from the workspace root instead.
 
 ## Workspace Mode
 
@@ -90,10 +93,11 @@ When a workspace is active via `--workspace DIR` or a persisted default, paths a
 
 ```bash
 subcli workspace init ./my-subcli
-subcli workspace use ./my-subcli
 subcli workspace status --json
 subcli workspace unset
 ```
+
+`workspace init` remembers the initialized workspace. Use `workspace use ./other-workspace` later when you want to switch defaults explicitly.
 
 One-off per-command override:
 
@@ -107,7 +111,7 @@ Migrate existing XDG data into a workspace:
 
 ```bash
 subcli workspace migrate --to ./my-subcli
-subcli workspace use ./my-subcli
+subcli workspace init ./my-subcli
 subcli doctor --json
 ```
 
@@ -138,4 +142,4 @@ Xray does not provide a native TUN device. The Xray TUN template is a transparen
 
 ## Documentation
 
-See [`README.subcli.md`](README.subcli.md) for detailed command examples, release validation workflow (`profile explain`, `export --json`, `--strict-capabilities`), cache behavior, troubleshooting, and deployment notes. See [`docs/config-file.md`](docs/config-file.md) for `config.yaml` reference and workspace/path precedence rules. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for the full v2.1 capability matrix (protocols, groups, DNS, route mapping, assets, and strict-mode behavior).
+See [`README.subcli.md`](README.subcli.md) for detailed command examples, release validation workflow (`profile explain`, `export --json`, `--strict-capabilities`), cache behavior, troubleshooting, and deployment notes. See [`docs/config-file.md`](docs/config-file.md) for `config.yaml` reference and workspace/path precedence rules. See [`docs/cli-glossary.zh-CN.md`](docs/cli-glossary.zh-CN.md) for a Chinese command and option glossary. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for the full v2.1 capability matrix (protocols, groups, DNS, route mapping, assets, and strict-mode behavior).

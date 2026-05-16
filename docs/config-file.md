@@ -23,10 +23,11 @@ Selection order for one invocation:
 
 1. `--workspace <DIR>`
 2. `SUBCLI_WORKSPACE=<DIR>`
-3. workspace marker / persisted workspace selection
-4. default XDG paths
+3. workspace marker discovery from the current directory upward
+4. persisted workspace selection
+5. platform default paths
 
-If no explicit workspace source is present, subcli falls back to the default XDG config/data/cache/state locations.
+`subcli init [DIR]` and `subcli workspace init [DIR]` both initialize a workspace and persist it as the default workspace. If no explicit workspace source is present and no remembered workspace exists, subcli falls back to platform default paths.
 
 ## Common Keys and Prefixes
 

@@ -70,8 +70,21 @@ bool ensureMetadataFile(const fs::path& root, std::string& error) {
 }
 
 fs::path persistedDefaultFilePath() {
-    const char* xdg = std::getenv("XDG_CONFIG_HOME");
     fs::path base;
+#ifdef _WIN32
+    const char* appData = std::getenv("APPDATA");
+    if (appData != nullptr && *appData != '\0') {
+        base = fs::path(appData);
+    } else {
+        const char* userProfile = std::getenv("USERPROFILE");
+        if (userProfile != nullptr && *userProfile != '\0') {
+            base = fs::path(userProfile) / "AppData" / "Roaming";
+        } else {
+            base = fs::temp_directory_path();
+        }
+    }
+#else
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
     if (xdg != nullptr && *xdg != '\0') {
         base = fs::path(xdg);
     } else {
@@ -82,14 +95,30 @@ fs::path persistedDefaultFilePath() {
             base = fs::temp_directory_path();
         }
     }
+#endif
     return base / "subcli" / "workspace-default";
+}
+
+AppConfig workspaceDefaultConfig() {
+    AppConfig config;
+    config.templateDir = "./templates";
+    config.outputDir = "./outputs";
+    config.assetDir = "./assets";
+    config.profile = "bypass-cn";
+    config.templateNormal["mihomo"] = "mihomo_base.yaml";
+    config.templateTun["mihomo"] = "mihomo_tun.yaml";
+    config.templateNormal["sing-box"] = "singbox_base.json";
+    config.templateTun["sing-box"] = "singbox_tun.json";
+    config.templateNormal["xray"] = "xray_base.json";
+    config.templateTun["xray"] = "xray_tun.json";
+    return config;
 }
 
 bool ensureDefaultFiles(const fs::path& root, std::string& error) {
     try {
         const fs::path configPath = root / "config.yaml";
         if (!fs::exists(configPath)) {
-            saveConfig(configPath.string(), AppConfig{});
+            saveConfig(configPath.string(), workspaceDefaultConfig());
         }
         const fs::path subPath = root / "sub.yaml";
         if (!fs::exists(subPath)) {
@@ -237,6 +266,102 @@ WorkspaceInitResult workspaceInit(const std::string& root) {
 
     std::string error;
     if (!ensureDefaultFiles(workspaceRoot, error)) {
+        out.error = error;
+        return out;
+    }
+
+    out.ok = true;
+    return out;
+}
+
+WorkspaceSeedBuiltInsResult workspaceSeedBuiltIns(
+    const std::string& root,
+    const std::string& templateSourceDir,
+    const std::string& profileSourceDir,
+    std::string& error
+) {
+    WorkspaceSeedBuiltInsResult out;
+    error.clear();
+    const fs::path workspaceRoot = normalizeRoot(root);
+
+    auto copyDirectoryMissingOnly = [&](const fs::path& source, const fs::path& destination, const std::string& label) -> bool {
+        std::error_code ec;
+        if (source.empty() || !fs::exists(source, ec) || !fs::is_directory(source, ec)) {
+            out.skipped.push_back(label + ": source missing: " + source.string());
+            return true;
+        }
+        fs::create_directories(destination, ec);
+        if (ec) {
+            error = "failed to create workspace resource directory: " + destination.string();
+            return false;
+        }
+        for (const auto& entry : fs::recursive_directory_iterator(source, ec)) {
+            if (ec) {
+                error = "failed to scan resource directory: " + source.string();
+                return false;
+            }
+            const auto relative = fs::relative(entry.path(), source, ec);
+            if (ec) {
+                error = "failed to compute resource relative path: " + entry.path().string();
+                return false;
+            }
+            const fs::path target = destination / relative;
+            if (entry.is_directory(ec)) {
+                if (ec) {
+                    error = "failed to inspect resource directory entry: " + entry.path().string();
+                    return false;
+                }
+                fs::create_directories(target, ec);
+                if (ec) {
+                    error = "failed to create resource subdirectory: " + target.string();
+                    return false;
+                }
+                continue;
+            }
+            if (ec) {
+                error = "failed to inspect resource entry: " + entry.path().string();
+                return false;
+            }
+            if (!entry.is_regular_file(ec)) {
+                if (ec) {
+                    error = "failed to inspect resource file: " + entry.path().string();
+                    return false;
+                }
+                out.skipped.push_back(label + ": non-regular: " + relative.generic_string());
+                continue;
+            }
+            if (fs::exists(target, ec)) {
+                if (ec) {
+                    error = "failed to inspect resource target: " + target.string();
+                    return false;
+                }
+                out.skipped.push_back(label + ": existing: " + relative.generic_string());
+                continue;
+            }
+            if (ec) {
+                error = "failed to inspect resource target: " + target.string();
+                return false;
+            }
+            fs::create_directories(target.parent_path(), ec);
+            if (ec) {
+                error = "failed to create resource parent directory: " + target.parent_path().string();
+                return false;
+            }
+            fs::copy_file(entry.path(), target, fs::copy_options::none, ec);
+            if (ec) {
+                error = "failed to copy resource file: " + entry.path().string();
+                return false;
+            }
+            out.copied.push_back(label + ": " + relative.generic_string());
+        }
+        return true;
+    };
+
+    if (!copyDirectoryMissingOnly(fs::path(templateSourceDir), workspaceRoot / "templates", "templates")) {
+        out.error = error;
+        return out;
+    }
+    if (!copyDirectoryMissingOnly(fs::path(profileSourceDir), workspaceRoot / "profiles", "profiles")) {
         out.error = error;
         return out;
     }

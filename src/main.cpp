@@ -1912,17 +1912,48 @@ int doLogsCommand(const std::vector<std::string>& args) {
 int doInitCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         printInitUsage();
-        return 0;
+        return ExitOk;
     }
-    ensureDefaults();
-    std::cout << "initialized subcli\n";
-    std::cout << "config_dir=" << gPaths.configDir.string() << "\n";
-    std::cout << "data_dir=" << gPaths.dataDir.string() << "\n";
-    std::cout << "cache_dir=" << gPaths.cacheDir.string() << "\n";
-    std::cout << "state_dir=" << gPaths.stateDir.string() << "\n";
-    std::cout << "template_dir=" << gPaths.templateDir.string() << "\n";
-    std::cout << "output_dir=" << gPaths.outputDir.string() << "\n";
-    return 0;
+
+    CLI::App parser("init");
+    parser.set_help_flag("");
+    parser.allow_extras(false);
+    std::string dirArg;
+    parser.add_option("dir", dirArg)->required(false);
+    if (!parseCliArgs(parser, args)) {
+        printInitUsage();
+        return ExitUsage;
+    }
+
+    const std::string initRoot = dirArg.empty() ? platformDefaultWorkspaceRoot(detectPlatformKind()) : dirArg;
+    const auto r = workspaceInit(initRoot);
+    if (!r.ok) {
+        std::cerr << "init failed: " << r.error << "\n";
+        return ExitError;
+    }
+
+    const RuntimePaths installed = buildRuntimePaths(gExecutablePath);
+    std::string seedError;
+    const auto seed = workspaceSeedBuiltIns(r.root, installed.templateDir.string(), installed.profileDir.string(), seedError);
+    if (!seed.ok) {
+        std::cerr << "init failed while seeding built-ins: " << seedError << "\n";
+        return ExitError;
+    }
+
+    std::string useError;
+    if (!workspaceUse(r.root, useError)) {
+        std::cerr << "init failed while remembering workspace: " << useError << "\n";
+        return ExitError;
+    }
+
+    std::cout << "workspace initialized: " << r.root << "\n";
+    std::cout << "default workspace set to: " << r.root << "\n";
+    std::cout << "Next steps:\n";
+    std::cout << "  subcli doctor\n";
+    std::cout << "  subcli sub add --name my-sub --url <subscription-url>\n";
+    std::cout << "  subcli sub update\n";
+    std::cout << "  subcli export mihomo\n";
+    return ExitOk;
 }
 
 bool checkDirWritable(const std::filesystem::path& dir, std::string& reason) {
@@ -4234,18 +4265,29 @@ int doWorkspaceCommand(const std::vector<std::string>& args) {
     else if (*parser.get_subcommand("doctor")) mode = "doctor";
 
     if (mode == "init") {
-        std::string initRoot;
-        if (!dirArg.empty()) {
-            initRoot = dirArg;
-        } else {
-            initRoot = normalizeAbsolutePath(std::filesystem::current_path()).string() + "/subcli-workspace";
-        }
+        const std::string initRoot = dirArg.empty() ? platformDefaultWorkspaceRoot(detectPlatformKind()) : dirArg;
         const auto r = workspaceInit(initRoot);
         if (!r.ok) {
             std::cerr << "workspace init failed: " << r.error << "\n";
             return ExitError;
         }
+
+        const RuntimePaths installed = buildRuntimePaths(gExecutablePath);
+        std::string seedError;
+        const auto seed = workspaceSeedBuiltIns(r.root, installed.templateDir.string(), installed.profileDir.string(), seedError);
+        if (!seed.ok) {
+            std::cerr << "workspace init failed while seeding built-ins: " << seedError << "\n";
+            return ExitError;
+        }
+
+        std::string useError;
+        if (!workspaceUse(r.root, useError)) {
+            std::cerr << "workspace init failed while remembering workspace: " << useError << "\n";
+            return ExitError;
+        }
+
         std::cout << "workspace initialized: " << r.root << "\n";
+        std::cout << "default workspace set to: " << r.root << "\n";
         return ExitOk;
     }
 
@@ -4560,18 +4602,16 @@ int main(int argc, char** argv) {
             return ExitError;
         }
 
-        if (gEnvResult.source != EnvironmentSource::PlatformDefault) {
-            gPaths.root = gEnvResult.paths.root;
-            gPaths.configDir = gEnvResult.paths.configDir;
-            gPaths.dataDir = gEnvResult.paths.dataDir;
-            gPaths.cacheDir = gEnvResult.paths.cacheDir;
-            gPaths.stateDir = gEnvResult.paths.stateDir;
-            gPaths.outputDir = gEnvResult.paths.outputDir;
-            gPaths.templateDir = gEnvResult.paths.templateDir;
-            gPaths.profileDir = gEnvResult.paths.profileDir;
-            gPaths.subPath = gEnvResult.paths.subPath;
-            gPaths.configPath = gEnvResult.paths.configPath;
-        }
+        gPaths.root = gEnvResult.paths.root;
+        gPaths.configDir = gEnvResult.paths.configDir;
+        gPaths.dataDir = gEnvResult.paths.dataDir;
+        gPaths.cacheDir = gEnvResult.paths.cacheDir;
+        gPaths.stateDir = gEnvResult.paths.stateDir;
+        gPaths.outputDir = gEnvResult.paths.outputDir;
+        gPaths.templateDir = gEnvResult.paths.templateDir;
+        gPaths.profileDir = gEnvResult.paths.profileDir;
+        gPaths.subPath = gEnvResult.paths.subPath;
+        gPaths.configPath = gEnvResult.paths.configPath;
 
         if (cmd.empty()) {
             printRootUsage();

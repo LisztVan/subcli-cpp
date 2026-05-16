@@ -46,5 +46,6 @@ struct EnvironmentResolveResult {
 };
 
 EnvironmentResolveResult resolveEnvironment(const EnvironmentResolveInput& input);
+std::string platformDefaultWorkspaceRoot(PlatformKind platform);
 
 } // namespace subcli

@@ -171,4 +171,8 @@ EnvironmentResolveResult resolveEnvironment(const EnvironmentResolveInput& input
     return out;
 }
 
+std::string platformDefaultWorkspaceRoot(PlatformKind platform) {
+    return platformDefaultRoot(platform).string();
+}
+
 } // namespace subcli

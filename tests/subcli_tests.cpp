@@ -6625,6 +6625,41 @@ void testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker() {
     fs::remove_all(base);
 }
 
+void testPlatformDefaultWorkspaceRootIsNonEmpty() {
+    const std::string root = subcli::platformDefaultWorkspaceRoot(subcli::PlatformKind::Linux);
+    require(!root.empty(), "platform default workspace root should be non-empty");
+    require(root.find("subcli") != std::string::npos, "platform default workspace root should contain subcli");
+}
+
+void testWorkspaceSeedBuiltInsCopiesMissingFilesOnly() {
+    const fs::path root = makeUniqueTestDir("subcli-workspace-seed-builtins");
+    const fs::path source = makeUniqueTestDir("subcli-workspace-seed-source");
+    fs::create_directories(source / "templates");
+    fs::create_directories(source / "profiles");
+    fs::create_directories(root / "templates");
+    fs::create_directories(root / "profiles");
+
+    {
+        std::ofstream(source / "templates" / "mihomo_base.yaml") << "mixed-port: 7890\n";
+        std::ofstream(source / "profiles" / "bypass-cn.json") << "{\"groups\":[],\"rules\":[]}\n";
+        std::ofstream(root / "templates" / "mihomo_base.yaml") << "user-owned\n";
+    }
+
+    std::string error;
+    const auto result = subcli::workspaceSeedBuiltIns(
+        root.string(),
+        (source / "templates").string(),
+        (source / "profiles").string(),
+        error
+    );
+    require(result.ok, "workspace seed built-ins should succeed: " + error);
+    require(fs::exists(root / "profiles" / "bypass-cn.json"), "profile should be copied");
+    require(subcli::readFile((root / "templates" / "mihomo_base.yaml").string()) == "user-owned\n", "existing template should not be overwritten");
+
+    fs::remove_all(root);
+    fs::remove_all(source);
+}
+
 void testWorkspaceInitCreatesExpectedTree() {
     const fs::path root = fs::temp_directory_path() / "subcli-workspace-init-tests";
     fs::remove_all(root);
@@ -7114,6 +7149,8 @@ int main(int argc, char* argv[]) {
     runTest("testEnvironmentResolutionUsesEnvWorkspaceWhenCliWorkspaceMissing", testEnvironmentResolutionUsesEnvWorkspaceWhenCliWorkspaceMissing);
     runTest("testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault", testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault);
     runTest("testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker", testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker);
+    runTest("testPlatformDefaultWorkspaceRootIsNonEmpty", testPlatformDefaultWorkspaceRootIsNonEmpty);
+    runTest("testWorkspaceSeedBuiltInsCopiesMissingFilesOnly", testWorkspaceSeedBuiltInsCopiesMissingFilesOnly);
     runTest("testWorkspaceInitCreatesExpectedTree", testWorkspaceInitCreatesExpectedTree);
     runTest("testWorkspaceReadMetadataRejectsUnsupportedEnvVersion", testWorkspaceReadMetadataRejectsUnsupportedEnvVersion);
     runTest("testWorkspaceReadMetadataSupportsLegacyMarkerWithoutMetadata", testWorkspaceReadMetadataSupportsLegacyMarkerWithoutMetadata);

@@ -11,6 +11,13 @@ struct WorkspaceInitResult {
     std::string error;
 };
 
+struct WorkspaceSeedBuiltInsResult {
+    bool ok = false;
+    std::vector<std::string> copied;
+    std::vector<std::string> skipped;
+    std::string error;
+};
+
 struct WorkspaceStatusResult {
     bool ok = false;
     std::string persistedPath;
@@ -46,6 +53,12 @@ struct WorkspaceMigrateResult {
 };
 
 WorkspaceInitResult workspaceInit(const std::string& root);
+WorkspaceSeedBuiltInsResult workspaceSeedBuiltIns(
+    const std::string& root,
+    const std::string& templateSourceDir,
+    const std::string& profileSourceDir,
+    std::string& error
+);
 bool workspaceUse(const std::string& root, std::string& error);
 bool workspaceUnset(std::string& error);
 WorkspaceStatusResult workspaceStatus();

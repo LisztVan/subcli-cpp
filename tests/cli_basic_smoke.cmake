@@ -68,31 +68,38 @@ function(run_subcli _label)
     endif()
 endfunction()
 
+function(run_subcli_capture _label _stdout_var)
+    execute_process(
+        COMMAND "${CMAKE_COMMAND}" -E env ${_subcli_env} "${SUBCLI_BIN}" ${ARGN}
+        WORKING_DIRECTORY "${_smoke_root}"
+        RESULT_VARIABLE _result
+        OUTPUT_VARIABLE _stdout
+        ERROR_VARIABLE _stderr
+    )
+    if(NOT _result STREQUAL "0")
+        string(JOIN " " _args ${ARGN})
+        message(FATAL_ERROR
+            "subcli CLI smoke failed: ${_label}\n"
+            "Command: ${SUBCLI_BIN} ${_args}\n"
+            "Exit code: ${_result}\n"
+            "stdout:\n${_stdout}\n"
+            "stderr:\n${_stderr}"
+        )
+    endif()
+    set(${_stdout_var} "${_stdout}" PARENT_SCOPE)
+endfunction()
+
 run_subcli("root help" --help)
 run_subcli("workspace init" workspace init "${TEST_WORK_DIR}")
+run_subcli_capture("workspace status --json" _workspace_status workspace status --json)
+string(FIND "${_workspace_status}" "${TEST_WORK_DIR}" _workspace_status_pos)
+if(_workspace_status_pos EQUAL -1)
+    message(FATAL_ERROR "workspace status did not report initialized workspace: ${_workspace_status}")
+endif()
 
-file(COPY "${SOURCE_DIR}/templates/" DESTINATION "${TEST_WORK_DIR}/templates")
-file(WRITE "${TEST_WORK_DIR}/config.yaml" [=[version: 1
-tun: false
-template_dir: ./templates
-output_dir: ./outputs
-profile: bypass-cn
-asset_dir: ./assets
-templates:
-  mihomo:
-    normal: mihomo_base.yaml
-    tun: mihomo_tun.yaml
-  sing-box:
-    normal: singbox_base.json
-    tun: singbox_tun.json
-  xray:
-    normal: xray_base.json
-    tun: xray_tun.json
-]=])
-
-run_subcli("doctor --json" --workspace "${TEST_WORK_DIR}" doctor --json)
-run_subcli("profile list" --workspace "${TEST_WORK_DIR}" profile list)
-run_subcli("template list" --workspace "${TEST_WORK_DIR}" template list)
-run_subcli("config list" --workspace "${TEST_WORK_DIR}" config list)
+run_subcli("doctor --json" doctor --json)
+run_subcli("profile list" profile list)
+run_subcli("template list" template list)
+run_subcli("config list" config list)
 run_subcli("completion bash" completion bash)
-run_subcli("profile validate" --workspace "${TEST_WORK_DIR}" profile validate "${SOURCE_DIR}/profiles/bypass-cn.json")
+run_subcli("profile validate" profile validate "${TEST_WORK_DIR}/profiles/bypass-cn.json")

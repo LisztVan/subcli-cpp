@@ -77,15 +77,33 @@ Proxy cores are not bundled. Configure core paths explicitly or make them availa
 
 ## Runtime Paths
 
-On Linux, `subcli` uses XDG directories:
+`subcli` is workspace-first. `subcli init [DIR]` and `subcli workspace init [DIR]` initialize a workspace, seed built-in templates/profiles, and remember that workspace as the default.
 
-- Config: `${XDG_CONFIG_HOME:-~/.config}/subcli/config.yaml`
-- Data: `${XDG_DATA_HOME:-~/.local/share}/subcli/sub.yaml`
-- Cache: `${XDG_CACHE_HOME:-~/.cache}/subcli/`
-- State: `${XDG_STATE_HOME:-~/.local/state}/subcli/`
-- Outputs: `${XDG_DATA_HOME:-~/.local/share}/subcli/outputs/`
+Workspace resolution order is:
 
-`subcli init` and `subcli workspace init [DIR]` initialize a workspace and remember it as the default. When a workspace is active via `--workspace DIR`, `SUBCLI_WORKSPACE`, marker discovery, or a persisted default, paths are resolved from the workspace root instead.
+1. `--workspace DIR`
+2. `SUBCLI_WORKSPACE`
+3. marker discovery from the current directory (`.subcli-workspace` or `subcli.env.yaml`)
+4. remembered default workspace
+5. platform default workspace
+
+When no `DIR` is provided, the platform default workspace is used:
+
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/subcli`
+- macOS: `~/Library/Application Support/subcli`
+- Windows: `%APPDATA%\subcli`
+
+All runtime paths then live under the resolved workspace root:
+
+- Config: `<workspace>/config.yaml`
+- Subscriptions: `<workspace>/sub.yaml`
+- Cache: `<workspace>/cache/`
+- State: `<workspace>/state/`
+- Outputs: `<workspace>/outputs/`
+- Templates: `<workspace>/templates/`
+- Profiles: `<workspace>/profiles/`
+
+Older XDG-style paths may still appear when migrating existing data, but first-use commands should prefer `subcli init` / `subcli workspace init` and `subcli workspace status --json`.
 
 ## Workspace Mode
 
@@ -119,8 +137,11 @@ subcli doctor --json
 
 ```bash
 cmake --build build -j
+cmake --build build --target package
 ctest --test-dir build --output-on-failure
 ```
+
+The default CTest suite includes the CPack package first-use journey, so build packages before running `ctest` in a fresh build directory.
 
 The practical end-to-end check is exporting a config and validating it with the corresponding core:
 

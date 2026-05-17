@@ -50,13 +50,31 @@ The primary workflow ends at exported config files. If you have a local core ins
 
 ## Runtime Directories
 
-`subcli` uses XDG directories on Linux:
+`subcli` is workspace-first. `subcli init [DIR]` and `subcli workspace init [DIR]` initialize a workspace, seed built-in templates/profiles, and remember that workspace as the default.
 
-- Config: `${XDG_CONFIG_HOME:-~/.config}/subcli/config.yaml`
-- Data: `${XDG_DATA_HOME:-~/.local/share}/subcli/sub.yaml`
-- Cache: `${XDG_CACHE_HOME:-~/.cache}/subcli/`
-- State: `${XDG_STATE_HOME:-~/.local/state}/subcli/`
-- Outputs: `${XDG_DATA_HOME:-~/.local/share}/subcli/outputs/`
+Workspace resolution order is:
+
+1. `--workspace DIR`
+2. `SUBCLI_WORKSPACE`
+3. marker discovery from the current directory (`.subcli-workspace` or `subcli.env.yaml`)
+4. remembered default workspace
+5. platform default workspace
+
+When no `DIR` is provided, the platform default workspace is used:
+
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/subcli`
+- macOS: `~/Library/Application Support/subcli`
+- Windows: `%APPDATA%\subcli`
+
+All runtime paths then live under the resolved workspace root:
+
+- Config: `<workspace>/config.yaml`
+- Subscriptions: `<workspace>/sub.yaml`
+- Cache: `<workspace>/cache/`
+- State: `<workspace>/state/`
+- Outputs: `<workspace>/outputs/`
+- Templates: `<workspace>/templates/`
+- Profiles: `<workspace>/profiles/`
 
 Persisted relative paths in `config.yaml` are resolved relative to the config directory. CLI path arguments such as `--output-dir`, `--file`, and path-valued `--profile` are resolved relative to the current shell directory.
 

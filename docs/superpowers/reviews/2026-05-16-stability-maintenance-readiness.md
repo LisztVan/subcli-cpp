@@ -49,14 +49,20 @@ Note: local configure used `FETCHCONTENT_SOURCE_DIR_*` paths from the already-po
 Workflow run:
 
 ```text
-Pending. Push branch and record the successful GitHub Actions URL here.
+https://github.com/LisztVan/subcli-cpp/actions/runs/25990761591
+```
+
+Head SHA:
+
+```text
+d64dbbebe030fc686be780125251d06ab1fcd3f2
 ```
 
 Results:
 
-- Linux x86_64: pending
-- macOS arm64: pending
-- Windows x86_64: pending
+- Linux x86_64: success
+- macOS arm64: success
+- Windows x86_64: success
 
 ## Coverage Summary
 

@@ -155,6 +155,7 @@ std::filesystem::path resolveInstalledTemplateDir(const std::filesystem::path& e
     const std::vector<std::filesystem::path> candidates = {
         exeDir / "../share/subcli/templates",
         exeDir / "../templates",
+        exeDir / "../../templates",
         fallbackRoot / "templates",
     };
 
@@ -174,6 +175,7 @@ std::filesystem::path resolveInstalledProfileDir(const std::filesystem::path& ex
     const std::vector<std::filesystem::path> candidates = {
         exeDir / "../share/subcli/profiles",
         exeDir / "../profiles",
+        exeDir / "../../profiles",
         fallbackRoot / "profiles",
     };
 

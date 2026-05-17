@@ -108,7 +108,7 @@ void runBoundaryChecks(const Options& options, subcli::StabilityHttpServer& serv
 void runJourney(const Options& options) {
     fs::remove_all(options.testRoot);
     fs::create_directories(options.testRoot);
-    const fs::path workspace = options.testRoot / "subcli 稳定性 workspace with space";
+    const fs::path workspace = options.testRoot / "subcli stability workspace with space";
     const fs::path outputDir = options.testRoot / "outputs";
     fs::create_directories(outputDir);
 

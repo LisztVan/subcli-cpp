@@ -6665,9 +6665,9 @@ void testWorkspaceSeedBuiltInsCopiesMissingFilesOnly() {
     fs::create_directories(root / "profiles");
 
     {
-        std::ofstream(source / "templates" / "mihomo_base.yaml") << "mixed-port: 7890\n";
-        std::ofstream(source / "profiles" / "bypass-cn.json") << "{\"groups\":[],\"rules\":[]}\n";
-        std::ofstream(root / "templates" / "mihomo_base.yaml") << "user-owned\n";
+        std::ofstream(source / "templates" / "mihomo_base.yaml", std::ios::binary) << "mixed-port: 7890\n";
+        std::ofstream(source / "profiles" / "bypass-cn.json", std::ios::binary) << "{\"groups\":[],\"rules\":[]}\n";
+        std::ofstream(root / "templates" / "mihomo_base.yaml", std::ios::binary) << "user-owned\n";
     }
 
     std::string error;

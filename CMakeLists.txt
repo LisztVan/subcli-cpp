@@ -207,6 +207,7 @@ add_test(
         "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
         "-DTEST_ROOT=${CMAKE_CURRENT_BINARY_DIR}/subcli-stability-package-$<CONFIG>"
         "-DSTABILITY_RUNNER=$<TARGET_FILE:subcli_stability_runner>"
+        "-DPACKAGE_VERSION=${PROJECT_VERSION}"
         -P "${CMAKE_SOURCE_DIR}/tests/stability_package_journey.cmake"
 )
 

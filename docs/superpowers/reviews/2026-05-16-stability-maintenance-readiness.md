@@ -49,13 +49,19 @@ Note: local configure used `FETCHCONTENT_SOURCE_DIR_*` paths from the already-po
 Workflow run:
 
 ```text
-https://github.com/LisztVan/subcli-cpp/actions/runs/25990761591
+https://github.com/LisztVan/subcli-cpp/actions/runs/25992111194
+```
+
+Event:
+
+```text
+push
 ```
 
 Head SHA:
 
 ```text
-d64dbbebe030fc686be780125251d06ab1fcd3f2
+d5c963bd923ccd0f6b5e2c7b1957f89d3c028fb8
 ```
 
 Results:
@@ -63,6 +69,8 @@ Results:
 - Linux x86_64: success
 - macOS arm64: success
 - Windows x86_64: success
+
+Earlier manually dispatched run `https://github.com/LisztVan/subcli-cpp/actions/runs/25990761591` also passed on Linux, macOS, and Windows for code SHA `d64dbbebe030fc686be780125251d06ab1fcd3f2`.
 
 ## Coverage Summary
 

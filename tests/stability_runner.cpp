@@ -1,10 +1,14 @@
 #include "stability_http_server.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "subcli/platform.hpp"
 
@@ -74,6 +78,35 @@ void requireContains(const std::string& haystack, const std::string& needle, con
     }
 }
 
+std::string normalizedPathForCompare(const fs::path& path) {
+    std::error_code ec;
+    fs::path normalized = fs::weakly_canonical(path, ec);
+    if (ec) {
+        ec.clear();
+        normalized = fs::absolute(path, ec);
+        if (ec) {
+            normalized = path;
+        }
+    }
+    std::string value = normalized.lexically_normal().generic_string();
+#ifdef _WIN32
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+#endif
+    return value;
+}
+
+void requireWorkspaceStatusPath(const std::string& statusJson, const std::string& key, const fs::path& expectedPath, const std::string& label) {
+    const auto parsed = nlohmann::json::parse(statusJson, nullptr, false);
+    if (parsed.is_discarded() || !parsed.contains(key) || !parsed[key].is_string()) {
+        fail(label + " missing JSON string key: " + key + "\nactual:\n" + statusJson);
+    }
+    const std::string actual = normalizedPathForCompare(fs::path(parsed[key].get<std::string>()));
+    const std::string expected = normalizedPathForCompare(expectedPath);
+    if (actual != expected) {
+        fail(label + " path mismatch for " + key + "\nexpected: " + expected + "\nactual: " + actual + "\njson:\n" + statusJson);
+    }
+}
+
 void requireAnyFileNonEmpty(const fs::path& dir, const std::string& extension, const std::string& label) {
     std::error_code ec;
     if (!fs::exists(dir, ec)) {
@@ -131,16 +164,19 @@ void runJourney(const Options& options) {
 
     runOk(options, "init", {"init", workspace.string()});
     const std::string status = runOk(options, "workspace status", {"workspace", "status", "--json"});
-    requireContains(status, workspace.string(), "workspace status");
+    requireWorkspaceStatusPath(status, "active_root", workspace, "workspace status");
+    requireWorkspaceStatusPath(status, "default_root", workspace, "workspace default status");
 
     const fs::path overrideWorkspace = options.testRoot / "override workspace";
     runOk(options, "workspace init override", {"workspace", "init", overrideWorkspace.string()});
     const std::string switched = runOk(options, "workspace status after switch", {"workspace", "status", "--json"});
-    requireContains(switched, overrideWorkspace.string(), "workspace status after second init");
+    requireWorkspaceStatusPath(switched, "active_root", overrideWorkspace, "workspace status after second init");
+    requireWorkspaceStatusPath(switched, "default_root", overrideWorkspace, "workspace default after second init");
 
     runOk(options, "workspace use original", {"workspace", "use", workspace.string()});
     const std::string restored = runOk(options, "workspace status restored", {"workspace", "status", "--json"});
-    requireContains(restored, workspace.string(), "workspace status after workspace use");
+    requireWorkspaceStatusPath(restored, "active_root", workspace, "workspace status after workspace use");
+    requireWorkspaceStatusPath(restored, "default_root", workspace, "workspace default after workspace use");
 
     runOk(options, "doctor", {"doctor", "--json"});
     runOk(options, "config list", {"config", "list"});

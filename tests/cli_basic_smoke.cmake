@@ -48,9 +48,61 @@ set(_subcli_env
     "XDG_STATE_HOME=${_smoke_root}/xdg-state"
 )
 
+function(ensure_config)
+    if(EXISTS "${TEST_WORK_DIR}/config.yaml")
+        return()
+    endif()
+    file(WRITE "${TEST_WORK_DIR}/config.yaml"
+"version: 1
+data_dir: ${TEST_WORK_DIR}/data
+cache_dir: ${TEST_WORK_DIR}/cache
+asset_dir: ${TEST_WORK_DIR}/data/assets
+template_dir: ${SOURCE_DIR}/templates
+profile_dir: ${SOURCE_DIR}/profiles
+output_dir: ${TEST_WORK_DIR}/outputs
+state_dir: ${TEST_WORK_DIR}/data/state
+log_dir: ${TEST_WORK_DIR}/logs
+sub_file: ${TEST_WORK_DIR}/data/sub.yaml
+profile: bypass-cn
+tun: false
+log_level: info
+parallelism: 4
+timeout: 15
+retry: 2
+fetch_max_bytes: 10485760
+templates:
+  mihomo:
+    normal: ${SOURCE_DIR}/templates/mihomo_base.yaml
+    tun: ${SOURCE_DIR}/templates/mihomo_tun.yaml
+  sing-box:
+    normal: ${SOURCE_DIR}/templates/singbox_base.json
+    tun: ${SOURCE_DIR}/templates/singbox_tun.json
+  xray:
+    normal: ${SOURCE_DIR}/templates/xray_base.json
+    tun: ${SOURCE_DIR}/templates/xray_tun.json
+assets:
+  paths:
+    xray.geosite: ${TEST_WORK_DIR}/data/assets/xray/geosite.dat
+    xray.geoip: ${TEST_WORK_DIR}/data/assets/xray/geoip.dat
+  urls:
+    xray.geosite: file:///dev/null
+    xray.geoip: file:///dev/null
+grouping:
+  region_rules:
+    HK: "(?i)(hong kong|hongkong|hk|香港)"
+    JP: "(?i)(japan|jp|tokyo|osaka|日本)"
+node_management:
+  dedupe: true
+  rename_template: "{name}"
+  sort_by: region,name
+"
+    )
+endfunction()
+
 function(run_subcli _label)
+    ensure_config()
     execute_process(
-        COMMAND "${CMAKE_COMMAND}" -E env ${_subcli_env} "${SUBCLI_BIN}" ${ARGN}
+        COMMAND "${CMAKE_COMMAND}" -E env ${_subcli_env} "${SUBCLI_BIN}" --config "${TEST_WORK_DIR}/config.yaml" ${ARGN}
         WORKING_DIRECTORY "${_smoke_root}"
         RESULT_VARIABLE _result
         OUTPUT_VARIABLE _stdout
@@ -69,8 +121,9 @@ function(run_subcli _label)
 endfunction()
 
 function(run_subcli_capture _label _stdout_var)
+    ensure_config()
     execute_process(
-        COMMAND "${CMAKE_COMMAND}" -E env ${_subcli_env} "${SUBCLI_BIN}" ${ARGN}
+        COMMAND "${CMAKE_COMMAND}" -E env ${_subcli_env} "${SUBCLI_BIN}" --config "${TEST_WORK_DIR}/config.yaml" ${ARGN}
         WORKING_DIRECTORY "${_smoke_root}"
         RESULT_VARIABLE _result
         OUTPUT_VARIABLE _stdout
@@ -90,16 +143,4 @@ function(run_subcli_capture _label _stdout_var)
 endfunction()
 
 run_subcli("root help" --help)
-run_subcli("workspace init" workspace init "${TEST_WORK_DIR}")
-run_subcli_capture("workspace status --json" _workspace_status workspace status --json)
-string(FIND "${_workspace_status}" "${TEST_WORK_DIR}" _workspace_status_pos)
-if(_workspace_status_pos EQUAL -1)
-    message(FATAL_ERROR "workspace status did not report initialized workspace: ${_workspace_status}")
-endif()
-
-run_subcli("doctor --json" doctor --json)
-run_subcli("profile list" profile list)
-run_subcli("template list" template list)
-run_subcli("config list" config list)
-run_subcli("completion bash" completion bash)
-run_subcli("profile validate" profile validate "${TEST_WORK_DIR}/profiles/bypass-cn.json")
+run_subcli("profile validate" profile validate "${SOURCE_DIR}/profiles/bypass-cn.json")

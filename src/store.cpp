@@ -137,7 +137,14 @@ AppConfig loadConfig(const std::string& path) {
     c.retry = root["retry"].as<int>(2);
     c.fetchMaxBytes = root["fetch_max_bytes"].as<long>(10 * 1024 * 1024);
     c.templateDir = root["template_dir"].as<std::string>("./templates");
+    c.dataDir = root["data_dir"].as<std::string>("./data");
+    c.cacheDir = root["cache_dir"].as<std::string>("./cache");
+    c.templateDir = root["template_dir"].as<std::string>("./templates");
+    c.profileDir = root["profile_dir"].as<std::string>("./profiles");
     c.outputDir = root["output_dir"].as<std::string>("./outputs");
+    c.stateDir = root["state_dir"].as<std::string>("./data/state");
+    c.logDir = root["log_dir"].as<std::string>("./logs");
+    c.subFile = root["sub_file"].as<std::string>("./data/sub.yaml");
     c.profile = root["profile"].as<std::string>("bypass-cn");
     c.profilePath = root["profile_path"].as<std::string>("");
     if (root["routing"] && root["routing"]["rules"] && root["routing"]["rules"].IsSequence()) {
@@ -151,7 +158,7 @@ AppConfig loadConfig(const std::string& path) {
             }
         }
     }
-    c.assetDir = root["asset_dir"].as<std::string>("./assets");
+    c.assetDir = root["asset_dir"].as<std::string>("./data/assets");
     if (root["core_paths"] && root["core_paths"].IsMap()) {
         c.mihomoPath = root["core_paths"]["mihomo"].as<std::string>("");
         c.singBoxPath = root["core_paths"]["sing_box"].as<std::string>("");
@@ -230,8 +237,14 @@ void saveConfig(const std::string& path, const AppConfig& c) {
     root["timeout"] = c.timeout;
     root["retry"] = c.retry;
     root["fetch_max_bytes"] = c.fetchMaxBytes;
+    root["data_dir"] = c.dataDir;
+    root["cache_dir"] = c.cacheDir;
     root["template_dir"] = c.templateDir;
+    root["profile_dir"] = c.profileDir;
     root["output_dir"] = c.outputDir;
+    root["state_dir"] = c.stateDir;
+    root["log_dir"] = c.logDir;
+    root["sub_file"] = c.subFile;
     root["profile"] = c.profile;
     root["profile_path"] = c.profilePath;
     root["routing"]["rules"] = YAML::Node(YAML::NodeType::Sequence);

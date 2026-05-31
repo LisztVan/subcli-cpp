@@ -49,8 +49,14 @@ struct AppConfig {
     int timeout = 15;
     int retry = 2;
     long fetchMaxBytes = 10 * 1024 * 1024;
+    std::string dataDir = "./data";
+    std::string cacheDir = "./cache";
     std::string templateDir = "./templates";
+    std::string profileDir = "./profiles";
     std::string outputDir = "./outputs";
+    std::string stateDir = "./data/state";
+    std::string logDir = "./logs";
+    std::string subFile = "./data/sub.yaml";
     std::string mihomoPath;
     std::string singBoxPath;
     std::string xrayPath;
@@ -67,7 +73,7 @@ struct AppConfig {
         std::string outbound;
     };
     std::vector<RoutingRule> routingRules;
-    std::string assetDir = "./assets";
+    std::string assetDir = "./data/assets";
     std::map<std::string, std::string> assetPaths;
     std::map<std::string, std::string> assetUrls;
 

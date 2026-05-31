@@ -4021,6 +4021,43 @@ void testStorePersistsProfileAndAssets() {
     fs::remove(path);
 }
 
+void testStorePersistsRuntimePathFields() {
+    const fs::path dir = fs::temp_directory_path() / "subcli-config-runtime-paths";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    const fs::path configPath = dir / "config.yaml";
+
+    subcli::AppConfig config;
+    config.dataDir = "./data";
+    config.cacheDir = "./cache";
+    config.assetDir = "./data/assets";
+    config.templateDir = "./templates";
+    config.profileDir = "./profiles";
+    config.outputDir = "./outputs";
+    config.stateDir = "./data/state";
+    config.logDir = "./logs";
+    config.subFile = "./data/sub.yaml";
+    config.assetPaths["xray.geosite"] = "./data/assets/xray/geosite.dat";
+    config.assetUrls["xray.geosite"] = "https://example.invalid/geosite.dat";
+
+    subcli::saveConfig(configPath.string(), config);
+    const auto loaded = subcli::loadConfig(configPath.string());
+
+    require(loaded.dataDir == "./data", "data_dir should persist");
+    require(loaded.cacheDir == "./cache", "cache_dir should persist");
+    require(loaded.assetDir == "./data/assets", "asset_dir should persist");
+    require(loaded.templateDir == "./templates", "template_dir should persist");
+    require(loaded.profileDir == "./profiles", "profile_dir should persist");
+    require(loaded.outputDir == "./outputs", "output_dir should persist");
+    require(loaded.stateDir == "./data/state", "state_dir should persist");
+    require(loaded.logDir == "./logs", "log_dir should persist");
+    require(loaded.subFile == "./data/sub.yaml", "sub_file should persist");
+    require(loaded.assetPaths.at("xray.geosite") == "./data/assets/xray/geosite.dat", "asset path should persist as app-relative value");
+
+    fs::remove_all(dir, ec);
+}
+
 void testStorePersistsProfilePath() {
     const fs::path path = fs::temp_directory_path() / "subcli-tests-profile-path-config.yaml";
     subcli::AppConfig config;
@@ -6966,6 +7003,7 @@ int main(int argc, char* argv[]) {
     runTest("testSubscriptionServicePruneFailedDaysKeepsInvalidTimestamp", testSubscriptionServicePruneFailedDaysKeepsInvalidTimestamp);
     runTest("testStorePersistsFetchMaxBytes", testStorePersistsFetchMaxBytes);
     runTest("testStorePersistsProfileAndAssets", testStorePersistsProfileAndAssets);
+    runTest("testStorePersistsRuntimePathFields", testStorePersistsRuntimePathFields);
     runTest("testStorePersistsProfilePath", testStorePersistsProfilePath);
     runTest("testStoreDefaultsMissingProfilePathToEmpty", testStoreDefaultsMissingProfilePathToEmpty);
     runTest("testRegistryContainsCurrentConfigKeys", testRegistryContainsCurrentConfigKeys);

@@ -1,0 +1,46 @@
+name: Runtime Command Tests
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-test:
+    name: Runtime ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+          - name: macos-arm64
+            os: macos-latest
+          - name: windows-x86_64
+            os: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ make
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Runtime smoke test
+        run: ctest --test-dir build --build-config Release -R subcli_runtime_command_smoke --output-on-failure
+
+      - name: Full test suite
+        run: ctest --test-dir build --build-config Release --output-on-failure

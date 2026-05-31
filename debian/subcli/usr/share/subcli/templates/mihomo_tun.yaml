@@ -1,0 +1,24 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+
+tun:
+  enable: true
+  stack: system
+  auto-route: true
+  auto-detect-interface: true
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+
+proxies: []
+proxy-groups: []
+rules:
+  - MATCH,PROXY

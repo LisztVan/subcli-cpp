@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "name": "direct",
+  "description": "Route all traffic directly without proxy groups.",
+  "default_outbound": "DIRECT",
+  "groups": [],
+  "rules": [
+    {
+      "type": "final",
+      "outbound": "DIRECT"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+usr/bin/subcli
+usr/share/subcli/templates/*
+usr/share/subcli/profiles/*
+usr/share/doc/subcli/*
+lib/systemd/system/subcli-daemon.service

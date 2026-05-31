@@ -1,0 +1,14 @@
+f5a8d42be78828464b5ab73e206fa690  ./usr/share/subcli/templates/mihomo_base.yaml
+bd333d6588e586ec984ae9203e3edf71  ./usr/share/subcli/templates/xray_base.json
+6a7f6b6fce864b3ac8287a3ffd5adf98  ./usr/share/subcli/templates/xray_tun.json
+f56b9a92c6a032ebf3877e8494782f4a  ./usr/share/subcli/templates/mihomo_tun.yaml
+57b1ad14b5fa291c80757f0b7fb4be73  ./usr/share/subcli/templates/singbox_base.json
+afceeb9cabb9f760638d2b068ab0aedf  ./usr/share/subcli/templates/singbox_tun.json
+5d462ef113c4ee08704e4a9880a16799  ./usr/share/subcli/profiles/direct.json
+e3ee37ed86527f0b8a57ddb8129c431b  ./usr/share/subcli/profiles/global.json
+6c2f1e3c8b1528da37509a114cf07476  ./usr/share/subcli/profiles/bypass-cn.json
+7c3bd07107cdf5ded5987d6db1d19654  ./usr/share/doc/subcli/copyright
+07eb94a746310a82e683c2f95a769f23  ./usr/share/doc/subcli/README.subcli.md.gz
+f4ab92173eefc4618e57c59845758cbd  ./usr/bin/subcli
+a1b38a2cd4935506d4bb2619aed4f4b0  ./lib/systemd/system/subcli-daemon.service
+43b142d9efa00b98a0a2be29bcf50d41  ./etc/subcli/config.yaml

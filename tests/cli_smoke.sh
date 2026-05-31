@@ -57,7 +57,7 @@ YAML
 export SUBCLI_CONFIG="$appdir/config.yaml"
 
 root_help="$($bin --help)"
-for cmd in init doctor sub config profile template asset export workspace check run daemon status stop restart logs completion; do
+for cmd in doctor sub config profile template asset export purge check run daemon status stop restart logs completion; do
     if [[ "$root_help" != *"  $cmd"* ]]; then
         printf 'root help missing command: %s\n%s\n' "$cmd" "$root_help"
         exit 1
@@ -70,7 +70,6 @@ for summary in \
     "template  list/get/set/reset/validate" \
     "asset     list/status/validate/update" \
     "export    all/mihomo/sing-box/xray" \
-    "workspace init/status/use/unset/migrate/doctor" \
     "daemon    once/run/start/stop/status" \
     "logs     Read managed core or daemon logs."; do
     if [[ "$root_help" != *"$summary"* ]]; then
@@ -259,7 +258,7 @@ if [[ "$doctor_json" != *'"failed"'* || "$doctor_json" != *'"checks"'* ]]; then
     printf 'doctor --json missing compatibility fields: %s\n' "$doctor_json"
     exit 1
 fi
-if [[ "$doctor_json" != *'"code":"workspace.resolved"'* || "$doctor_json" != *'"code":"config.key.registered"'* || "$doctor_json" != *'"code":"export.target.registered"'* ]]; then
+if [[ "$doctor_json" != *'"code":"config.resolved"'* || "$doctor_json" != *'"code":"config.key.registered"'* || "$doctor_json" != *'"code":"export.target.registered"'* ]]; then
     printf 'doctor --json missing stable diagnostic codes: %s\n' "$doctor_json"
     exit 1
 fi

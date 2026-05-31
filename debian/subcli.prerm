@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        if [ -d /run/systemd/system ]; then
+            deb-systemd-helper stop subcli-daemon.service >/dev/null 2>&1 || true
+        fi
+        ;;
+    failed-upgrade)
+        ;;
+    *)
+        ;;
+esac

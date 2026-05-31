@@ -1,0 +1,10 @@
+subcli (0.2.7-1) unstable; urgency=medium
+
+  * Initial Debian package.
+  * Feature: init remembers default workspace.
+  * Feature: three-platform maintenance (Linux/macOS/Windows).
+  * Feature: platform process boundaries and runtime helpers.
+  * Feature: stability test runner with local HTTP subscription server.
+  * Feature: platform boundary scan and CI integration.
+
+ -- subcli developers <subcli@lists.sr.ht>  Sat, 30 May 2026 14:00:00 +0800

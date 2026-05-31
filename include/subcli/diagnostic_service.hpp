@@ -26,7 +26,7 @@ struct DiagnosticReport {
 DiagnosticReport buildDiagnosticReport(
     const AppConfig& config,
     const std::vector<Subscription>& subscriptions,
-    const std::string& workspaceRoot
+    const std::string& configRoot
 );
 nlohmann::json diagnosticReportToJson(const DiagnosticReport& report);
 std::string diagnosticReportToText(const DiagnosticReport& report);

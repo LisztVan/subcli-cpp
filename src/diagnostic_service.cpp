@@ -27,11 +27,11 @@ const char* severityName(DiagnosticSeverity severity) {
 DiagnosticReport buildDiagnosticReport(
     const AppConfig& config,
     const std::vector<Subscription>& subscriptions,
-    const std::string& workspaceRoot
+    const std::string& configRoot
 ) {
     DiagnosticReport report;
 
-    report.findings.push_back({"workspace.resolved", DiagnosticSeverity::Info, "workspace", "workspace path resolved", workspaceRoot});
+    report.findings.push_back({"config.resolved", DiagnosticSeverity::Info, "config", "config path resolved", configRoot});
 
     for (const auto& key : configKeyRegistry()) {
         report.findings.push_back({"config.key.registered", DiagnosticSeverity::Info, key.key, "registered config key", ""});

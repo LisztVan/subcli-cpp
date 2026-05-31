@@ -1,0 +1,16 @@
+[Unit]
+Description=subcli daemon background sync service
+Documentation=man:subcli(1) file:///usr/share/doc/subcli/README.subcli.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/subcli daemon run --target all --interval 1800 --update-assets
+Restart=on-failure
+RestartSec=5
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

@@ -42,7 +42,6 @@
 #include "subcli/subscription_service.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
-#include "subcli/workspace.hpp"
 
 namespace fs = std::filesystem;
 
@@ -146,7 +145,7 @@ void testDiagnosticServiceReportsConfigAndTargets() {
     const auto report = subcli::buildDiagnosticReport(cfg, {enabled, disabled}, "/tmp/ws");
     require(!report.findings.empty(), "diagnostic report should have findings");
 
-    bool hasWorkspace = false;
+    bool hasConfigResolved = false;
     bool hasConfigKey = false;
     bool hasTarget = false;
     bool hasProfile = false;
@@ -156,8 +155,8 @@ void testDiagnosticServiceReportsConfigAndTargets() {
     bool hasAssetConfigured = false;
     bool hasTemplateConfigured = false;
     for (const auto& finding : report.findings) {
-        if (finding.code == "workspace.resolved") {
-            hasWorkspace = true;
+        if (finding.code == "config.resolved") {
+            hasConfigResolved = true;
         } else if (finding.code == "config.key.registered") {
             hasConfigKey = true;
         } else if (finding.code == "export.target.registered") {
@@ -177,7 +176,7 @@ void testDiagnosticServiceReportsConfigAndTargets() {
         }
     }
 
-    require(hasWorkspace, "diagnostic report should include workspace.resolved finding");
+    require(hasConfigResolved, "diagnostic report should include config.resolved finding");
     require(hasConfigKey, "diagnostic report should include config.key.registered findings");
     require(hasTarget, "diagnostic report should include export.target.registered findings");
     require(hasProfile, "diagnostic report should include profile.configured finding");
@@ -1717,7 +1716,7 @@ void testBashCompletionContainsCommands() {
     for (const auto& command : subcli::allCommandNames()) {
         require(script.find(command) != std::string::npos, std::string("completion should include root command ") + command);
     }
-    require(script.find("if [[ $COMP_CWORD -eq 1 ]]; then\n        COMPREPLY=( $(compgen -W \"init doctor sub config profile template asset export workspace check run daemon status stop restart logs completion\" -- \"$cur\") )") != std::string::npos,
+    require(script.find("if [[ $COMP_CWORD -eq 1 ]]; then\n        COMPREPLY=( $(compgen -W \"doctor sub config profile template asset purge export check run daemon status stop restart logs completion\" -- \"$cur\") )") != std::string::npos,
             "completion should render root command stanza words");
     require(script.find("if [[ $COMP_CWORD -eq 2 ]]; then\n                COMPREPLY=( $(compgen -W \"add remove list update enable disable edit validate import export check prune\" -- \"$cur\") )") != std::string::npos,
             "completion should include sub command stanza words");
@@ -6812,7 +6811,7 @@ void testExportTargetResolveRejectsUnknownTarget() {
 
 void testRegistryContainsCurrentCommandSurface() {
     const auto commands = subcli::allCommandNames();
-    for (const auto& command : {"init", "doctor", "sub", "config", "profile", "template", "asset", "export", "workspace", "check", "run", "daemon", "status", "stop", "restart", "completion"}) {
+    for (const auto& command : {"doctor", "sub", "config", "profile", "template", "asset", "export", "purge", "check", "run", "daemon", "status", "stop", "restart", "completion"}) {
         require(std::find(commands.begin(), commands.end(), command) != commands.end(), std::string("registry should include command ") + command);
     }
 }

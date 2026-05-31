@@ -1,0 +1,28 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "dns": {},
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "DIRECT"
+    },
+    {
+      "type": "block",
+      "tag": "REJECT"
+    }
+  ],
+  "route": {
+    "final": "PROXY",
+    "rules": []
+  }
+}

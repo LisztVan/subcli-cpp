@@ -53,7 +53,6 @@
 #include "subcli/subscription_service.hpp"
 #include "subcli/tag_utils.hpp"
 #include "subcli/util.hpp"
-#include "subcli/workspace.hpp"
 #include "exporter_internal.hpp"
 
 using namespace subcli;
@@ -464,7 +463,7 @@ void printRootUsage() {
               << "clients and does not enable the system proxy by itself.\n"
               << "\n"
               << "First use:\n"
-              << "  subcli init\n"
+              << "  subcli config init --portable\n"
               << "  subcli doctor\n"
               << "  subcli sub add --name my-sub --url <subscription-url>\n"
               << "  subcli sub update\n"
@@ -477,7 +476,6 @@ void printRootUsage() {
               << "  --config PATH  Use this config.yaml for this invocation.\n"
               << "\n"
               << "Commands:\n"
-              << "  init      Initialize and remember a default workspace.\n"
               << "  doctor    Check workspace, templates, assets, and core paths.\n"
               << "  sub       list/add/edit/remove/enable/disable/update/validate subscriptions.\n"
               << "  config    init/list/get/set/remove application settings.\n"
@@ -485,7 +483,7 @@ void printRootUsage() {
               << "  template  list/get/set/reset/validate export templates.\n"
               << "  asset     list/status/validate/update geo and rule assets.\n"
               << "  export    all/mihomo/sing-box/xray configs. Generate Mihomo, sing-box, or Xray config files.\n"
-              << "  workspace init/status/use/unset/migrate/doctor workspace roots.\n"
+              << "  purge     Remove downloaded assets, cache, outputs, logs, state, or config.\n"
               << "\n"
               << "Runtime Helpers (optional):\n"
               << "  check     Validate exported config with installed core.\n"
@@ -500,7 +498,7 @@ void printRootUsage() {
               << "  completion  Generate shell completion scripts.\n"
               << "\n"
               << "Examples:\n"
-              << "  subcli init\n"
+              << "  subcli config init --portable\n"
               << "  subcli doctor\n"
               << "  subcli sub add --name my-sub --url https://example/sub\n"
               << "  subcli sub update\n"
@@ -511,25 +509,6 @@ void printRootUsage() {
               << "  subcli <command> --help\n"
               << "  subcli sub --help\n"
               << "  subcli export --help\n";
-}
-
-void printInitUsage() {
-    std::cout << "Usage:\n"
-              << "  subcli init [DIR]\n"
-              << "\n"
-              << "Initialize a workspace and remember it as the default workspace.\n"
-              << "Without DIR, subcli uses the platform default application data directory.\n"
-              << "After init, later commands use this workspace automatically.\n"
-              << "\n"
-              << "Examples:\n"
-              << "  subcli init\n"
-              << "  subcli init ./my-subcli\n"
-              << "\n"
-              << "Next steps:\n"
-              << "  subcli doctor\n"
-              << "  subcli sub add --name my-sub --url <subscription-url>\n"
-              << "  subcli sub update\n"
-              << "  subcli export mihomo\n";
 }
 
 void printDoctorUsage() {
@@ -788,90 +767,6 @@ void printExportPolicyExplainForTarget(ExportTarget target, const ResolvedProfil
     }
 }
 
-void printWorkspaceUsage() {
-    std::cout << "Usage: 'subcli workspace' is deprecated. Use 'subcli config init --portable' to set up a new config.\n";
-}
-
-struct WorkspaceDoctorFinding {
-    std::string level;
-    std::string code;
-    std::string detail;
-};
-
-bool canWritePath(const std::filesystem::path& path) {
-    std::error_code ec;
-    if (std::filesystem::exists(path, ec)) {
-        const auto perms = std::filesystem::status(path, ec).permissions();
-        if (ec) {
-            return false;
-        }
-        using p = std::filesystem::perms;
-        return (perms & p::owner_write) != p::none || (perms & p::group_write) != p::none || (perms & p::others_write) != p::none;
-    }
-
-    std::ofstream out(path, std::ios::app);
-    if (!out) {
-        return false;
-    }
-    out.close();
-    std::filesystem::remove(path, ec);
-    return true;
-}
-
-std::vector<WorkspaceDoctorFinding> buildWorkspaceDoctorFindings(const std::filesystem::path& root) {
-    std::vector<WorkspaceDoctorFinding> findings;
-    std::error_code ec;
-    if (!std::filesystem::exists(root, ec) || !std::filesystem::is_directory(root, ec)) {
-        findings.push_back({"fail", "root_missing", "workspace root is missing or not a directory: " + root.string()});
-        return findings;
-    }
-
-    const bool hasLegacyMarker = std::filesystem::exists(root / ".subcli-workspace", ec) && !ec;
-    const auto metadata = workspaceReadMetadata(root.string());
-    if (!hasLegacyMarker && !metadata.exists) {
-        findings.push_back({"warn", "marker_missing", "workspace has neither .subcli-workspace nor subcli.env.yaml marker"});
-    } else {
-        findings.push_back({"ok", "marker_present", hasLegacyMarker ? "legacy marker present (.subcli-workspace)" : "metadata marker present (subcli.env.yaml)"});
-    }
-
-    if (metadata.exists) {
-        if (metadata.valid) {
-            findings.push_back({"ok", "metadata_valid", "subcli.env.yaml is valid (env_version=2, required fields present)"});
-        } else {
-            findings.push_back({"fail", "metadata_invalid", "subcli.env.yaml is invalid: " + metadata.error});
-        }
-    } else {
-        findings.push_back({"warn", "metadata_missing", "subcli.env.yaml missing (legacy workspace still supported)"});
-    }
-
-    for (const char* dir : {"profiles", "templates", "assets", "cache", "outputs", "state"}) {
-        const auto path = root / dir;
-        if (!std::filesystem::exists(path, ec) || !std::filesystem::is_directory(path, ec)) {
-            findings.push_back({"fail", "required_dir_missing", "missing required directory: " + path.string()});
-        } else {
-            findings.push_back({"ok", "required_dir_ok", "directory exists: " + path.string()});
-        }
-    }
-
-    for (const char* file : {"config.yaml", "sub.yaml"}) {
-        const auto path = root / file;
-        if (!std::filesystem::exists(path, ec) || !std::filesystem::is_regular_file(path, ec)) {
-            findings.push_back({"fail", "required_file_missing", "missing required file: " + path.string()});
-        } else {
-            findings.push_back({"ok", "required_file_ok", "file exists: " + path.string()});
-        }
-    }
-
-    for (const auto& writablePath : {root, root / "config.yaml", root / "sub.yaml", root / "outputs", root / "cache", root / "state"}) {
-        if (canWritePath(writablePath)) {
-            findings.push_back({"ok", "writable", "writeable: " + writablePath.string()});
-        } else {
-            findings.push_back({"fail", "not_writable", "not writeable: " + writablePath.string()});
-        }
-    }
-    return findings;
-}
-
 void printDaemonUsage() {
     std::cout << "Usage:\n"
               << "  subcli daemon <once|run|start|stop|status> [--interval SEC] [--target all|mihomo|sing-box|xray]\n"
@@ -960,7 +855,7 @@ bool isKnownSubcommand(const std::string& cmd, const std::vector<std::string>& v
     return std::find(values.begin(), values.end(), cmd) != values.end();
 }
 
-int legacySubCommand(const std::vector<std::string>& args);
+int doSubCommandImpl(const std::vector<std::string>& args);
 bool parseExportTarget(const std::string& value, ExportTarget& target, std::string& outFile);
 
 bool isRuntimeTargetName(const std::string& targetName) {
@@ -1052,21 +947,7 @@ void printProfileSubcommandUsage(const std::string& cmd) {
     }
 }
 
-void printWorkspaceSubcommandUsage(const std::string& cmd) {
-    if (cmd == "init") {
-        std::cout << "Usage:\n  subcli workspace init [DIR]\n";
-    } else if (cmd == "status") {
-        std::cout << "Usage:\n  subcli workspace status [--json]\n";
-    } else if (cmd == "use") {
-        std::cout << "Usage:\n  subcli workspace use DIR\n";
-    } else if (cmd == "unset") {
-        std::cout << "Usage:\n  subcli workspace unset\n";
-    } else if (cmd == "migrate") {
-        std::cout << "Usage:\n  subcli workspace migrate [--to DIR] [--from DIR] [--dry-run] [--overwrite]\n";
-    } else if (cmd == "doctor") {
-        std::cout << "Usage:\n  subcli workspace doctor\n";
-    }
-}
+
 
 void printDaemonSubcommandUsage(const std::string& cmd) {
     if (cmd == "once" || cmd == "run" || cmd == "start") {
@@ -1905,26 +1786,6 @@ int doLogsCommand(const std::vector<std::string>& args) {
     return ExitOk;
 }
 
-int doInitCommand(const std::vector<std::string>& args) {
-    if (hasHelp(args)) {
-        printInitUsage();
-        return ExitOk;
-    }
-
-    CLI::App parser("init");
-    parser.set_help_flag("");
-    parser.allow_extras(false);
-    std::string dirArg;
-    parser.add_option("dir", dirArg)->required(false);
-    if (!parseCliArgs(parser, args)) {
-        printInitUsage();
-        return ExitUsage;
-    }
-
-    std::cerr << "'subcli init' is deprecated. Use 'subcli config init --portable' instead.\n";
-    return ExitUsage;
-}
-
 bool checkDirWritable(const std::filesystem::path& dir, std::string& reason) {
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
@@ -1961,7 +1822,7 @@ std::vector<std::pair<std::string, std::string>> requiredTemplateFiles(const App
     return files;
 }
 
-int legacyDoctorCommand(const std::vector<std::string>& args) {
+int doDoctorCommandImpl(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         printDoctorUsage();
         return 0;
@@ -2155,7 +2016,7 @@ int doCompletionCommand(const std::vector<std::string>& args) {
     return 0;
 }
 
-int legacySubCommand(const std::vector<std::string>& args) {
+int doSubCommandImpl(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "add", "edit", "remove", "enable", "disable", "update", "validate", "import", "export", "check", "prune"})) {
             printSubCommandUsageLine(args[2]);
@@ -2995,7 +2856,7 @@ int legacySubCommand(const std::vector<std::string>& args) {
     return 1;
 }
 
-int legacyConfigCommand(const std::vector<std::string>& args) {
+int doConfigCommandImpl(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"list", "get", "set", "remove"})) {
             printConfigSubcommandUsage(args[2]);
@@ -4243,11 +4104,6 @@ int doExportCommand(const std::vector<std::string>& args) {
     return failed > 0 ? 1 : (success > 0 ? 0 : 1);
 }
 
-int doWorkspaceCommand(const std::vector<std::string>& args) {
-    std::cerr << "'subcli workspace *' commands are deprecated. Use 'subcli config init --portable' and related 'subcli config' subcommands.\n";
-    return ExitUsage;
-}
-
 int doPurgeCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         std::cout << "Usage:\n  subcli purge (--assets|--cache|--outputs|--state|--logs|--config|--all) [--dry-run] [--yes]\n\n"
@@ -4391,15 +4247,15 @@ int doDaemonCommand(const std::vector<std::string>& args) {
 namespace subcli {
 
 int runConfigCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
-    return legacyConfigCommand(args);
+    return doConfigCommandImpl(args);
 }
 
 int runSubCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
-    return legacySubCommand(args);
+    return doSubCommandImpl(args);
 }
 
 int runDoctorCommand(const EnvironmentPaths&, const std::vector<std::string>& args) {
-    return legacyDoctorCommand(args);
+    return doDoctorCommandImpl(args);
 }
 
 } // namespace subcli
@@ -4427,8 +4283,8 @@ int main(int argc, char** argv) {
         commandOption->required(false);
         commandOption->check(CLI::IsMember(
             {
-                "init", "doctor", "sub", "config", "template", "asset", "profile", "export", "purge", "daemon", "run", "stop", "status",
-                "restart", "logs", "check", "completion", "workspace"
+                "doctor", "sub", "config", "template", "asset", "profile", "export", "purge", "daemon", "run", "stop", "status",
+                "restart", "logs", "check", "completion"
             }
         ));
 
@@ -4512,9 +4368,6 @@ int main(int argc, char** argv) {
         if (cmd == "sub") {
             return runSubCommand(gEnvPaths, buildTail("sub", extra));
         }
-        if (cmd == "init") {
-            return doInitCommand(buildTail("init", extra));
-        }
         if (cmd == "doctor") {
             return runDoctorCommand(gEnvPaths, buildTail("doctor", extra));
         }
@@ -4559,9 +4412,6 @@ int main(int argc, char** argv) {
         }
         if (cmd == "completion") {
             return doCompletionCommand(buildTail("completion", extra));
-        }
-        if (cmd == "workspace") {
-            return doWorkspaceCommand(buildTail("workspace", extra));
         }
 
         printRootUsage();

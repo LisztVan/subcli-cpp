@@ -7,15 +7,14 @@ namespace subcli {
 namespace {
 
 const std::vector<CommandDescriptor> kCommands = {
-    {"init", "Create config/data/cache/state/output directories.", {}},
     {"doctor", "Check dirs, templates, assets, and core paths.", {"--json"}},
     {"sub", "List/add/edit/remove/enable/disable/update/validate subscriptions; import/export/check/prune lifecycle.", {"--json", "--strict-network"}},
     {"config", "List/get/set/remove application settings.", {"--json"}},
     {"profile", "List/get/validate/explain export profiles.", {"--json", "--target"}},
     {"template", "List/get/set/reset/validate export templates.", {"--json"}},
     {"asset", "List/status/validate/update geo and rule assets.", {"--json"}},
+    {"purge", "Remove downloaded assets, cache, outputs, logs, state, or config.", {"--assets", "--cache", "--outputs", "--state", "--logs", "--config", "--all", "--dry-run", "--yes"}},
     {"export", "Render all/mihomo/sing-box/xray configs.", {"--tun", "--check", "--check-timeout", "--output-dir", "--profile", "--sub", "--tag", "--strict-network", "--strict-capabilities", "--download-assets", "--explain-policy", "--json"}},
-    {"workspace", "Init/status/use/unset/migrate/doctor workspace roots.", {"--json"}},
     {"check", "Validate exported config with installed core.", {"--file", "--output-dir", "--timeout"}},
     {"run", "Run one core with an exported config.", {"--file", "--output-dir", "--foreground", "--log-file"}},
     {"daemon", "Once/run/start/stop/status periodic helper.", {"--json"}},

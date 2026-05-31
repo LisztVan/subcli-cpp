@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|purge)
+        if [ -d /run/systemd/system ]; then
+            if command -v deb-systemd-helper >/dev/null 2>&1; then
+                deb-systemd-helper disable subcli-daemon.service >/dev/null 2>&1 || true
+                deb-systemd-helper purge subcli-daemon.service >/dev/null 2>&1 || true
+            fi
+        fi
+        ;;
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+    *)
+        ;;
+esac

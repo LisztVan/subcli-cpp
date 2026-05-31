@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_SYSCONFDIR=/etc
+
+override_dh_auto_test:
+	# tests need a build tree; skip during package build
+	echo "Skipping tests during package build; use 'ctest --test-dir build' separately"

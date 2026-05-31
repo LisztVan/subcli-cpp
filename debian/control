@@ -1,0 +1,27 @@
+Source: subcli
+Section: net
+Priority: optional
+Maintainer: subcli developers <subcli@lists.sr.ht>
+Build-Depends: cmake,
+               debhelper-compat (= 13),
+               g++ (>= 8),
+               libcurl4-openssl-dev,
+               libssl-dev,
+               pkgconf
+Standards-Version: 4.7.0
+Vcs-Git: https://git.sr.ht/~earendil-works/subcli-cpp
+Vcs-Browser: https://git.sr.ht/~earendil-works/subcli-cpp
+Homepage: https://git.sr.ht/~earendil-works/subcli-cpp
+Rules-Requires-Root: no
+
+Package: subcli
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends}
+Recommends: curl
+Suggests: mihomo, sing-box, xray
+Description: Subscription to proxy client config tool
+ Generate Mihomo, sing-box, and Xray configuration files
+ from subscription URLs, profiles, templates, and workspace
+ settings. subcli does not replace proxy clients and does
+ not enable the system proxy by itself.

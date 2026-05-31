@@ -39,6 +39,7 @@
 #include "subcli/capability_matrix.hpp"
 #include "subcli/config_service.hpp"
 #include "subcli/environment.hpp"
+#include "subcli/purge.hpp"
 #include "subcli/exporter.hpp"
 #include "subcli/fetch.hpp"
 #include "subcli/logs.hpp"
@@ -4247,6 +4248,56 @@ int doWorkspaceCommand(const std::vector<std::string>& args) {
     return ExitUsage;
 }
 
+int doPurgeCommand(const std::vector<std::string>& args) {
+    if (hasHelp(args)) {
+        std::cout << "Usage:\n  subcli purge (--assets|--cache|--outputs|--state|--logs|--config|--all) [--dry-run] [--yes]\n\n"
+                  << "Examples:\n  subcli purge --assets --dry-run\n  subcli purge --assets --yes\n  subcli purge --all --yes\n";
+        return ExitOk;
+    }
+    AppConfig cfg = loadConfig(gEnvInfo.configPath.string());
+    resolveConfigPathsFromAppDir(cfg, gEnvInfo.appDir);
+
+    CLI::App parser("purge");
+    parser.set_help_flag("");
+    parser.allow_extras(false);
+
+    PurgeOptions options;
+    parser.add_flag("--assets", options.assets);
+    parser.add_flag("--cache", options.cache);
+    parser.add_flag("--outputs", options.outputs);
+    parser.add_flag("--state", options.state);
+    parser.add_flag("--logs", options.logs);
+    parser.add_flag("--config", options.config);
+    parser.add_flag("--all", options.all);
+    parser.add_flag("--dry-run", options.dryRun);
+    parser.add_flag("--yes", options.yes);
+
+    if (!parseCliArgs(parser, args)) {
+        std::cout << "Usage:\n  subcli purge (--assets|--cache|--outputs|--state|--logs|--config|--all) [--dry-run] [--yes]\n";
+        return ExitUsage;
+    }
+
+    const auto result = executePurge(cfg, gEnvInfo.configPath.string(), options);
+    if (!result.ok) {
+        std::cerr << "purge failed: " << result.error << "\n";
+        return ExitError;
+    }
+    if (options.dryRun) {
+        std::cout << "purge dry-run paths:\n";
+        for (const auto& p : result.skipped) {
+            std::cout << "  " << p << "\n";
+        }
+        return ExitOk;
+    }
+    for (const auto& p : result.removed) {
+        std::cout << "removed: " << p << "\n";
+    }
+    for (const auto& p : result.skipped) {
+        std::cout << "missing: " << p << "\n";
+    }
+    return ExitOk;
+}
+
 int doDaemonCommand(const std::vector<std::string>& args) {
     if (hasHelp(args)) {
         if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"once", "run", "start", "stop", "status"})) {
@@ -4376,7 +4427,7 @@ int main(int argc, char** argv) {
         commandOption->required(false);
         commandOption->check(CLI::IsMember(
             {
-                "init", "doctor", "sub", "config", "template", "asset", "profile", "export", "daemon", "run", "stop", "status",
+                "init", "doctor", "sub", "config", "template", "asset", "profile", "export", "purge", "daemon", "run", "stop", "status",
                 "restart", "logs", "check", "completion", "workspace"
             }
         ));
@@ -4466,6 +4517,9 @@ int main(int argc, char** argv) {
         }
         if (cmd == "doctor") {
             return runDoctorCommand(gEnvPaths, buildTail("doctor", extra));
+        }
+        if (cmd == "purge") {
+            return doPurgeCommand(buildTail("purge", extra));
         }
         if (cmd == "config") {
             return runConfigCommand(gEnvPaths, buildTail("config", extra));

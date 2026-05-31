@@ -15,6 +15,7 @@
 #include "stability_http_server.hpp"
 #include "subcli/assets.hpp"
 #include "subcli/config_defaults.hpp"
+#include "subcli/purge.hpp"
 #include "subcli/capabilities.hpp"
 #include "subcli/capability_matrix.hpp"
 #include "subcli/cli_completion.hpp"
@@ -5879,6 +5880,87 @@ void testResolveConfigPathsFromAppDir() {
     fs::remove_all(appDir, ec);
 }
 
+void testPurgePlanIncludesAssetsAndMetadata() {
+    const fs::path root = fs::temp_directory_path() / "subcli-purge-plan-assets";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "data/assets/xray", ec);
+
+    subcli::AppConfig config;
+    config.assetDir = (root / "data/assets").string();
+    config.cacheDir = (root / "cache").string();
+    config.outputDir = (root / "outputs").string();
+    config.stateDir = (root / "data/state").string();
+    config.logDir = (root / "logs").string();
+    config.subFile = (root / "data/sub.yaml").string();
+    config.assetPaths["xray.geosite"] = (root / "data/assets/xray/geosite.dat").string();
+
+    subcli::PurgeOptions options;
+    options.assets = true;
+    options.dryRun = true;
+
+    const auto plan = subcli::planPurge(config, (root / "config.yaml").string(), options);
+    bool hasAsset = false;
+    bool hasMeta = false;
+    for (const auto& p : plan.paths) {
+        hasAsset = hasAsset || p == (root / "data/assets/xray/geosite.dat").lexically_normal().string();
+        hasMeta = hasMeta || p == (root / "data/assets/xray/geosite.dat.meta.json").lexically_normal().string();
+    }
+    require(hasAsset, "asset purge plan should include configured asset file");
+    require(hasMeta, "asset purge plan should include asset metadata file");
+
+    fs::remove_all(root, ec);
+}
+
+void testExecutePurgeAssetsDeletesOnlyAssets() {
+    const fs::path root = fs::temp_directory_path() / "subcli-purge-assets-delete";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "data/assets/xray", ec);
+    fs::create_directories(root / "outputs", ec);
+    {
+        std::ofstream out(root / "data/assets/xray/geosite.dat");
+        out << "asset";
+    }
+    {
+        std::ofstream out(root / "data/assets/xray/geosite.dat.meta.json");
+        out << "{}";
+    }
+    {
+        std::ofstream out(root / "outputs/mihomo.yaml");
+        out << "output";
+    }
+
+    subcli::AppConfig config;
+    config.assetDir = (root / "data/assets").string();
+    config.outputDir = (root / "outputs").string();
+    config.assetPaths["xray.geosite"] = (root / "data/assets/xray/geosite.dat").string();
+
+    subcli::PurgeOptions options;
+    options.assets = true;
+    options.yes = true;
+
+    const auto result = subcli::executePurge(config, (root / "config.yaml").string(), options);
+    require(result.ok, "asset purge should succeed: " + result.error);
+    require(!fs::exists(root / "data/assets/xray/geosite.dat"), "asset file should be removed");
+    require(!fs::exists(root / "data/assets/xray/geosite.dat.meta.json"), "asset metadata should be removed");
+    require(fs::exists(root / "outputs/mihomo.yaml"), "asset-only purge should not remove outputs");
+
+    fs::remove_all(root, ec);
+}
+
+void testPurgeRejectsDangerousRootPath() {
+    subcli::AppConfig config;
+    config.assetDir = "/";
+    subcli::PurgeOptions options;
+    options.assets = true;
+    options.yes = true;
+
+    const auto result = subcli::executePurge(config, "/tmp/subcli-config.yaml", options);
+    require(!result.ok, "purge should reject filesystem root");
+    require(result.error.find("refusing to remove dangerous path") != std::string::npos, "purge should explain dangerous path rejection");
+}
+
 void testStructuredFieldsSurviveExportNormalization() {
     auto config = makeConfig();
     subcli::ProxyNode node;
@@ -7098,5 +7180,8 @@ int main(int argc, char* argv[]) {
     runTest("testEnvironmentResolvesRelativePathsFromAppDir", testEnvironmentResolvesRelativePathsFromAppDir);
     runTest("testPortableDefaultConfigUsesAppRelativePaths", testPortableDefaultConfigUsesAppRelativePaths);
     runTest("testResolveConfigPathsFromAppDir", testResolveConfigPathsFromAppDir);
+    runTest("testPurgePlanIncludesAssetsAndMetadata", testPurgePlanIncludesAssetsAndMetadata);
+    runTest("testExecutePurgeAssetsDeletesOnlyAssets", testExecutePurgeAssetsDeletesOnlyAssets);
+    runTest("testPurgeRejectsDangerousRootPath", testPurgeRejectsDangerousRootPath);
     return 0;
 }

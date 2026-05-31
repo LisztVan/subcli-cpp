@@ -132,6 +132,7 @@ set(SUBCLI_SOURCES
     src/assets.cpp
     src/workspace.cpp
     src/config_defaults.cpp
+    src/purge.cpp
     src/tag_utils.cpp
     src/util.cpp
 )

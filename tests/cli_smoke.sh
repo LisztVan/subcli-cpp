@@ -1,19 +1,61 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-bin="$1"
+original_bin="$1"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-repo_root="$(dirname "$(dirname "$bin")")"
+repo_root="$(dirname "$(dirname "$original_bin")")"
+appdir="$tmp/appdir"
 
-export HOME="$tmp/home"
-export XDG_CONFIG_HOME="$tmp/config"
-export XDG_DATA_HOME="$tmp/data"
-export XDG_CACHE_HOME="$tmp/cache"
-export XDG_STATE_HOME="$tmp/state"
+mkdir -p "$appdir/templates" "$appdir/profiles"
+cp -r "$repo_root/templates/." "$appdir/templates/"
+cp -r "$repo_root/profiles/." "$appdir/profiles/"
+cp "$original_bin" "$appdir/subcli"
+chmod +x "$appdir/subcli"
 
-"$bin" init "$tmp/workspace" >/dev/null
+bin="$appdir/subcli"
+
+cat > "$appdir/config.yaml" <<YAML
+version: 1
+data_dir: $appdir/data
+cache_dir: $appdir/cache
+asset_dir: $appdir/data/assets
+template_dir: $appdir/templates
+profile_dir: $appdir/profiles
+output_dir: $appdir/outputs
+state_dir: $appdir/data/state
+log_dir: $appdir/logs
+sub_file: $appdir/data/sub.yaml
+profile: bypass-cn
+tun: false
+log_level: info
+parallelism: 4
+timeout: 15
+retry: 2
+fetch_max_bytes: 10485760
+templates:
+  mihomo:
+    normal: $appdir/templates/mihomo_base.yaml
+    tun: $appdir/templates/mihomo_tun.yaml
+  sing-box:
+    normal: $appdir/templates/singbox_base.json
+    tun: $appdir/templates/singbox_tun.json
+  xray:
+    normal: $appdir/templates/xray_base.json
+    tun: $appdir/templates/xray_tun.json
+grouping:
+  region_rules:
+    HK: "(?i)(hong kong|hongkong|hk|香港)"
+    JP: "(?i)(japan|jp|tokyo|osaka|日本)"
+node_management:
+  dedupe: true
+  rename_template: "{name}"
+  sort_by: region,name
+YAML
+
+export SUBCLI_CONFIG="$appdir/config.yaml"
+
 root_help="$($bin --help)"
 for cmd in init doctor sub config profile template asset export workspace check run daemon status stop restart logs completion; do
     if [[ "$root_help" != *"  $cmd"* ]]; then
@@ -23,7 +65,7 @@ for cmd in init doctor sub config profile template asset export workspace check 
 done
 for summary in \
     "sub       list/add/edit/remove/enable/disable/update/validate" \
-    "config    list/get/set/remove" \
+    "config    init/list/get/set/remove" \
     "profile   list/get/validate/explain" \
     "template  list/get/set/reset/validate" \
     "asset     list/status/validate/update" \
@@ -253,35 +295,11 @@ fi
 cp "$tmp/valid-mihomo.yaml" "$missing_cfg/nope.yaml"
 "$bin" config set templates.mihomo.normal "$missing_cfg/nope.yaml" >/dev/null
 
-workspace_root="$tmp/workspace-env"
-"$bin" workspace init "$workspace_root" >/dev/null
-doctor_env_json="$({ SUBCLI_WORKSPACE="$workspace_root" "$bin" doctor --json; } 2>&1 || true)"
-DOCTOR_ENV_JSON="$doctor_env_json" python3 - "$workspace_root" <<'PY'
-import json
-import os
-import pathlib
-import sys
-
-workspace = pathlib.Path(sys.argv[1]).resolve()
-raw = os.environ.get("DOCTOR_ENV_JSON", "")
-try:
-    doc = json.loads(raw)
-except Exception as exc:
-    raise SystemExit(f"doctor --json should be valid JSON under SUBCLI_WORKSPACE: {exc}: {raw}")
-
-env = doc.get("environment", {})
-if env.get("resolution_source") != "env_var":
-    raise SystemExit(f"expected resolution_source env_var, got: {env.get('resolution_source')}")
-
-active = pathlib.Path(env.get("active_workspace_root", "")).resolve()
-if active != workspace:
-    raise SystemExit(f"active_workspace_root mismatch: expected {workspace}, got {active}")
-
-resolved = env.get("resolved_path_map", {})
-config_path = pathlib.Path(resolved.get("config_path", "")).resolve()
-if config_path.parent != workspace:
-    raise SystemExit(f"config_path should resolve under workspace root: {config_path} (workspace={workspace})")
-PY
+config_init_help="$($bin config init --help 2>&1 || true)"
+if [[ "$config_init_help" != *"--portable"* || "$config_init_help" != *"--fhs"* ]]; then
+    printf 'config init --help missing options: %s\n' "$config_init_help"
+    exit 1
+fi
 
 completion="$($bin completion bash)"
 if [[ "$completion" != *"_subcli_completion"* ]]; then
@@ -509,47 +527,10 @@ trap 'rm -rf "$tmp"' EXIT
 
 "$bin" export all --profile bypass-cn --sub explain --strict-capabilities >/dev/null 2>&1 && exit 1 || true
 
-workspace_init="$("$bin" workspace init "$tmp/ws-test")"
-if [[ "$workspace_init" != *"workspace initialized:"* ]]; then
-    printf '%s\n' "$workspace_init"
-    exit 1
-fi
-if [[ ! -d "$tmp/ws-test" || ! -f "$tmp/ws-test/.subcli-workspace" ]]; then
-    printf 'workspace init did not create expected tree\n'
-    exit 1
-fi
-
-workspace_status="$("$bin" workspace status --json)"
-if [[ "$workspace_status" != *'"has_default"'* || "$workspace_status" != *'"metadata"'* || "$workspace_status" != *'"env_version"'* ]]; then
-    printf 'workspace status --json missing fields: %s\n' "$workspace_status"
-    exit 1
-fi
-WORKSPACE_STATUS_JSON="$workspace_status" python3 - <<'PY'
-import json
-import os
-
-raw = os.environ.get("WORKSPACE_STATUS_JSON", "")
-doc = json.loads(raw)
-metadata = doc.get("metadata", {})
-if "exists" not in metadata or "valid" not in metadata or "env_version" not in metadata:
-    raise SystemExit(f"workspace status metadata fields missing: {doc}")
-if metadata.get("exists") and metadata.get("valid") and metadata.get("env_version") != 2:
-    raise SystemExit(f"workspace status env_version should be 2 when metadata is valid: {doc}")
-PY
-
-workspace_doctor_out="$({ SUBCLI_WORKSPACE="$tmp/ws-test" "$bin" workspace doctor; } 2>&1 || true)"
-if [[ "$workspace_doctor_out" != *"workspace doctor summary: root=$tmp/ws-test"* ]]; then
-    printf 'workspace doctor should report active workspace root, got: %s\n' "$workspace_doctor_out"
-    exit 1
-fi
-if [[ "$workspace_doctor_out" != *"subcli.env.yaml is valid"* ]]; then
-    printf 'workspace doctor should validate metadata in active workspace, got: %s\n' "$workspace_doctor_out"
-    exit 1
-fi
-
-workspace_help="$("$bin" workspace --help)"
-if [[ "$workspace_help" != *"init"* || "$workspace_help" != *"status"* || "$workspace_help" != *"migrate"* ]]; then
-    printf 'workspace --help incomplete: %s\n' "$workspace_help"
+"$bin" config init --portable --force >/dev/null
+config_init_out="$($bin config list)"
+if [[ "$config_init_out" != *"profile=bypass-cn"* ]]; then
+    printf 'config list should show default values: %s\n' "$config_init_out"
     exit 1
 fi
 

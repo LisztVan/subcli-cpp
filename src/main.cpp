@@ -34,6 +34,7 @@
 #include "subcli/daemon_process.hpp"
 #include "subcli/cli_completion.hpp"
 #include "subcli/cli_output.hpp"
+#include "subcli/config_defaults.hpp"
 #include "subcli/diagnostic_service.hpp"
 #include "subcli/capability_matrix.hpp"
 #include "subcli/config_service.hpp"
@@ -478,7 +479,7 @@ void printRootUsage() {
               << "  init      Initialize and remember a default workspace.\n"
               << "  doctor    Check workspace, templates, assets, and core paths.\n"
               << "  sub       list/add/edit/remove/enable/disable/update/validate subscriptions.\n"
-              << "  config    list/get/set/remove application settings.\n"
+              << "  config    init/list/get/set/remove application settings.\n"
               << "  profile   list/get/validate/explain export profiles.\n"
               << "  template  list/get/set/reset/validate export templates.\n"
               << "  asset     list/status/validate/update geo and rule assets.\n"
@@ -600,6 +601,7 @@ void printSubUsage() {
 
 void printConfigUsage() {
     std::cout << "Usage:\n"
+              << "  subcli config init [--portable|--fhs|--user] [--path PATH] [--force]\n"
               << "  subcli config list [--json]\n"
               << "  subcli config get <key>\n"
               << "  subcli config set <key> <value>\n"
@@ -3025,6 +3027,17 @@ int legacyConfigCommand(const std::vector<std::string>& args) {
     setCmd->add_option("value", parsedValue);
     auto* removeCmd = parser.add_subcommand("remove");
     removeCmd->add_option("key", parsedKey);
+    auto* initCmd = parser.add_subcommand("init");
+    bool initPortable = false;
+    bool initFhs = false;
+    bool initUser = false;
+    bool initForce = false;
+    std::string initPath;
+    initCmd->add_flag("--portable", initPortable);
+    initCmd->add_flag("--fhs", initFhs);
+    initCmd->add_flag("--user", initUser);
+    initCmd->add_flag("--force", initForce);
+    initCmd->add_option("--path", initPath);
 
     if (!parseCliArgs(parser, args)) {
         printConfigUsage();
@@ -3040,6 +3053,8 @@ int legacyConfigCommand(const std::vector<std::string>& args) {
         cmd = "set";
     } else if (*removeCmd) {
         cmd = "remove";
+    } else if (*initCmd) {
+        cmd = "init";
     }
 
     if (cmd == "list") {
@@ -3102,6 +3117,56 @@ int legacyConfigCommand(const std::vector<std::string>& args) {
         std::cout << "removed config key: " << parsedKey << "\n";
         return 0;
     }
+    if (cmd == "init") {
+        const int selected = (initPortable ? 1 : 0) + (initFhs ? 1 : 0) + (initUser ? 1 : 0);
+        if (selected > 1) {
+            std::cerr << "config init: choose only one of --portable, --fhs, or --user\n";
+            return ExitUsage;
+        }
+        ConfigLayout layout = ConfigLayout::Portable;
+        if (initFhs) {
+            if (detectPlatformKind() == PlatformKind::Windows) {
+                std::cerr << "config init: --fhs is not supported on Windows\n";
+                return ExitUsage;
+            }
+            layout = ConfigLayout::FHS;
+        } else if (initUser) {
+            layout = ConfigLayout::UserLocal;
+        }
+
+        std::filesystem::path target;
+        if (!initPath.empty()) {
+            target = std::filesystem::path(initPath).is_absolute()
+                ? std::filesystem::path(initPath)
+                : (std::filesystem::current_path() / initPath).lexically_normal();
+        } else if (layout == ConfigLayout::FHS) {
+            target = platformFhsConfigPath(detectPlatformKind());
+        } else if (layout == ConfigLayout::UserLocal) {
+            target = platformUserConfigPath(detectPlatformKind());
+        } else {
+            target = gEnvInfo.appDir / "config.yaml";
+        }
+
+        AppConfig initial = makeDefaultConfig(layout, detectPlatformKind());
+        std::string error;
+        if (!writeInitialConfig(target, initial, initForce, error)) {
+            std::cerr << "config init failed: " << error << "\n";
+            return ExitError;
+        }
+
+        AppConfig resolved = initial;
+        const std::filesystem::path appDir = gEnvInfo.appDir.empty() ? normalizeAbsolutePath(gExecutablePath).parent_path() : gEnvInfo.appDir;
+        resolveConfigPathsFromAppDir(resolved, appDir);
+        if (!ensureConfigRuntimeFiles(resolved, error)) {
+            std::cerr << "config init failed while creating runtime files: " << error << "\n";
+            return ExitError;
+        }
+
+        std::cout << "config initialized: " << target.lexically_normal().string() << "\n";
+        std::cout << "path base: " << appDir.lexically_normal().string() << "\n";
+        return ExitOk;
+    }
+
     std::cerr << "unknown config command: " << cmd << "\n";
     std::cerr << "Run 'subcli config --help' to see available config commands.\n";
     return 1;
@@ -4387,7 +4452,7 @@ int main(int argc, char** argv) {
             return ExitOk;
         }
 
-        const bool isConfigInit = cmd == "config" && !extra.empty() && extra[0] == "--help";
+        const bool isConfigInit = cmd == "config" && !extra.empty() && (extra[0] == "--help" || extra[0] == "init");
         if (!gEnvInfo.ok && !isConfigInit) {
             std::cerr << gEnvInfo.error << "\n";
             return ExitError;

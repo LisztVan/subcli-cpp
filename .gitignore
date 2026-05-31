@@ -22,3 +22,4 @@ session-*.md
 .cache
 debian/subcli
 subcli_0.2.7-1_amd64.deb
+subcli_*.deb

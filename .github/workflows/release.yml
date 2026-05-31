@@ -47,6 +47,7 @@ jobs:
           path: |
             build/subcli-*.tar.gz
             build/subcli-*.zip
+            build/subcli-*.deb
           if-no-files-found: error
 
   release:

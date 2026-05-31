@@ -1,0 +1,28 @@
+{
+  "version": "0.3.0",
+  "description": "Subscription to proxy client config tool",
+  "homepage": "https://github.com/subcli/subcli",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/subcli/subcli/releases/download/v0.3.0/subcli-0.3.0-Windows-x86_64.zip",
+      "hash": "replace-with-release-sha256"
+    }
+  },
+  "bin": "subcli.exe",
+  "persist": [
+    "config.yaml",
+    "data",
+    "cache",
+    "outputs",
+    "logs"
+  ],
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/subcli/subcli/releases/download/v$version/subcli-$version-Windows-x86_64.zip"
+      }
+    }
+  }
+}

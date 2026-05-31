@@ -77,7 +77,8 @@ struct RuntimePaths {
 
 RuntimePaths gPaths;
 std::string gExecutablePath;
-EnvironmentResolveResult gEnvResult;
+EnvironmentInfo gEnvInfo;
+EnvironmentPaths gEnvPaths;
 
 PlatformKind detectPlatformKind() {
 #ifdef _WIN32
@@ -87,30 +88,6 @@ PlatformKind detectPlatformKind() {
 #else
     return PlatformKind::Linux;
 #endif
-}
-
-std::string environmentSourceToString(EnvironmentSource source) {
-    switch (source) {
-    case EnvironmentSource::CliOption:
-        return "cli_option";
-    case EnvironmentSource::EnvVar:
-        return "env_var";
-    case EnvironmentSource::MarkerDiscovery:
-        return "marker_discovery";
-    case EnvironmentSource::PersistedDefault:
-        return "persisted_default";
-    case EnvironmentSource::PlatformDefault:
-        return "platform_default";
-    }
-    return "unknown";
-}
-
-std::string readPersistedDefaultWorkspace() {
-    const auto status = workspaceStatus();
-    if (!status.ok || !status.hasDefault) {
-        return "";
-    }
-    return status.defaultRoot;
 }
 
 std::filesystem::path normalizeAbsolutePath(const std::filesystem::path& path) {
@@ -233,8 +210,8 @@ std::string resolveAgainst(const std::filesystem::path& baseDir, const std::stri
     return normalizeAbsolutePath(baseDir / p).string();
 }
 
-std::string resolveFromConfigDir(const std::string& path) {
-    return resolveAgainst(gPaths.configDir, path);
+std::string resolveFromAppDir(const std::string& path) {
+    return subcli::resolvePathFromAppDir(gEnvInfo.appDir, path).string();
 }
 
 std::string resolveFromCliCwd(const std::string& path) {
@@ -323,25 +300,25 @@ void applyConfigDefaults(AppConfig& c) {
     } else if (c.templateDir == "./templates" || c.templateDir == "templates") {
         c.templateDir = gPaths.templateDir.string();
     } else {
-        c.templateDir = resolveFromConfigDir(c.templateDir);
+        c.templateDir = resolveFromAppDir(c.templateDir);
     }
     if (c.outputDir.empty()) {
         c.outputDir = gPaths.outputDir.string();
     } else if (c.outputDir == "./outputs" || c.outputDir == "outputs") {
         c.outputDir = gPaths.outputDir.string();
     } else {
-        c.outputDir = resolveFromConfigDir(c.outputDir);
+        c.outputDir = resolveFromAppDir(c.outputDir);
     }
     if (c.profile.empty()) {
         c.profile = "bypass-cn";
     }
     if (!c.profilePath.empty()) {
-        c.profilePath = resolveFromConfigDir(c.profilePath);
+        c.profilePath = resolveFromAppDir(c.profilePath);
     }
     if (c.assetDir.empty() || c.assetDir == "./assets" || c.assetDir == "assets") {
         c.assetDir = (gPaths.dataDir / "assets").string();
     } else {
-        c.assetDir = resolveFromConfigDir(c.assetDir);
+        c.assetDir = resolveFromAppDir(c.assetDir);
     }
     const std::map<std::string, std::string> defaultAssetPaths = {
         {"mihomo.geosite", "mihomo/geosite.dat"},
@@ -405,7 +382,7 @@ void applyConfigDefaults(AppConfig& c) {
         if (value.find('/') == std::string::npos && value.find('\\') == std::string::npos) {
             value = defaultTemplatePath(templateDir, value);
         } else {
-            value = resolveFromConfigDir(value);
+            value = resolveFromAppDir(value);
         }
     };
 
@@ -417,13 +394,13 @@ void applyConfigDefaults(AppConfig& c) {
     }
 
     if (!c.mihomoPath.empty()) {
-        c.mihomoPath = resolveFromConfigDir(c.mihomoPath);
+        c.mihomoPath = resolveFromAppDir(c.mihomoPath);
     }
     if (!c.singBoxPath.empty()) {
-        c.singBoxPath = resolveFromConfigDir(c.singBoxPath);
+        c.singBoxPath = resolveFromAppDir(c.singBoxPath);
     }
     if (!c.xrayPath.empty()) {
-        c.xrayPath = resolveFromConfigDir(c.xrayPath);
+        c.xrayPath = resolveFromAppDir(c.xrayPath);
     }
 
     if (c.regionRules.empty()) {
@@ -492,10 +469,10 @@ void printRootUsage() {
               << "  subcli export mihomo\n"
               << "\n"
               << "Usage:\n"
-              << "  subcli [--workspace DIR] <command> [args...]\n"
+              << "  subcli [--config PATH] <command> [args...]\n"
               << "\n"
               << "Global Options:\n"
-              << "  --workspace DIR  Use a workspace for this invocation only.\n"
+              << "  --config PATH  Use this config.yaml for this invocation.\n"
               << "\n"
               << "Commands:\n"
               << "  init      Initialize and remember a default workspace.\n"
@@ -809,23 +786,7 @@ void printExportPolicyExplainForTarget(ExportTarget target, const ResolvedProfil
 }
 
 void printWorkspaceUsage() {
-    std::cout << "Usage:\n"
-              << "  subcli workspace init [DIR]\n"
-              << "  subcli workspace status [--json]\n"
-              << "  subcli workspace use DIR\n"
-              << "  subcli workspace unset\n"
-              << "  subcli workspace migrate [--to DIR] [--from DIR] [--dry-run] [--overwrite]\n"
-              << "  subcli workspace doctor\n"
-              << "\n"
-              << "Workspace stores config, subscriptions, templates, assets, cache, outputs, runtime state, and logs.\n"
-              << "workspace init initializes a workspace and remembers it as the default.\n"
-              << "workspace use switches the default workspace later; workspace unset clears it.\n"
-              << "\n"
-              << "Examples:\n"
-              << "  subcli workspace init ./ws\n"
-              << "  subcli workspace status --json\n"
-              << "  subcli workspace migrate --to ./ws --dry-run\n"
-              << "  subcli workspace doctor\n";
+    std::cout << "Usage: 'subcli workspace' is deprecated. Use 'subcli config init --portable' to set up a new config.\n";
 }
 
 struct WorkspaceDoctorFinding {
@@ -1150,7 +1111,7 @@ DaemonOptions buildDaemonOptionsFromCli(int intervalSec, const std::string& targ
 
 DaemonCallbacks makeDaemonCallbacks() {
     DaemonCallbacks callbacks;
-    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return runSubCommand(gEnvResult.paths, subArgs); };
+    callbacks.runSubCommand = [&](const std::vector<std::string>& subArgs) { return runSubCommand(gEnvPaths, subArgs); };
     callbacks.runExportCommand = [&](const std::vector<std::string>& exportArgs) { return doExportCommand(exportArgs); };
     callbacks.isCoreRunning = [&](const std::string& coreTarget, std::string& error) {
         const auto status = inspectCoreRuntime(gPaths.stateDir, coreTarget, error);
@@ -1957,35 +1918,8 @@ int doInitCommand(const std::vector<std::string>& args) {
         return ExitUsage;
     }
 
-    const std::string initRoot = dirArg.empty() ? platformDefaultWorkspaceRoot(detectPlatformKind()) : dirArg;
-    const auto r = workspaceInit(initRoot);
-    if (!r.ok) {
-        std::cerr << "init failed: " << r.error << "\n";
-        return ExitError;
-    }
-
-    const RuntimePaths installed = buildRuntimePaths(gExecutablePath);
-    std::string seedError;
-    const auto seed = workspaceSeedBuiltIns(r.root, installed.templateDir.string(), installed.profileDir.string(), seedError);
-    if (!seed.ok) {
-        std::cerr << "init failed while seeding built-ins: " << seedError << "\n";
-        return ExitError;
-    }
-
-    std::string useError;
-    if (!workspaceUse(r.root, useError)) {
-        std::cerr << "init failed while remembering workspace: " << useError << "\n";
-        return ExitError;
-    }
-
-    std::cout << "workspace initialized: " << r.root << "\n";
-    std::cout << "default workspace set to: " << r.root << "\n";
-    std::cout << "Next steps:\n";
-    std::cout << "  subcli doctor\n";
-    std::cout << "  subcli sub add --name my-sub --url <subscription-url>\n";
-    std::cout << "  subcli sub update\n";
-    std::cout << "  subcli export mihomo\n";
-    return ExitOk;
+    std::cerr << "'subcli init' is deprecated. Use 'subcli config init --portable' instead.\n";
+    return ExitUsage;
 }
 
 bool checkDirWritable(const std::filesystem::path& dir, std::string& reason) {
@@ -2110,8 +2044,8 @@ int legacyDoctorCommand(const std::vector<std::string>& args) {
         payload["has_failed"] = report.hasError;
         payload["checks"] = checks;
         payload["environment"] = {
-            {"resolution_source", environmentSourceToString(gEnvResult.source)},
-            {"active_workspace_root", gEnvResult.root.empty() ? gPaths.root.string() : gEnvResult.root},
+            {"resolution_source", configModeName(gEnvInfo.mode)},
+            {"active_config_path", gEnvInfo.configPath.string()},
             {"resolved_path_map", {
                 {"config_dir", gPaths.configDir.string()},
                 {"data_dir", gPaths.dataDir.string()},
@@ -2124,8 +2058,8 @@ int legacyDoctorCommand(const std::vector<std::string>& args) {
                 {"config_path", gPaths.configPath.string()},
             }},
         };
-        if (!gEnvResult.trace.empty()) {
-            payload["environment"]["trace"] = gEnvResult.trace;
+        if (!gEnvInfo.trace.empty()) {
+            payload["environment"]["trace"] = gEnvInfo.trace;
         }
         printJsonLine(payload);
     } else {
@@ -3140,7 +3074,7 @@ int legacyConfigCommand(const std::vector<std::string>& args) {
             return 1;
         }
         std::string error;
-        if (!setConfigValue(cfg, parsedKey, parsedValue, resolveFromConfigDir, error)) {
+        if (!setConfigValue(cfg, parsedKey, parsedValue, resolveFromAppDir, error)) {
             std::cerr << error << "\n";
             return 1;
         }
@@ -4244,212 +4178,7 @@ int doExportCommand(const std::vector<std::string>& args) {
 }
 
 int doWorkspaceCommand(const std::vector<std::string>& args) {
-    if (hasHelp(args)) {
-        if (args.size() >= 3 && args[1] == "help" && isKnownSubcommand(args[2], {"init", "status", "use", "unset", "migrate", "doctor"})) {
-            printWorkspaceSubcommandUsage(args[2]);
-        } else if (args.size() == 3 && isHelpToken(args[2]) && isKnownSubcommand(args[1], {"init", "status", "use", "unset", "migrate", "doctor"})) {
-            printWorkspaceSubcommandUsage(args[1]);
-        } else {
-            printWorkspaceUsage();
-        }
-        return ExitOk;
-    }
-    if (args.size() < 2) {
-        printWorkspaceUsage();
-        return ExitUsage;
-    }
-
-    CLI::App parser("workspace");
-    parser.set_help_flag("");
-    parser.allow_extras(false);
-    parser.require_subcommand(1);
-    std::string dirArg;
-    bool jsonOutput = false;
-    std::string toOpt;
-    std::string fromOpt;
-    bool dryRun = false;
-    bool overwrite = false;
-    auto* initCmd = parser.add_subcommand("init");
-    initCmd->add_option("dir", dirArg)->required(false);
-    auto* statusCmd = parser.add_subcommand("status");
-    statusCmd->add_flag("--json", jsonOutput);
-    auto* useCmd = parser.add_subcommand("use");
-    useCmd->add_option("dir", dirArg);
-    parser.add_subcommand("unset");
-    auto* migrateCmd = parser.add_subcommand("migrate");
-    migrateCmd->add_option("--to", toOpt);
-    migrateCmd->add_option("--from", fromOpt);
-    migrateCmd->add_flag("--dry-run", dryRun);
-    migrateCmd->add_flag("--overwrite", overwrite);
-    parser.add_subcommand("doctor");
-
-    if (!parseCliArgs(parser, args)) {
-        printWorkspaceUsage();
-        return ExitUsage;
-    }
-
-    std::string mode;
-    if (*initCmd) mode = "init";
-    else if (*statusCmd) mode = "status";
-    else if (*useCmd) mode = "use";
-    else if (*migrateCmd) mode = "migrate";
-    else if (*parser.get_subcommand("unset")) mode = "unset";
-    else if (*parser.get_subcommand("doctor")) mode = "doctor";
-
-    if (mode == "init") {
-        const std::string initRoot = dirArg.empty() ? platformDefaultWorkspaceRoot(detectPlatformKind()) : dirArg;
-        const auto r = workspaceInit(initRoot);
-        if (!r.ok) {
-            std::cerr << "workspace init failed: " << r.error << "\n";
-            return ExitError;
-        }
-
-        const RuntimePaths installed = buildRuntimePaths(gExecutablePath);
-        std::string seedError;
-        const auto seed = workspaceSeedBuiltIns(r.root, installed.templateDir.string(), installed.profileDir.string(), seedError);
-        if (!seed.ok) {
-            std::cerr << "workspace init failed while seeding built-ins: " << seedError << "\n";
-            return ExitError;
-        }
-
-        std::string useError;
-        if (!workspaceUse(r.root, useError)) {
-            std::cerr << "workspace init failed while remembering workspace: " << useError << "\n";
-            return ExitError;
-        }
-
-        std::cout << "workspace initialized: " << r.root << "\n";
-        std::cout << "default workspace set to: " << r.root << "\n";
-        return ExitOk;
-    }
-
-    if (mode == "status") {
-        const auto status = workspaceStatus();
-        if (!status.ok) {
-            std::cerr << "workspace status failed: " << status.error << "\n";
-            return ExitError;
-        }
-        const auto metadata = workspaceReadMetadata(gPaths.root.string());
-        if (jsonOutput) {
-            nlohmann::json metadataJson = {
-                {"exists", metadata.exists},
-                {"valid", metadata.valid},
-                {"env_version", metadata.envVersion},
-                {"name", metadata.name},
-                {"created_at", metadata.createdAt},
-                {"description", metadata.description},
-                {"error", metadata.error},
-            };
-            printJsonLine({
-                {"active_root", gPaths.root.string()},
-                {"active_root_has_legacy_marker", std::filesystem::exists(gPaths.root / ".subcli-workspace")},
-                {"metadata", metadataJson},
-                {"has_default", status.hasDefault},
-                {"default_root", status.defaultRoot},
-                {"default_root_exists", status.defaultRootExists},
-                {"default_root_has_marker", status.defaultRootHasMarker},
-                {"persisted_path", status.persistedPath},
-            });
-            return ExitOk;
-        }
-        std::cout << "active workspace: " << gPaths.root.string() << "\n";
-        if (!metadata.exists) {
-            std::cout << "metadata: missing (legacy workspace is still supported)\n";
-        } else if (!metadata.valid) {
-            std::cout << "metadata: invalid (" << metadata.error << ")\n";
-        } else {
-            std::cout << "metadata: env_version=" << metadata.envVersion << " name=" << metadata.name << " created_at=" << metadata.createdAt
-                      << " description=" << metadata.description << "\n";
-        }
-        if (!status.hasDefault) {
-            std::cout << "no persisted default workspace\n";
-        } else {
-            std::cout << "persisted default workspace: " << status.defaultRoot
-                      << " (exists=" << (status.defaultRootExists ? "true" : "false")
-                      << " marker=" << (status.defaultRootHasMarker ? "true" : "false") << ")\n";
-        }
-        return ExitOk;
-    }
-
-    if (mode == "use") {
-        if (dirArg.empty()) {
-            std::cerr << "workspace use requires DIR\n";
-            return ExitUsage;
-        }
-        std::string error;
-        if (!workspaceUse(dirArg, error)) {
-            std::cerr << "workspace use failed: " << error << "\n";
-            return ExitError;
-        }
-        std::cout << "default workspace set to: " << dirArg << "\n";
-        return ExitOk;
-    }
-
-    if (mode == "unset") {
-        std::string error;
-        if (!workspaceUnset(error)) {
-            std::cerr << "workspace unset failed: " << error << "\n";
-            return ExitError;
-        }
-        std::cout << "default workspace removed\n";
-        return ExitOk;
-    }
-
-    if (mode == "migrate") {
-        WorkspaceMigrateOptions options;
-        if (!fromOpt.empty()) {
-            options.fromRoot = fromOpt;
-        } else {
-            options.fromRoot = gPaths.root.string();
-        }
-        options.toRoot = toOpt;
-        if (options.toRoot.empty()) {
-            std::cerr << "workspace migrate requires --to DIR\n";
-            return ExitUsage;
-        }
-        options.dryRun = dryRun;
-        options.overwrite = overwrite;
-
-        const auto result = workspaceMigrate(options);
-        if (!result.ok) {
-            std::cerr << "workspace migrate failed: " << result.error << "\n";
-            return ExitError;
-        }
-        if (options.dryRun) {
-            std::cout << "migrate dry-run\n";
-        }
-        std::cout << "workspace migrated: " << result.copied.size() << " items copied, " << result.skipped.size() << " items skipped\n";
-        for (const auto& item : result.copied) {
-            std::cout << "  copied: " << item << "\n";
-        }
-        for (const auto& item : result.skipped) {
-            std::cout << "  skipped: " << item << "\n";
-        }
-        return ExitOk;
-    }
-
-    if (mode == "doctor") {
-        const auto findings = buildWorkspaceDoctorFindings(gPaths.root);
-        int okCount = 0;
-        int warnCount = 0;
-        int failCount = 0;
-        for (const auto& finding : findings) {
-            if (finding.level == "ok") {
-                ++okCount;
-                std::cout << "[ OK ] " << finding.detail << "\n";
-            } else if (finding.level == "warn") {
-                ++warnCount;
-                std::cout << "[WARN] " << finding.detail << "\n";
-            } else {
-                ++failCount;
-                std::cout << "[FAIL] " << finding.detail << "\n";
-            }
-        }
-        std::cout << "workspace doctor summary: root=" << gPaths.root.string() << " ok=" << okCount << " warn=" << warnCount << " fail=" << failCount << "\n";
-        return failCount > 0 ? ExitError : ExitOk;
-    }
-
-    std::cerr << "unknown workspace mode: " << mode << "\n";
+    std::cerr << "'subcli workspace *' commands are deprecated. Use 'subcli config init --portable' and related 'subcli config' subcommands.\n";
     return ExitUsage;
 }
 
@@ -4567,16 +4296,15 @@ int main(int argc, char** argv) {
 
     try {
         const std::string argv0 = (argc > 0 && argv[0]) ? argv[0] : "";
-        gPaths = buildRuntimePaths(argv0);
         gExecutablePath = detectExecutablePath(argv0);
 
-        std::string cliWorkspace;
+        std::string configOption;
 
         CLI::App cli("subcli");
         cli.set_help_flag("");
         cli.allow_extras();
         cli.prefix_command();
-        cli.add_option("--workspace", cliWorkspace, "Use a workspace for this invocation");
+        cli.add_option("--config", configOption, "Use this config.yaml for this invocation");
 
         std::string cmd;
         auto* commandOption = cli.add_option("command", cmd, "Command to run");
@@ -4616,51 +4344,66 @@ int main(int argc, char** argv) {
             return ExitUsage;
         }
 
-        const std::string envWorkspace = [&]() {
-            const char* raw = std::getenv("SUBCLI_WORKSPACE");
+        const std::string envConfig = [&]() {
+            const char* raw = std::getenv("SUBCLI_CONFIG");
             return raw && *raw ? std::string(raw) : "";
         }();
 
-        EnvironmentResolveInput input;
-        input.cliWorkspace = cliWorkspace;
-        input.envWorkspace = envWorkspace;
+        EnvironmentDetectInput input;
+        input.argv0 = gExecutablePath.empty() ? argv[0] : gExecutablePath;
+        input.configOption = configOption;
+        input.envConfig = envConfig;
         input.cwd = std::filesystem::current_path().string();
-        input.persistedWorkspace = readPersistedDefaultWorkspace();
         input.platform = detectPlatformKind();
 
-        gEnvResult = resolveEnvironment(input);
-        if (!gEnvResult.ok) {
-            std::cerr << "environment resolution failed: " << gEnvResult.error << "\n";
-            return ExitError;
-        }
+        gEnvInfo = detectEnvironment(input);
+        gEnvPaths.root = gEnvInfo.appDir.string();
+        gEnvPaths.appDir = gEnvInfo.appDir.string();
+        gEnvPaths.configDir = gEnvInfo.configDir.string();
+        gEnvPaths.dataDir = (gEnvInfo.appDir / "data").string();
+        gEnvPaths.cacheDir = (gEnvInfo.appDir / "cache").string();
+        gEnvPaths.stateDir = (gEnvInfo.appDir / "data/state").string();
+        gEnvPaths.outputDir = (gEnvInfo.appDir / "outputs").string();
+        gEnvPaths.templateDir = (gEnvInfo.appDir / "templates").string();
+        gEnvPaths.profileDir = (gEnvInfo.appDir / "profiles").string();
+        gEnvPaths.logDir = (gEnvInfo.appDir / "logs").string();
+        gEnvPaths.assetDir = (gEnvInfo.appDir / "data/assets").string();
+        gEnvPaths.subPath = (gEnvInfo.appDir / "data/sub.yaml").string();
+        gEnvPaths.configPath = gEnvInfo.configPath.string();
 
-        gPaths.root = gEnvResult.paths.root;
-        gPaths.configDir = gEnvResult.paths.configDir;
-        gPaths.dataDir = gEnvResult.paths.dataDir;
-        gPaths.cacheDir = gEnvResult.paths.cacheDir;
-        gPaths.stateDir = gEnvResult.paths.stateDir;
-        gPaths.outputDir = gEnvResult.paths.outputDir;
-        gPaths.templateDir = gEnvResult.paths.templateDir;
-        gPaths.profileDir = gEnvResult.paths.profileDir;
-        gPaths.subPath = gEnvResult.paths.subPath;
-        gPaths.configPath = gEnvResult.paths.configPath;
+        gPaths.root = gEnvInfo.appDir.string();
+        gPaths.configDir = gEnvInfo.configDir.string();
+        gPaths.dataDir = (gEnvInfo.appDir / "data").string();
+        gPaths.cacheDir = (gEnvInfo.appDir / "cache").string();
+        gPaths.stateDir = (gEnvInfo.appDir / "data/state").string();
+        gPaths.outputDir = (gEnvInfo.appDir / "outputs").string();
+        gPaths.templateDir = (gEnvInfo.appDir / "templates").string();
+        gPaths.profileDir = (gEnvInfo.appDir / "profiles").string();
+        gPaths.subPath = (gEnvInfo.appDir / "data/sub.yaml").string();
+        gPaths.configPath = gEnvInfo.configPath.string();
 
         if (cmd.empty()) {
             printRootUsage();
             return ExitOk;
         }
 
+        const bool isConfigInit = cmd == "config" && !extra.empty() && extra[0] == "--help";
+        if (!gEnvInfo.ok && !isConfigInit) {
+            std::cerr << gEnvInfo.error << "\n";
+            return ExitError;
+        }
+
         if (cmd == "sub") {
-            return runSubCommand(gEnvResult.paths, buildTail("sub", extra));
+            return runSubCommand(gEnvPaths, buildTail("sub", extra));
         }
         if (cmd == "init") {
             return doInitCommand(buildTail("init", extra));
         }
         if (cmd == "doctor") {
-            return runDoctorCommand(gEnvResult.paths, buildTail("doctor", extra));
+            return runDoctorCommand(gEnvPaths, buildTail("doctor", extra));
         }
         if (cmd == "config") {
-            return runConfigCommand(gEnvResult.paths, buildTail("config", extra));
+            return runConfigCommand(gEnvPaths, buildTail("config", extra));
         }
         if (cmd == "template") {
             return doTemplateCommand(buildTail("template", extra));

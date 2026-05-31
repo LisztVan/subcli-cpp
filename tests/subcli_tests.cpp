@@ -14,6 +14,7 @@
 #include "platform_test_support.hpp"
 #include "stability_http_server.hpp"
 #include "subcli/assets.hpp"
+#include "subcli/config_defaults.hpp"
 #include "subcli/capabilities.hpp"
 #include "subcli/capability_matrix.hpp"
 #include "subcli/cli_completion.hpp"
@@ -5843,6 +5844,41 @@ void testEnvironmentResolvesRelativePathsFromAppDir() {
     require(kept == absolute.lexically_normal(), "absolute config paths must stay absolute");
 }
 
+void testPortableDefaultConfigUsesAppRelativePaths() {
+    const auto config = subcli::makeDefaultConfig(subcli::ConfigLayout::Portable, subcli::PlatformKind::Linux);
+    require(config.dataDir == "./data", "portable data_dir should be app-relative");
+    require(config.cacheDir == "./cache", "portable cache_dir should be app-relative");
+    require(config.assetDir == "./data/assets", "portable asset_dir should be app-relative");
+    require(config.templateDir == "./templates", "portable template_dir should be app-relative");
+    require(config.profileDir == "./profiles", "portable profile_dir should be app-relative");
+    require(config.outputDir == "./outputs", "portable output_dir should be app-relative");
+    require(config.stateDir == "./data/state", "portable state_dir should be app-relative");
+    require(config.logDir == "./logs", "portable log_dir should be app-relative");
+    require(config.subFile == "./data/sub.yaml", "portable sub_file should be app-relative");
+    require(config.assetPaths.at("xray.geosite") == "./data/assets/xray/geosite.dat", "portable asset path should include asset dir prefix");
+    require(config.templateNormal.at("mihomo") == "./templates/mihomo_base.yaml", "portable template path should include template dir prefix");
+}
+
+void testResolveConfigPathsFromAppDir() {
+    const fs::path appDir = fs::temp_directory_path() / "subcli-resolve-config-appdir";
+    std::error_code ec;
+    fs::remove_all(appDir, ec);
+    fs::create_directories(appDir, ec);
+
+    subcli::AppConfig config = subcli::makeDefaultConfig(subcli::ConfigLayout::Portable, subcli::PlatformKind::Linux);
+    subcli::resolveConfigPathsFromAppDir(config, appDir);
+
+    require(config.dataDir == (appDir / "data").lexically_normal().string(), "data_dir should resolve from appDir");
+    require(config.cacheDir == (appDir / "cache").lexically_normal().string(), "cache_dir should resolve from appDir");
+    require(config.assetDir == (appDir / "data/assets").lexically_normal().string(), "asset_dir should resolve from appDir");
+    require(config.outputDir == (appDir / "outputs").lexically_normal().string(), "output_dir should resolve from appDir");
+    require(config.subFile == (appDir / "data/sub.yaml").lexically_normal().string(), "sub_file should resolve from appDir");
+    require(config.assetPaths.at("xray.geoip") == (appDir / "data/assets/xray/geoip.dat").lexically_normal().string(), "asset path should resolve from appDir");
+    require(config.templateNormal.at("xray") == (appDir / "templates/xray_base.json").lexically_normal().string(), "template path should resolve from appDir");
+
+    fs::remove_all(appDir, ec);
+}
+
 void testStructuredFieldsSurviveExportNormalization() {
     auto config = makeConfig();
     subcli::ProxyNode node;
@@ -7060,5 +7096,7 @@ int main(int argc, char* argv[]) {
     runTest("testDecodeFileUrlPathPreservesWindowsStyleDrivePath", testDecodeFileUrlPathPreservesWindowsStyleDrivePath);
     runTest("testDecodeFileUrlPathPreservesUncStylePath", testDecodeFileUrlPathPreservesUncStylePath);
     runTest("testEnvironmentResolvesRelativePathsFromAppDir", testEnvironmentResolvesRelativePathsFromAppDir);
+    runTest("testPortableDefaultConfigUsesAppRelativePaths", testPortableDefaultConfigUsesAppRelativePaths);
+    runTest("testResolveConfigPathsFromAppDir", testResolveConfigPathsFromAppDir);
     return 0;
 }

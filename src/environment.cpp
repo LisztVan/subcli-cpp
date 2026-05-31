@@ -110,6 +110,18 @@ std::filesystem::path platformFhsConfigPath(PlatformKind platform) {
     return fs::path("/etc/subcli/config.yaml");
 }
 
+bool shouldInitializeFhsConfig(const std::filesystem::path& appDir, PlatformKind platform) {
+    const fs::path normalized = normalizeAbsolutePath(appDir).lexically_normal();
+    const std::string generic = normalized.generic_string();
+    if (platform == PlatformKind::Windows) {
+        return false;
+    }
+    if (platform == PlatformKind::MacOS) {
+        return generic == "/usr/local/bin" || generic == "/opt/homebrew/bin";
+    }
+    return generic == "/usr/bin" || generic == "/usr/local/bin" || generic == "/bin";
+}
+
 std::filesystem::path platformUserConfigPath(PlatformKind platform) {
     if (platform == PlatformKind::Windows) {
         const std::string appData = getEnvValue("APPDATA");

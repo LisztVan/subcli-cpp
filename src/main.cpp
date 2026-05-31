@@ -2879,28 +2879,30 @@ int doConfigCommandImpl(const std::vector<std::string>& args) {
         std::vector<std::string> initArgs(args.begin() + 2, args.end());
         try { initParser.parse(initArgs); } catch (...) { printConfigUsage(); return 1; }
 
+        const PlatformKind platform = detectPlatformKind();
+        const std::filesystem::path appDir = gEnvInfo.appDir.empty()
+            ? (gExecutablePath.empty() ? std::filesystem::current_path() : normalizeAbsolutePath(gExecutablePath).parent_path())
+            : gEnvInfo.appDir;
+        const bool useFhsLayout = shouldInitializeFhsConfig(appDir, platform);
+
         std::filesystem::path target;
         if (!initPath.empty()) {
             target = std::filesystem::path(initPath).is_absolute()
                 ? std::filesystem::path(initPath)
                 : (std::filesystem::current_path() / initPath).lexically_normal();
+        } else if (useFhsLayout) {
+            target = platformFhsConfigPath(platform);
         } else {
-            const std::filesystem::path appDir = gEnvInfo.appDir.empty()
-                ? (gExecutablePath.empty() ? std::filesystem::current_path() : normalizeAbsolutePath(gExecutablePath).parent_path())
-                : gEnvInfo.appDir;
             target = appDir / "config.yaml";
         }
 
-        AppConfig initial = makeDefaultConfig(ConfigLayout::Portable, detectPlatformKind());
+        AppConfig initial = makeDefaultConfig(useFhsLayout ? ConfigLayout::FHS : ConfigLayout::Portable, platform);
         std::string error;
         if (!writeInitialConfig(target, initial, initForce, error)) {
             std::cerr << "config init failed: " << error << "\n";
             return ExitError;
         }
 
-        const std::filesystem::path appDir = gEnvInfo.appDir.empty()
-            ? (gExecutablePath.empty() ? std::filesystem::current_path() : normalizeAbsolutePath(gExecutablePath).parent_path())
-            : gEnvInfo.appDir;
         AppConfig resolved = initial;
         resolveConfigPathsFromAppDir(resolved, appDir);
         if (!ensureConfigRuntimeFiles(resolved, error)) {

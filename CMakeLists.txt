@@ -4,6 +4,10 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
 project(subcli VERSION 0.2.7 LANGUAGES C CXX)
 
+if(UNIX AND NOT APPLE AND CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "/usr" CACHE PATH "Install prefix" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -38,6 +42,7 @@ FetchContent_Declare(
     openssl
     GIT_REPOSITORY https://github.com/janbar/openssl-cmake.git
     GIT_TAG 1.1.1w-20231130
+    EXCLUDE_FROM_ALL
 )
 
 FetchContent_Declare(
@@ -148,10 +153,16 @@ target_include_directories(subcli PRIVATE include)
 target_link_libraries(subcli PRIVATE yaml-cpp nlohmann_json::nlohmann_json CLI11::CLI11 libcurl)
 target_compile_definitions(subcli PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+if(UNIX AND NOT APPLE)
+    set(SUBCLI_CONFIG_INSTALL_DIR "/etc/subcli")
+else()
+    set(SUBCLI_CONFIG_INSTALL_DIR "${CMAKE_INSTALL_SYSCONFDIR}/subcli")
+endif()
+
 install(TARGETS subcli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY templates/ DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/templates)
 install(DIRECTORY profiles/ DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/profiles)
-install(FILES packaging/fhs/config.yaml DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/subcli)
+install(FILES packaging/fhs/config.yaml DESTINATION ${SUBCLI_CONFIG_INSTALL_DIR})
 install(FILES packaging/systemd/subcli-daemon.service DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/systemd)
 install(FILES README.subcli.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
@@ -246,6 +257,7 @@ else()
   set(CPACK_GENERATOR "DEB;TGZ;ZIP")
 endif()
 
+set(CPACK_SET_DESTDIR ON)
 set(CPACK_DEBIAN_PACKAGE_SECTION "net")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "subcli developers")
 set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Subscription to proxy client config tool")

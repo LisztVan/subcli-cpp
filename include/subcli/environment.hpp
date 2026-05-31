@@ -57,6 +57,7 @@ EnvironmentInfo detectEnvironment(const EnvironmentDetectInput& input);
 std::filesystem::path resolvePathFromAppDir(const std::filesystem::path& appDir, const std::string& value);
 std::filesystem::path platformFhsConfigPath(PlatformKind platform);
 std::filesystem::path platformUserConfigPath(PlatformKind platform);
+bool shouldInitializeFhsConfig(const std::filesystem::path& appDir, PlatformKind platform);
 std::string configModeName(ConfigMode mode);
 
 } // namespace subcli

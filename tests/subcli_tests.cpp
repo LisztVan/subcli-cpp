@@ -6747,6 +6747,14 @@ void testDetectEnvironmentPortableKeepsAppDirSeparateFromConfigDir() {
     fs::remove_all(root, ec);
 }
 
+void testConfigInitLayoutInferenceUsesFhsForSystemBinDirs() {
+    require(subcli::shouldInitializeFhsConfig("/usr/bin", subcli::PlatformKind::Linux), "Linux /usr/bin install should initialize FHS config");
+    require(subcli::shouldInitializeFhsConfig("/usr/local/bin", subcli::PlatformKind::Linux), "Linux /usr/local/bin install should initialize FHS config");
+    require(!subcli::shouldInitializeFhsConfig("/tmp/subcli-review", subcli::PlatformKind::Linux), "non-system Linux app dir should initialize portable config");
+    require(subcli::shouldInitializeFhsConfig("/usr/local/bin", subcli::PlatformKind::MacOS), "macOS /usr/local/bin install should initialize FHS config");
+    require(!subcli::shouldInitializeFhsConfig("C:/Tools/subcli", subcli::PlatformKind::Windows), "Windows should not initialize FHS config");
+}
+
 void testDetectEnvironmentMissingRequiresConfigInit() {
     const fs::path root = fs::temp_directory_path() / "subcli-env-missing-config";
     std::error_code ec;
@@ -7129,6 +7137,7 @@ int main(int argc, char* argv[]) {
     runTest("testProfileExplainAllTargetsJsonIncludesRequiresAssetFindingFromConfig", testProfileExplainAllTargetsJsonIncludesRequiresAssetFindingFromConfig);
     runTest("testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets", testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets);
     runTest("testDetectEnvironmentPortableKeepsAppDirSeparateFromConfigDir", testDetectEnvironmentPortableKeepsAppDirSeparateFromConfigDir);
+    runTest("testConfigInitLayoutInferenceUsesFhsForSystemBinDirs", testConfigInitLayoutInferenceUsesFhsForSystemBinDirs);
     runTest("testDetectEnvironmentMissingRequiresConfigInit", testDetectEnvironmentMissingRequiresConfigInit);
     runTest("testStabilityHttpServerStartsAndServesPort", testStabilityHttpServerStartsAndServesPort);
     runTest("testStorePersistsOverrideFlags", testStorePersistsOverrideFlags);

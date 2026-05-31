@@ -5,9 +5,9 @@
 #include <system_error>
 
 namespace subcli {
-namespace {
-
 namespace fs = std::filesystem;
+
+namespace {
 
 fs::path normalizeAbsolutePath(const fs::path& path) {
     std::error_code ec;
@@ -18,161 +18,169 @@ fs::path normalizeAbsolutePath(const fs::path& path) {
     return abs.lexically_normal();
 }
 
-bool isValidWorkspaceRoot(const fs::path& path) {
-    std::error_code ec;
-    return !path.empty() && fs::exists(path, ec) && fs::is_directory(path, ec);
-}
-
-bool markerExists(const fs::path& dir) {
-    std::error_code ec;
-    if (fs::exists(dir / ".subcli-workspace", ec) && !ec) {
-        return true;
-    }
-    ec.clear();
-    return fs::exists(dir / "subcli.env.yaml", ec) && !ec;
-}
-
 std::string getEnvValue(const char* name) {
     const char* raw = std::getenv(name);
-    if (raw && *raw) {
-        return std::string(raw);
-    }
-    return "";
+    return raw && *raw ? std::string(raw) : std::string();
 }
 
-fs::path homeDir() {
+fs::path homeDir(PlatformKind platform) {
 #ifdef _WIN32
-    std::string home = getEnvValue("USERPROFILE");
-    if (!home.empty()) {
-        return fs::path(home);
-    }
-    const std::string drive = getEnvValue("HOMEDRIVE");
-    const std::string path = getEnvValue("HOMEPATH");
-    if (!drive.empty() && !path.empty()) {
-        return fs::path(drive + path);
-    }
-#else
-    std::string home = getEnvValue("HOME");
-    if (!home.empty()) {
-        return fs::path(home);
+    const std::string userProfile = getEnvValue("USERPROFILE");
+    if (!userProfile.empty()) {
+        return fs::path(userProfile);
     }
 #endif
-    return normalizeAbsolutePath(fs::current_path());
-}
-
-fs::path platformDefaultRoot(PlatformKind platform) {
-    const fs::path home = homeDir();
+    const std::string home = getEnvValue("HOME");
+    if (!home.empty()) {
+        return fs::path(home);
+    }
     if (platform == PlatformKind::Windows) {
         const std::string appData = getEnvValue("APPDATA");
         if (!appData.empty()) {
-            return normalizeAbsolutePath(fs::path(appData) / "subcli");
+            return fs::path(appData).parent_path();
         }
-        return normalizeAbsolutePath(home / "AppData" / "Roaming" / "subcli");
     }
-    if (platform == PlatformKind::MacOS) {
-        return normalizeAbsolutePath(home / "Library" / "Application Support" / "subcli");
-    }
-    return normalizeAbsolutePath(home / ".local" / "share" / "subcli");
+    std::error_code ec;
+    return fs::current_path(ec);
 }
 
-EnvironmentPaths buildPaths(const fs::path& rootPath) {
-    const fs::path root = normalizeAbsolutePath(rootPath);
-    EnvironmentPaths paths;
-    paths.root = root.string();
-    paths.configDir = root.string();
-    paths.dataDir = root.string();
-    paths.cacheDir = (root / "cache").string();
-    paths.stateDir = (root / "state").string();
-    paths.outputDir = (root / "outputs").string();
-    paths.templateDir = (root / "templates").string();
-    paths.profileDir = (root / "profiles").string();
-    paths.subPath = (root / "sub.yaml").string();
-    paths.configPath = (root / "config.yaml").string();
-    return paths;
+fs::path exeDirFromArgv0(const std::string& argv0, const std::string& overrideDir, const std::string& cwd) {
+    if (!overrideDir.empty()) {
+        return normalizeAbsolutePath(overrideDir);
+    }
+    if (!argv0.empty()) {
+        fs::path exe(argv0);
+        if (exe.has_parent_path()) {
+            return normalizeAbsolutePath(exe.parent_path());
+        }
+    }
+    if (!cwd.empty()) {
+        return normalizeAbsolutePath(cwd);
+    }
+    std::error_code ec;
+    return normalizeAbsolutePath(fs::current_path(ec));
+}
+
+bool existsRegularFile(const fs::path& path) {
+    std::error_code ec;
+    return fs::exists(path, ec) && !ec && fs::is_regular_file(path, ec) && !ec;
+}
+
+EnvironmentInfo makeInfo(ConfigMode mode, const fs::path& appDir, const fs::path& configPath, std::vector<std::string> trace) {
+    EnvironmentInfo info;
+    info.ok = true;
+    info.mode = mode;
+    info.appDir = normalizeAbsolutePath(appDir);
+    info.configPath = normalizeAbsolutePath(configPath);
+    info.configDir = info.configPath.parent_path();
+    info.trace = std::move(trace);
+    return info;
+}
+
+EnvironmentInfo makeMissingInfo(const fs::path& appDir, std::vector<std::string> trace) {
+    EnvironmentInfo info;
+    info.ok = false;
+    info.mode = ConfigMode::Missing;
+    info.appDir = normalizeAbsolutePath(appDir);
+    info.trace = std::move(trace);
+    info.error = "config.yaml not found; run 'subcli config init --portable' or 'subcli config init --path <path>' first";
+    return info;
 }
 
 } // namespace
 
-EnvironmentResolveResult resolveEnvironment(const EnvironmentResolveInput& input) {
-    EnvironmentResolveResult out;
-    out.trace.push_back("resolution order: cli --workspace > SUBCLI_WORKSPACE > marker discovery > persisted default > platform default");
-
-    if (!input.cliWorkspace.empty()) {
-        const fs::path cliRoot = normalizeAbsolutePath(fs::path(input.cliWorkspace));
-        out.trace.push_back("cli workspace provided: " + cliRoot.string());
-        if (!isValidWorkspaceRoot(cliRoot)) {
-            out.error = "invalid CLI workspace directory: " + cliRoot.string();
-            out.trace.push_back("cli workspace invalid: fail hard");
-            out.ok = false;
-            return out;
-        }
-        out.source = EnvironmentSource::CliOption;
-        out.root = cliRoot.string();
-        out.paths = buildPaths(cliRoot);
-        out.ok = true;
-        return out;
+std::filesystem::path resolvePathFromAppDir(const std::filesystem::path& appDir, const std::string& value) {
+    if (value.empty()) {
+        return {};
     }
-
-    if (!input.envWorkspace.empty()) {
-        const fs::path envRoot = normalizeAbsolutePath(fs::path(input.envWorkspace));
-        out.trace.push_back("SUBCLI_WORKSPACE provided: " + envRoot.string());
-        if (!isValidWorkspaceRoot(envRoot)) {
-            out.error = "invalid SUBCLI_WORKSPACE directory: " + envRoot.string();
-            out.trace.push_back("SUBCLI_WORKSPACE invalid: fail hard");
-            out.ok = false;
-            return out;
-        }
-        out.source = EnvironmentSource::EnvVar;
-        out.root = envRoot.string();
-        out.paths = buildPaths(envRoot);
-        out.ok = true;
-        return out;
+    fs::path path(value);
+    if (path.is_absolute()) {
+        return path.lexically_normal();
     }
-
-    fs::path current = input.cwd.empty() ? fs::current_path() : fs::path(input.cwd);
-    current = normalizeAbsolutePath(current);
-    out.trace.push_back("marker discovery start: " + current.string());
-    while (true) {
-        if (markerExists(current)) {
-            out.trace.push_back("marker discovered at: " + current.string());
-            out.source = EnvironmentSource::MarkerDiscovery;
-            out.root = current.string();
-            out.paths = buildPaths(current);
-            out.ok = true;
-            return out;
-        }
-        const fs::path parent = current.parent_path();
-        if (parent.empty() || parent == current) {
-            break;
-        }
-        current = parent;
-    }
-    out.trace.push_back("no workspace marker found from cwd upward");
-
-    if (!input.persistedWorkspace.empty()) {
-        const fs::path persisted = normalizeAbsolutePath(fs::path(input.persistedWorkspace));
-        out.trace.push_back("persisted workspace candidate: " + persisted.string());
-        if (isValidWorkspaceRoot(persisted)) {
-            out.source = EnvironmentSource::PersistedDefault;
-            out.root = persisted.string();
-            out.paths = buildPaths(persisted);
-            out.ok = true;
-            return out;
-        }
-        out.trace.push_back("persisted workspace invalid: falling through to platform default");
-    }
-
-    const fs::path platformRoot = platformDefaultRoot(input.platform);
-    out.trace.push_back("platform default selected: " + platformRoot.string());
-    out.source = EnvironmentSource::PlatformDefault;
-    out.root = platformRoot.string();
-    out.paths = buildPaths(platformRoot);
-    out.ok = true;
-    return out;
+    return (appDir / path).lexically_normal();
 }
 
-std::string platformDefaultWorkspaceRoot(PlatformKind platform) {
-    return platformDefaultRoot(platform).string();
+std::filesystem::path platformFhsConfigPath(PlatformKind platform) {
+    if (platform == PlatformKind::MacOS) {
+        return fs::path("/usr/local/etc/subcli/config.yaml");
+    }
+    if (platform == PlatformKind::Windows) {
+        return {};
+    }
+    return fs::path("/etc/subcli/config.yaml");
+}
+
+std::filesystem::path platformUserConfigPath(PlatformKind platform) {
+    if (platform == PlatformKind::Windows) {
+        const std::string appData = getEnvValue("APPDATA");
+        if (!appData.empty()) {
+            return fs::path(appData) / "subcli" / "config.yaml";
+        }
+        return homeDir(platform) / "AppData" / "Roaming" / "subcli" / "config.yaml";
+    }
+    if (platform == PlatformKind::MacOS) {
+        return homeDir(platform) / "Library" / "Application Support" / "subcli" / "config.yaml";
+    }
+    const std::string xdgConfig = getEnvValue("XDG_CONFIG_HOME");
+    if (!xdgConfig.empty()) {
+        return fs::path(xdgConfig) / "subcli" / "config.yaml";
+    }
+    return homeDir(platform) / ".config" / "subcli" / "config.yaml";
+}
+
+std::string configModeName(ConfigMode mode) {
+    switch (mode) {
+    case ConfigMode::Explicit:
+        return "explicit";
+    case ConfigMode::Portable:
+        return "portable";
+    case ConfigMode::FHS:
+        return "fhs";
+    case ConfigMode::UserLocal:
+        return "user_local";
+    case ConfigMode::Missing:
+        return "missing";
+    }
+    return "unknown";
+}
+
+EnvironmentInfo detectEnvironment(const EnvironmentDetectInput& input) {
+    std::vector<std::string> trace;
+    trace.push_back("resolution order: --config > SUBCLI_CONFIG > exe-dir config.yaml > FHS config > user-local config");
+
+    const std::string explicitPath = !input.configOption.empty() ? input.configOption : input.envConfig;
+    if (!explicitPath.empty()) {
+        const fs::path configPath = normalizeAbsolutePath(explicitPath);
+        const fs::path appDir = exeDirFromArgv0(input.argv0, input.exeDirOverride, input.cwd);
+        if (!existsRegularFile(configPath)) {
+            trace.push_back(input.configOption.empty() ? "selected SUBCLI_CONFIG (new)" : "selected --config (new)");
+            return makeInfo(ConfigMode::Explicit, appDir, configPath, std::move(trace));
+        }
+        trace.push_back(input.configOption.empty() ? "selected SUBCLI_CONFIG" : "selected --config");
+        return makeInfo(ConfigMode::Explicit, appDir, configPath, std::move(trace));
+    }
+
+    const fs::path appDir = exeDirFromArgv0(input.argv0, input.exeDirOverride, input.cwd);
+    const fs::path portableConfig = appDir / "config.yaml";
+    if (existsRegularFile(portableConfig)) {
+        trace.push_back("selected portable config next to executable");
+        return makeInfo(ConfigMode::Portable, appDir, portableConfig, std::move(trace));
+    }
+
+    const fs::path fhsConfig = input.fhsConfigOverride.empty() ? platformFhsConfigPath(input.platform) : fs::path(input.fhsConfigOverride);
+    if (!fhsConfig.empty() && existsRegularFile(fhsConfig)) {
+        trace.push_back("selected FHS config");
+        return makeInfo(ConfigMode::FHS, appDir, fhsConfig, std::move(trace));
+    }
+
+    const fs::path userConfig = input.userConfigOverride.empty() ? platformUserConfigPath(input.platform) : fs::path(input.userConfigOverride);
+    if (existsRegularFile(userConfig)) {
+        trace.push_back("selected user-local config");
+        return makeInfo(ConfigMode::UserLocal, appDir, userConfig, std::move(trace));
+    }
+
+    trace.push_back("no config found; user must run config init");
+    return makeMissingInfo(appDir, std::move(trace));
 }
 
 } // namespace subcli

@@ -5792,23 +5792,18 @@ void testDecodeFileUrlPathPreservesUncStylePath() {
     require(decoded == "//server/share/with space.txt", "decodeFileUrlPath should preserve UNC-style path text");
 }
 
-void testResolveAgainstConfigDirUsesConfigBase() {
-    const fs::path base = fs::temp_directory_path() / "subcli-config-base-tests";
-    const auto resolved = subcli::resolveAgainstBaseForTest(base.string(), "assets/geoip.dat");
-    require(resolved == (base / "assets/geoip.dat").lexically_normal().string(), "config-relative path should resolve against config dir base");
-}
+void testEnvironmentResolvesRelativePathsFromAppDir() {
+    const fs::path appDir = fs::temp_directory_path() / "subcli-env-appdir-test";
+    std::error_code ec;
+    fs::remove_all(appDir, ec);
+    fs::create_directories(appDir, ec);
 
-void testResolveAgainstCliCwdUsesCwdBase() {
-    const fs::path base = fs::temp_directory_path() / "subcli-cwd-base-tests";
-    const auto resolved = subcli::resolveAgainstBaseForTest(base.string(), "outputs/mihomo.yaml");
-    require(resolved == (base / "outputs/mihomo.yaml").lexically_normal().string(), "cli relative path should resolve against cwd base");
-}
+    const auto resolved = subcli::resolvePathFromAppDir(appDir, "data/assets/geosite.dat");
+    require(resolved == (appDir / "data/assets/geosite.dat").lexically_normal(), "relative config paths must resolve from appDir");
 
-void testResolveAgainstBaseKeepsAbsolutePath() {
-    const fs::path base = fs::temp_directory_path() / "subcli-absolute-base-tests";
-    const fs::path absolute = fs::temp_directory_path() / "already/absolute.txt";
-    const auto resolved = subcli::resolveAgainstBaseForTest(base.string(), absolute.string());
-    require(resolved == absolute.lexically_normal().string(), "absolute path should remain absolute");
+    const fs::path absolute = appDir / "already/absolute.dat";
+    const auto kept = subcli::resolvePathFromAppDir(appDir, absolute.string());
+    require(kept == absolute.lexically_normal(), "absolute config paths must stay absolute");
 }
 
 void testStructuredFieldsSurviveExportNormalization() {
@@ -6536,117 +6531,6 @@ void testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets() {
     require(hasUnsupported(xray), "xray should not support hysteria2");
 }
 
-void testEnvironmentResolutionPrefersCliWorkspaceOverEnvAndPersisted() {
-    const fs::path base = makeUniqueTestDir("subcli-env-cli-priority");
-    const fs::path cli = base / "ws-cli";
-    const fs::path env = base / "ws-env";
-    const fs::path persisted = base / "ws-persisted";
-    fs::create_directories(cli);
-    fs::create_directories(env);
-    fs::create_directories(persisted);
-
-    subcli::EnvironmentResolveInput input;
-    input.cliWorkspace = cli.string();
-    input.envWorkspace = env.string();
-    input.persistedWorkspace = persisted.string();
-    input.cwd = base.string();
-    input.platform = subcli::PlatformKind::Linux;
-
-    const auto out = subcli::resolveEnvironment(input);
-    require(out.ok, "environment resolve should succeed for valid explicit cli workspace");
-    require(out.source == subcli::EnvironmentSource::CliOption, "cli workspace should win over env and persisted");
-    require(fs::path(out.root) == fs::absolute(cli).lexically_normal(), "resolved root should equal cli workspace");
-
-    fs::remove_all(base);
-}
-
-void testEnvironmentResolutionFailsForInvalidExplicitCliWorkspace() {
-    const fs::path base = makeUniqueTestDir("subcli-env-cli-invalid");
-    const fs::path missing = base / "does-not-exist";
-
-    subcli::EnvironmentResolveInput input;
-    input.cliWorkspace = missing.string();
-    input.cwd = base.string();
-    input.platform = subcli::PlatformKind::Linux;
-
-    const auto out = subcli::resolveEnvironment(input);
-    require(!out.ok, "invalid explicit cli workspace must fail");
-    require(!out.error.empty(), "invalid explicit cli workspace should provide error");
-
-    fs::remove_all(base);
-}
-
-void testEnvironmentResolutionUsesEnvWorkspaceWhenCliWorkspaceMissing() {
-    const fs::path base = makeUniqueTestDir("subcli-env-var-priority");
-    const fs::path env = base / "ws-env";
-    const fs::path persisted = base / "ws-persisted";
-    fs::create_directories(env);
-    fs::create_directories(persisted);
-
-    subcli::EnvironmentResolveInput input;
-    input.envWorkspace = env.string();
-    input.persistedWorkspace = persisted.string();
-    input.cwd = base.string();
-    input.platform = subcli::PlatformKind::Linux;
-
-    const auto out = subcli::resolveEnvironment(input);
-    require(out.ok, "environment resolve should succeed for valid SUBCLI_WORKSPACE");
-    require(out.source == subcli::EnvironmentSource::EnvVar, "SUBCLI_WORKSPACE should win when --workspace is absent");
-    require(fs::path(out.root) == fs::absolute(env).lexically_normal(), "resolved root should equal SUBCLI_WORKSPACE directory");
-
-    fs::remove_all(base);
-}
-
-void testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault() {
-    const fs::path base = makeUniqueTestDir("subcli-env-marker-priority");
-    const fs::path markerRoot = base / "workspace-root";
-    const fs::path nested = markerRoot / "nested" / "deeper";
-    const fs::path persisted = base / "persisted";
-    fs::create_directories(nested);
-    fs::create_directories(persisted);
-    {
-        std::ofstream out(markerRoot / ".subcli-workspace", std::ios::trunc);
-        out << "marker\n";
-    }
-
-    subcli::EnvironmentResolveInput input;
-    input.cwd = nested.string();
-    input.persistedWorkspace = persisted.string();
-    input.platform = subcli::PlatformKind::Linux;
-
-    const auto out = subcli::resolveEnvironment(input);
-    require(out.ok, "environment resolve should succeed for marker discovery");
-    require(out.source == subcli::EnvironmentSource::MarkerDiscovery, "marker-discovered workspace should win over persisted default");
-    require(fs::path(out.root) == fs::absolute(markerRoot).lexically_normal(), "resolved root should equal discovered marker directory");
-
-    fs::remove_all(base);
-}
-
-void testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker() {
-    const fs::path base = makeUniqueTestDir("subcli-env-persisted-default");
-    const fs::path cwd = base / "cwd";
-    const fs::path persisted = base / "persisted-root";
-    fs::create_directories(cwd);
-    fs::create_directories(persisted);
-
-    subcli::EnvironmentResolveInput input;
-    input.cwd = cwd.string();
-    input.persistedWorkspace = persisted.string();
-    input.platform = subcli::PlatformKind::Linux;
-
-    const auto out = subcli::resolveEnvironment(input);
-    require(out.ok, "environment resolve should succeed for valid persisted default workspace");
-    require(out.source == subcli::EnvironmentSource::PersistedDefault, "persisted default should be used without cli/env/marker");
-    require(fs::path(out.root) == fs::absolute(persisted).lexically_normal(), "resolved root should equal persisted default workspace");
-
-    fs::remove_all(base);
-}
-
-void testPlatformDefaultWorkspaceRootIsNonEmpty() {
-    const std::string root = subcli::platformDefaultWorkspaceRoot(subcli::PlatformKind::Linux);
-    require(!root.empty(), "platform default workspace root should be non-empty");
-    require(root.find("subcli") != std::string::npos, "platform default workspace root should contain subcli");
-}
 
 void testStabilityHttpServerStartsAndServesPort() {
     const fs::path fixtureDir = fs::path(SUBCLI_SOURCE_DIR) / "tests/stability_fixtures/subscriptions";
@@ -6656,159 +6540,55 @@ void testStabilityHttpServerStartsAndServesPort() {
     server.stop();
 }
 
-void testWorkspaceSeedBuiltInsCopiesMissingFilesOnly() {
-    const fs::path root = makeUniqueTestDir("subcli-workspace-seed-builtins");
-    const fs::path source = makeUniqueTestDir("subcli-workspace-seed-source");
-    fs::create_directories(source / "templates");
-    fs::create_directories(source / "profiles");
-    fs::create_directories(root / "templates");
-    fs::create_directories(root / "profiles");
-
+void testDetectEnvironmentPortableKeepsAppDirSeparateFromConfigDir() {
+    const fs::path root = fs::temp_directory_path() / "subcli-env-portable-appdir";
+    const fs::path configDir = root / "config-location";
+    const fs::path appDir = root / "app";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(configDir, ec);
+    fs::create_directories(appDir, ec);
     {
-        std::ofstream(source / "templates" / "mihomo_base.yaml", std::ios::binary) << "mixed-port: 7890\n";
-        std::ofstream(source / "profiles" / "bypass-cn.json", std::ios::binary) << "{\"groups\":[],\"rules\":[]}\n";
-        std::ofstream(root / "templates" / "mihomo_base.yaml", std::ios::binary) << "user-owned\n";
+        std::ofstream out(appDir / "config.yaml");
+        out << "version: 1\n";
     }
 
-    std::string error;
-    const auto result = subcli::workspaceSeedBuiltIns(
-        root.string(),
-        (source / "templates").string(),
-        (source / "profiles").string(),
-        error
-    );
-    require(result.ok, "workspace seed built-ins should succeed: " + error);
-    require(fs::exists(root / "profiles" / "bypass-cn.json"), "profile should be copied");
-    require(subcli::readFile((root / "templates" / "mihomo_base.yaml").string()) == "user-owned\n", "existing template should not be overwritten");
+    subcli::EnvironmentDetectInput input;
+    input.argv0 = (appDir / "subcli").string();
+    input.exeDirOverride = appDir.string();
+    input.cwd = configDir.string();
+    input.platform = subcli::PlatformKind::Linux;
 
-    fs::remove_all(root);
-    fs::remove_all(source);
+    const auto info = subcli::detectEnvironment(input);
+    require(info.ok, "portable config detection should succeed: " + info.error);
+    require(info.mode == subcli::ConfigMode::Portable, "exe-dir config should use portable mode");
+    require(info.appDir == appDir.lexically_normal(), "EnvironmentInfo.appDir should be executable directory");
+    require(info.configDir == appDir.lexically_normal(), "portable configDir should be exe dir when config is exe-adjacent");
+
+    fs::remove_all(root, ec);
 }
 
-void testWorkspaceInitCreatesExpectedTree() {
-    const fs::path root = fs::temp_directory_path() / "subcli-workspace-init-tests";
-    fs::remove_all(root);
+void testDetectEnvironmentMissingRequiresConfigInit() {
+    const fs::path root = fs::temp_directory_path() / "subcli-env-missing-config";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
 
-    const subcli::WorkspaceInitResult r = subcli::workspaceInit(root.string());
-    require(r.ok, "workspace init should succeed: " + r.error);
-    require(fs::exists(root / "profiles"), "profiles dir should exist");
-    require(fs::exists(root / "templates"), "templates dir should exist");
-    require(fs::exists(root / "assets"), "assets dir should exist");
-    require(fs::exists(root / "cache"), "cache dir should exist");
-    require(fs::exists(root / "outputs"), "outputs dir should exist");
-    require(fs::exists(root / "state"), "state dir should exist");
-    require(fs::exists(root / ".subcli-workspace"), "marker should exist");
-    require(fs::exists(root / "subcli.env.yaml"), "subcli.env.yaml should exist");
-    require(fs::exists(root / "config.yaml"), "config.yaml should exist");
-    require(fs::exists(root / "sub.yaml"), "sub.yaml should exist");
+    subcli::EnvironmentDetectInput input;
+    input.argv0 = (root / "subcli").string();
+    input.exeDirOverride = root.string();
+    input.cwd = root.string();
+    input.fhsConfigOverride = (root / "missing-fhs/config.yaml").string();
+    input.userConfigOverride = (root / "missing-user/config.yaml").string();
+    input.platform = subcli::PlatformKind::Linux;
 
-    const auto metadata = subcli::workspaceReadMetadata(root.string());
-    require(metadata.exists, "workspace metadata should be present after init");
-    require(metadata.valid, "workspace metadata should be valid after init");
-    require(metadata.envVersion == 2, "workspace metadata env_version should be 2");
-    require(metadata.name == root.filename().string(), "workspace metadata name should default to directory name");
-    require(!metadata.createdAt.empty(), "workspace metadata created_at should be populated");
-    require(metadata.description.empty(), "workspace metadata description should default to empty");
+    const auto info = subcli::detectEnvironment(input);
+    require(!info.ok, "missing config should not be treated as ready");
+    require(info.mode == subcli::ConfigMode::Missing, "missing config should return ConfigMode::Missing");
+    require(info.appDir == root.lexically_normal(), "missing config result should still expose appDir for config init");
+    require(info.error.find("subcli config init") != std::string::npos, "missing config error should instruct user to run config init");
 
-    fs::remove_all(root);
-}
-
-void testWorkspaceReadMetadataRejectsUnsupportedEnvVersion() {
-    const fs::path root = makeUniqueTestDir("subcli-workspace-metadata-version");
-    const fs::path metadataPath = root / "subcli.env.yaml";
-
-    {
-        std::ofstream out(metadataPath, std::ios::trunc);
-        out << "env_version: 1\n";
-        out << "name: legacy\n";
-        out << "created_at: 2025-01-01T00:00:00Z\n";
-        out << "description: old\n";
-    }
-
-    const auto metadata = subcli::workspaceReadMetadata(root.string());
-    require(metadata.exists, "metadata parser should detect existing metadata file");
-    require(!metadata.valid, "unsupported env_version metadata should be invalid");
-    require(metadata.envVersion == 1, "metadata parser should read env_version value");
-    require(metadata.error.find("unsupported env_version") != std::string::npos, "unsupported env_version should produce explicit error");
-
-    fs::remove_all(root);
-}
-
-void testWorkspaceReadMetadataSupportsLegacyMarkerWithoutMetadata() {
-    const fs::path root = makeUniqueTestDir("subcli-workspace-legacy-marker");
-
-    {
-        std::ofstream out(root / ".subcli-workspace", std::ios::trunc);
-        out << "subcli-workspace\n";
-    }
-
-    const auto metadata = subcli::workspaceReadMetadata(root.string());
-    require(!metadata.exists, "legacy marker-only workspace should report missing metadata file");
-    require(!metadata.valid, "legacy marker-only workspace should not report metadata as valid");
-    require(metadata.error.empty(), "legacy marker-only workspace should not raise metadata parse errors");
-
-    fs::remove_all(root);
-}
-
-void testWorkspaceMigrateCopiesDurableDataOnly() {
-    const fs::path from = fs::temp_directory_path() / "subcli-workspace-migrate-from-tests";
-    const fs::path to = fs::temp_directory_path() / "subcli-workspace-migrate-to-tests";
-    fs::remove_all(from);
-    fs::remove_all(to);
-
-    require(subcli::workspaceInit(from.string()).ok, "source workspace init should succeed");
-
-    {
-        std::ofstream cfg(from / "config.yaml", std::ios::trunc);
-        cfg << "log_level: debug\n";
-    }
-    {
-        std::ofstream subs(from / "sub.yaml", std::ios::trunc);
-        subs << "version: 1\nsubscriptions: []\n";
-    }
-    fs::create_directories(from / "profiles");
-    {
-        std::ofstream p(from / "profiles/custom.json");
-        p << "{\"version\":1,\"name\":\"custom\"}";
-    }
-    fs::create_directories(from / "templates");
-    {
-        std::ofstream t(from / "templates/custom.yaml");
-        t << "proxies: []\n";
-    }
-    fs::create_directories(from / "assets");
-    {
-        std::ofstream a(from / "assets/sample.dat");
-        a << "asset\n";
-    }
-    fs::create_directories(from / "cache");
-    {
-        std::ofstream c(from / "cache/temp.cache");
-        c << "cache\n";
-    }
-    fs::create_directories(from / "state");
-    {
-        std::ofstream s(from / "state/pid");
-        s << "123\n";
-    }
-
-    subcli::WorkspaceMigrateOptions options;
-    options.fromRoot = from.string();
-    options.toRoot = to.string();
-    const subcli::WorkspaceMigrateResult result = subcli::workspaceMigrate(options);
-    require(result.ok, "workspace migrate should succeed: " + result.error);
-
-    require(fs::exists(to / "config.yaml"), "config.yaml should be migrated");
-    require(fs::exists(to / "sub.yaml"), "sub.yaml should be migrated");
-    require(fs::exists(to / "profiles/custom.json"), "profiles should be migrated");
-    require(fs::exists(to / "templates/custom.yaml"), "templates should be migrated");
-    require(fs::exists(to / "assets/sample.dat"), "assets should be migrated");
-
-    require(!fs::exists(to / "cache/temp.cache"), "cache data should be skipped by default");
-    require(!fs::exists(to / "state/pid"), "state data should be skipped by default");
-
-    fs::remove_all(from);
-    fs::remove_all(to);
+    fs::remove_all(root, ec);
 }
 
 void testRegistryContainsCurrentConfigKeys() {
@@ -7169,18 +6949,9 @@ int main(int argc, char* argv[]) {
     runTest("testCapabilityMatrixDeduplicatesRequiresAssetFindingsByAssetKey", testCapabilityMatrixDeduplicatesRequiresAssetFindingsByAssetKey);
     runTest("testProfileExplainAllTargetsJsonIncludesRequiresAssetFindingFromConfig", testProfileExplainAllTargetsJsonIncludesRequiresAssetFindingFromConfig);
     runTest("testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets", testCapabilityMatrixAssessesNodeProtocolSupportAcrossTargets);
-    runTest("testEnvironmentResolutionPrefersCliWorkspaceOverEnvAndPersisted", testEnvironmentResolutionPrefersCliWorkspaceOverEnvAndPersisted);
-    runTest("testEnvironmentResolutionFailsForInvalidExplicitCliWorkspace", testEnvironmentResolutionFailsForInvalidExplicitCliWorkspace);
-    runTest("testEnvironmentResolutionUsesEnvWorkspaceWhenCliWorkspaceMissing", testEnvironmentResolutionUsesEnvWorkspaceWhenCliWorkspaceMissing);
-    runTest("testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault", testEnvironmentResolutionPrefersMarkerDiscoveryOverPersistedDefault);
-    runTest("testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker", testEnvironmentResolutionUsesPersistedDefaultWithoutCliEnvOrMarker);
-    runTest("testPlatformDefaultWorkspaceRootIsNonEmpty", testPlatformDefaultWorkspaceRootIsNonEmpty);
+    runTest("testDetectEnvironmentPortableKeepsAppDirSeparateFromConfigDir", testDetectEnvironmentPortableKeepsAppDirSeparateFromConfigDir);
+    runTest("testDetectEnvironmentMissingRequiresConfigInit", testDetectEnvironmentMissingRequiresConfigInit);
     runTest("testStabilityHttpServerStartsAndServesPort", testStabilityHttpServerStartsAndServesPort);
-    runTest("testWorkspaceSeedBuiltInsCopiesMissingFilesOnly", testWorkspaceSeedBuiltInsCopiesMissingFilesOnly);
-    runTest("testWorkspaceInitCreatesExpectedTree", testWorkspaceInitCreatesExpectedTree);
-    runTest("testWorkspaceReadMetadataRejectsUnsupportedEnvVersion", testWorkspaceReadMetadataRejectsUnsupportedEnvVersion);
-    runTest("testWorkspaceReadMetadataSupportsLegacyMarkerWithoutMetadata", testWorkspaceReadMetadataSupportsLegacyMarkerWithoutMetadata);
-    runTest("testWorkspaceMigrateCopiesDurableDataOnly", testWorkspaceMigrateCopiesDurableDataOnly);
     runTest("testStorePersistsOverrideFlags", testStorePersistsOverrideFlags);
     runTest("testNormalizeTagsDropsEmptyDedupesAndKeepsOrder", testNormalizeTagsDropsEmptyDedupesAndKeepsOrder);
     runTest("testSubscriptionServiceYamlRoundTrip", testSubscriptionServiceYamlRoundTrip);
@@ -7250,8 +7021,6 @@ int main(int argc, char* argv[]) {
     runTest("testFetchFileUrlDecodesPercentEscapes", testFetchFileUrlDecodesPercentEscapes);
     runTest("testDecodeFileUrlPathPreservesWindowsStyleDrivePath", testDecodeFileUrlPathPreservesWindowsStyleDrivePath);
     runTest("testDecodeFileUrlPathPreservesUncStylePath", testDecodeFileUrlPathPreservesUncStylePath);
-    runTest("testResolveAgainstConfigDirUsesConfigBase", testResolveAgainstConfigDirUsesConfigBase);
-    runTest("testResolveAgainstCliCwdUsesCwdBase", testResolveAgainstCliCwdUsesCwdBase);
-    runTest("testResolveAgainstBaseKeepsAbsolutePath", testResolveAgainstBaseKeepsAbsolutePath);
+    runTest("testEnvironmentResolvesRelativePathsFromAppDir", testEnvironmentResolvesRelativePathsFromAppDir);
     return 0;
 }

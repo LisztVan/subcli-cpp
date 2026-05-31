@@ -28,6 +28,10 @@
 - Preserve cache fallback visibility and support strict network mode.
 - Skip unsupported target protocols with explicit warnings instead of generating invalid configs.
 
+## Release and Runtime Verification
+
+For cross-platform validation with `gh`, local packaging, GitHub Release publishing, and `run`/`daemon` smoke tests, see [`docs/release-and-runtime.md`](docs/release-and-runtime.md).
+
 ## Build
 
 ```bash

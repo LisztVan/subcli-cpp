@@ -10,6 +10,18 @@
 4. run / daemon 命令跨平台运行状况测试
 5. 项目最终目标评估：作为订阅转换工具是否合格
 
+## 实施状态
+
+本方案已落地为以下可执行文件和验证入口：
+
+- `scripts/verify-cross-platform.sh`：使用 `gh` 触发并等待三平台编译验证。
+- `scripts/local-package.sh`：本地 Release 构建、测试、打包。
+- `scripts/release.sh`：tag 驱动的 GitHub Release 发布助手。
+- `.github/workflows/runtime-test.yml`：Linux/macOS/Windows 上的 `run`/`daemon` 命令烟雾测试。
+- `tests/runtime_command_smoke.cmake`：本地和 CI 复用的 runtime 命令测试。
+- `docs/release-and-runtime.md`：面向维护者的发布与 runtime 验证说明。
+
+
 ---
 
 ## 1. 跨平台编译验证

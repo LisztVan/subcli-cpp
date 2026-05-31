@@ -1,0 +1,72 @@
+version: 1
+
+# subcli portable configuration
+# All relative paths are resolved from the application directory (the directory
+# containing the subcli executable), not from this config file's location.
+
+data_dir: ./data
+cache_dir: ./cache
+asset_dir: ./data/assets
+template_dir: ./templates
+profile_dir: ./profiles
+output_dir: ./outputs
+state_dir: ./data/state
+log_dir: ./logs
+sub_file: ./data/sub.yaml
+
+profile: bypass-cn
+profile_path: ""
+tun: false
+log_level: info
+
+parallelism: 4
+timeout: 15
+retry: 2
+fetch_max_bytes: 10485760
+
+core_paths:
+  mihomo: ""
+  sing_box: ""
+  xray: ""
+
+templates:
+  mihomo:
+    normal: ./templates/mihomo_base.yaml
+    tun: ./templates/mihomo_tun.yaml
+  sing-box:
+    normal: ./templates/singbox_base.json
+    tun: ./templates/singbox_tun.json
+  xray:
+    normal: ./templates/xray_base.json
+    tun: ./templates/xray_tun.json
+
+assets:
+  paths:
+    mihomo.geosite: ./data/assets/mihomo/geosite.dat
+    mihomo.geoip: ./data/assets/mihomo/geoip.dat
+    sing-box.geosite-cn: ./data/assets/sing-box/geosite-cn.srs
+    sing-box.geoip-cn: ./data/assets/sing-box/geoip-cn.srs
+    xray.geosite: ./data/assets/xray/geosite.dat
+    xray.geoip: ./data/assets/xray/geoip.dat
+  urls:
+    mihomo.geosite: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat
+    mihomo.geoip: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat
+    sing-box.geosite-cn: https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite-cn.srs
+    sing-box.geoip-cn: https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip-cn.srs
+    xray.geosite: https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
+    xray.geoip: https://github.com/v2fly/geoip/releases/latest/download/geoip.dat
+
+node_management:
+  dedupe: true
+  rename_template: "{name}"
+  include_regex: ""
+  exclude_regex: ""
+  sort_by: region,name
+
+grouping:
+  region_rules:
+    HK: "(?i)(hong kong|hongkong|hk|香港)"
+    SG: "(?i)(singapore|sg|新加坡)"
+    JP: "(?i)(japan|jp|tokyo|osaka|日本)"
+    TW: "(?i)(taiwan|tw|台灣|台湾)"
+    US: "(?i)(united states|usa|us|america|美国)"

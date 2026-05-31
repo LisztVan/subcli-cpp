@@ -1,0 +1,72 @@
+version: 1
+
+# subcli FHS configuration
+# Absolute paths are used for installed packages. Relative paths, if added by users,
+# are resolved from the application directory (the directory containing the subcli executable).
+
+data_dir: /var/lib/subcli
+cache_dir: /var/cache/subcli
+asset_dir: /var/lib/subcli/assets
+template_dir: /usr/share/subcli/templates
+profile_dir: /usr/share/subcli/profiles
+output_dir: /var/lib/subcli/outputs
+state_dir: /var/lib/subcli/state
+log_dir: /var/log/subcli
+sub_file: /var/lib/subcli/sub.yaml
+
+profile: bypass-cn
+profile_path: ""
+tun: false
+log_level: info
+
+parallelism: 4
+timeout: 15
+retry: 2
+fetch_max_bytes: 10485760
+
+core_paths:
+  mihomo: ""
+  sing_box: ""
+  xray: ""
+
+templates:
+  mihomo:
+    normal: /usr/share/subcli/templates/mihomo_base.yaml
+    tun: /usr/share/subcli/templates/mihomo_tun.yaml
+  sing-box:
+    normal: /usr/share/subcli/templates/singbox_base.json
+    tun: /usr/share/subcli/templates/singbox_tun.json
+  xray:
+    normal: /usr/share/subcli/templates/xray_base.json
+    tun: /usr/share/subcli/templates/xray_tun.json
+
+assets:
+  paths:
+    mihomo.geosite: /var/lib/subcli/assets/mihomo/geosite.dat
+    mihomo.geoip: /var/lib/subcli/assets/mihomo/geoip.dat
+    sing-box.geosite-cn: /var/lib/subcli/assets/sing-box/geosite-cn.srs
+    sing-box.geoip-cn: /var/lib/subcli/assets/sing-box/geoip-cn.srs
+    xray.geosite: /var/lib/subcli/assets/xray/geosite.dat
+    xray.geoip: /var/lib/subcli/assets/xray/geoip.dat
+  urls:
+    mihomo.geosite: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat
+    mihomo.geoip: https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip.dat
+    sing-box.geosite-cn: https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite-cn.srs
+    sing-box.geoip-cn: https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip-cn.srs
+    xray.geosite: https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
+    xray.geoip: https://github.com/v2fly/geoip/releases/latest/download/geoip.dat
+
+node_management:
+  dedupe: true
+  rename_template: "{name}"
+  include_regex: ""
+  exclude_regex: ""
+  sort_by: region,name
+
+grouping:
+  region_rules:
+    HK: "(?i)(hong kong|hongkong|hk|香港)"
+    SG: "(?i)(singapore|sg|新加坡)"
+    JP: "(?i)(japan|jp|tokyo|osaka|日本)"
+    TW: "(?i)(taiwan|tw|台灣|台湾)"
+    US: "(?i)(united states|usa|us|america|美国)"

@@ -151,6 +151,7 @@ target_compile_definitions(subcli PRIVATE SUBCLI_SOURCE_DIR="${CMAKE_SOURCE_DIR}
 install(TARGETS subcli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY templates/ DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/templates)
 install(DIRECTORY profiles/ DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/profiles)
+install(FILES packaging/fhs/config.yaml DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/subcli)
 install(FILES packaging/systemd/subcli-daemon.service DESTINATION ${CMAKE_INSTALL_DATADIR}/subcli/systemd)
 install(FILES README.subcli.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 
@@ -228,5 +229,18 @@ set(CPACK_PACKAGE_VENDOR "subcli")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Subscription CLI exporter")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_FILE_NAME "subcli-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
-set(CPACK_GENERATOR "TGZ;ZIP")
+set(CPACK_GENERATOR "DEB;TGZ;ZIP")
+
+set(CPACK_DEBIAN_PACKAGE_SECTION "net")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "subcli developers")
+set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Subscription to proxy client config tool")
+
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_SOURCE_DIR}/packaging/deb/postinst"
+    "${CMAKE_SOURCE_DIR}/packaging/deb/prerm"
+    "${CMAKE_SOURCE_DIR}/packaging/deb/postrm"
+)
+set(CPACK_DEBIAN_PACKAGE_CONFFILES "/etc/subcli/config.yaml")
+set(CPACK_DEBIAN_PACKAGE_FILE_NAME "subcli-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+
 include(CPack)

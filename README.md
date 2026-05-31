@@ -46,7 +46,7 @@ Release-validation workflow triggers on `v*` tags, enforces tag == `v<project ve
 ## Quick Start
 
 ```bash
-subcli init
+subcli config init --portable
 subcli doctor --json
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
@@ -77,61 +77,54 @@ Proxy cores are not bundled. Configure core paths explicitly or make them availa
 
 ## Runtime Paths
 
-`subcli` is workspace-first. `subcli init [DIR]` and `subcli workspace init [DIR]` initialize a workspace, seed built-in templates/profiles, and remember that workspace as the default.
+`subcli` is config-first. `subcli config init --portable|--fhs|--user` creates `config.yaml` with default paths. All relative paths resolve from the application directory (the directory containing the `subcli` executable), not from the config file location.
 
-Workspace resolution order is:
+Config resolution order is:
 
-1. `--workspace DIR`
-2. `SUBCLI_WORKSPACE`
-3. marker discovery from the current directory (`.subcli-workspace` or `subcli.env.yaml`)
-4. remembered default workspace
-5. platform default workspace
+1. `--config PATH`
+2. `SUBCLI_CONFIG`
+3. `<app-dir>/config.yaml` (portable)
+4. `/etc/subcli/config.yaml` (FHS, Linux/macOS)
+5. `~/.config/subcli/config.yaml` or equivalent (user-local)
 
-When no `DIR` is provided, the platform default workspace is used:
+When no config is found, commands fail and instruct the user to run `subcli config init`.
 
-- Linux: `${XDG_DATA_HOME:-~/.local/share}/subcli`
-- macOS: `~/Library/Application Support/subcli`
-- Windows: `%APPDATA%\subcli`
+All runtime paths are defined in `config.yaml`:
 
-All runtime paths then live under the resolved workspace root:
+- Config location: determined by selection order above
+- Subscriptions: defined by `sub_file` (default `./data/sub.yaml`)
+- Cache: `cache_dir` (default `./cache`)
+- State: `state_dir` (default `./data/state`)
+- Outputs: `output_dir` (default `./outputs`)
+- Templates: `template_dir` (default `./templates`)
+- Profiles: `profile_dir` (default `./profiles`)
 
-- Config: `<workspace>/config.yaml`
-- Subscriptions: `<workspace>/sub.yaml`
-- Cache: `<workspace>/cache/`
-- State: `<workspace>/state/`
-- Outputs: `<workspace>/outputs/`
-- Templates: `<workspace>/templates/`
-- Profiles: `<workspace>/profiles/`
+Older workspace-style paths (`config-relative`, `--workspace`) are deprecated. Use `subcli config init --portable` for first-use setup.
 
-Older XDG-style paths may still appear when migrating existing data, but first-use commands should prefer `subcli init` / `subcli workspace init` and `subcli workspace status --json`.
+## Config Mode
 
-## Workspace Mode
-
-`subcli` supports project-scoped workspace data roots for isolation and reproducibility.
+`subcli` supports portable mode and FHS mode for different installation types.
 
 ```bash
-subcli workspace init ./my-subcli
-subcli workspace status --json
-subcli workspace unset
+subcli config init --portable
+subcli config init --fhs   # requires root, for system packages
+subcli --config /path/to/config.yaml status
 ```
 
-`workspace init` remembers the initialized workspace. Use `workspace use ./other-workspace` later when you want to switch defaults explicitly.
+`config init --portable` creates `config.yaml` next to the executable. Use `--config PATH` to point to a specific config file for a single invocation.
 
 One-off per-command override:
 
 ```bash
-subcli --workspace ./my-subcli export all --profile bypass-cn --check
+subcli --config /path/to/config.yaml export all --profile bypass-cn --check
 ```
 
 ## Migration
 
-Migrate existing XDG data into a workspace:
+From an older workspace-based setup, migrate your data manually:
 
-```bash
-subcli workspace migrate --to ./my-subcli
-subcli workspace init ./my-subcli
-subcli doctor --json
-```
+1. Copy your existing `config.yaml`, `sub.yaml`, `profiles/`, `templates/`, and `assets/` into a new `appDir` layout.
+2. Run `subcli doctor --json` to verify.
 
 ## Verification
 
@@ -163,4 +156,4 @@ Xray does not provide a native TUN device. The Xray TUN template is a transparen
 
 ## Documentation
 
-See [`README.subcli.md`](README.subcli.md) for detailed command examples, release validation workflow (`profile explain`, `export --json`, `--strict-capabilities`), cache behavior, troubleshooting, and deployment notes. See [`docs/config-file.md`](docs/config-file.md) for `config.yaml` reference and workspace/path precedence rules. See [`docs/cli-glossary.zh-CN.md`](docs/cli-glossary.zh-CN.md) for a Chinese command and option glossary. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for the full v2.1 capability matrix (protocols, groups, DNS, route mapping, assets, and strict-mode behavior).
+See [`README.subcli.md`](README.subcli.md) for detailed command examples, release validation workflow (`profile explain`, `export --json`, `--strict-capabilities`), cache behavior, troubleshooting, and deployment notes. See [`docs/config-file.md`](docs/config-file.md) for `config.yaml` reference and config/path precedence rules. See [`docs/cli-glossary.zh-CN.md`](docs/cli-glossary.zh-CN.md) for a Chinese command and option glossary. See [`docs/profile-schema.md`](docs/profile-schema.md) for the profile JSON schema and migration notes. See [`docs/capability-matrix.md`](docs/capability-matrix.md) for the full v2.1 capability matrix (protocols, groups, DNS, route mapping, assets, and strict-mode behavior).

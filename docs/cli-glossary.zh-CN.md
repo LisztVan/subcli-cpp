@@ -7,24 +7,20 @@ subcli 是一个订阅管理和代理客户端配置生成工具。
 ## 第一次使用
 
 ```bash
-subcli init
+subcli config init --portable
 subcli doctor
 subcli sub add --name my-sub --url <你的订阅链接>
 subcli sub update
 subcli export mihomo
 ```
 
-`subcli init` 会创建并记住默认 workspace。之后的命令会默认使用这个 workspace，不需要每次都写 `--workspace`。
+`subcli config init` 会在可执行文件同级目录创建 `config.yaml`。之后的命令会默认使用这个配置。
 
 ## 常用命令
 
 | 英文命令/选项 | 中文含义 | 示例 |
 | --- | --- | --- |
-| `init` | 初始化并记住默认 workspace | `subcli init` |
-| `workspace init` | 初始化 workspace 并设为默认 | `subcli workspace init ./ws` |
-| `workspace status` | 查看当前 workspace | `subcli workspace status` |
-| `workspace use` | 切换默认 workspace | `subcli workspace use ./ws2` |
-| `workspace unset` | 清除默认 workspace | `subcli workspace unset` |
+| `config init` | 初始化配置 | `subcli config init --portable` |
 | `doctor` | 检查环境和配置是否正常 | `subcli doctor` |
 | `sub add` | 添加订阅 | `subcli sub add --name my-sub --url https://example/sub` |
 | `sub update` | 更新订阅 | `subcli sub update` |
@@ -32,27 +28,36 @@ subcli export mihomo
 | `export mihomo` | 导出 Mihomo 配置 | `subcli export mihomo` |
 | `export sing-box` | 导出 sing-box 配置 | `subcli export sing-box` |
 | `export xray` | 导出 Xray 配置 | `subcli export xray` |
-| `--workspace DIR` | 本次命令临时使用某个 workspace | `subcli --workspace ./ws doctor` |
+| `--config PATH` | 本次命令临时使用某个配置 | `subcli --config /path/to/config.yaml doctor` |
 | `--output-dir DIR` | 指定导出目录 | `subcli export mihomo --output-dir ./outputs` |
 | `--json` | 用 JSON 格式输出 | `subcli doctor --json` |
 | `--strict-network` | 网络失败时严格报错 | `subcli sub update --strict-network` |
 | `--help` / `-h` | 查看帮助 | `subcli --help` |
+| `purge` | 清理/彻底清理 | `subcli purge --all --yes` |
 
-## workspace 是什么
+## config.yaml 是什么
 
-workspace 是 subcli 在幕后使用的工作目录，用来存放配置、订阅、模板、资源、缓存、导出文件和运行状态。
+`config.yaml` 是 subcli 的配置文件，用来定义路径、网络限制、模板路径、核心路径、资源 URL 和分组规则。
 
 普通用户通常只需要运行一次：
 
 ```bash
-subcli init
+subcli config init --portable
 ```
 
-高级用户可以用下面的命令切换或清除默认 workspace：
+这会生成默认的 `config.yaml`，所有相对路径都相对于应用程序目录（即可执行文件所在目录）解析。
+
+高级用户可以用下面的命令指定不同的配置路径：
 
 ```bash
-subcli workspace use ./another-workspace
-subcli workspace unset
+subcli --config /path/to/config.yaml doctor
+```
+
+或通过环境变量：
+
+```bash
+export SUBCLI_CONFIG=/path/to/config.yaml
+subcli doctor
 ```
 
 ## 常见流程
@@ -65,10 +70,10 @@ subcli sub update
 subcli export mihomo
 ```
 
-### 临时使用另一个 workspace
+### 临时使用另一个配置
 
 ```bash
-subcli --workspace ./other-workspace doctor
+subcli --config /path/to/other-config.yaml doctor
 ```
 
-`--workspace` 只影响当前这一次命令，不会改变已经记住的默认 workspace。
+`--config` 只影响当前这一次命令，不会改变已存在的配置。

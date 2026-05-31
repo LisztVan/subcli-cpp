@@ -19,14 +19,14 @@ The generated archive is written under `build/`.
 ## First Use
 
 ```bash
-subcli init
+subcli config init --portable
 subcli doctor --json
 subcli sub add --name airport-a --url https://example/sub
 subcli sub update
 subcli export mihomo
 ```
 
-`subcli init` creates and remembers a default workspace. Later commands use that workspace automatically.
+`subcli config init --portable` creates a `config.yaml` next to the executable with default paths. Later commands use that config automatically.
 
 Useful next steps:
 
@@ -50,49 +50,44 @@ The primary workflow ends at exported config files. If you have a local core ins
 
 ## Runtime Directories
 
-`subcli` is workspace-first. `subcli init [DIR]` and `subcli workspace init [DIR]` initialize a workspace, seed built-in templates/profiles, and remember that workspace as the default.
+`subcli` is config-first. `subcli config init --portable|--fhs|--user` creates `config.yaml` with default paths. All relative paths resolve from the application directory (the directory containing the `subcli` executable), not from the config file location.
 
-Workspace resolution order is:
+Config resolution order is:
 
-1. `--workspace DIR`
-2. `SUBCLI_WORKSPACE`
-3. marker discovery from the current directory (`.subcli-workspace` or `subcli.env.yaml`)
-4. remembered default workspace
-5. platform default workspace
+1. `--config PATH`
+2. `SUBCLI_CONFIG`
+3. `<app-dir>/config.yaml` (portable)
+4. `/etc/subcli/config.yaml` (FHS, Linux/macOS)
+5. `~/.config/subcli/config.yaml` or equivalent (user-local)
 
-When no `DIR` is provided, the platform default workspace is used:
+If no config is found, commands fail and instruct the user to run `subcli config init`.
 
-- Linux: `${XDG_DATA_HOME:-~/.local/share}/subcli`
-- macOS: `~/Library/Application Support/subcli`
-- Windows: `%APPDATA%\subcli`
+All runtime paths are defined in `config.yaml`:
 
-All runtime paths then live under the resolved workspace root:
+- Config location: determined by selection order above
+- Subscriptions: defined by `sub_file` (default `./data/sub.yaml`)
+- Cache: `cache_dir` (default `./cache`)
+- State: `state_dir` (default `./data/state`)
+- Outputs: `output_dir` (default `./outputs`)
+- Templates: `template_dir` (default `./templates`)
+- Profiles: `profile_dir` (default `./profiles`)
 
-- Config: `<workspace>/config.yaml`
-- Subscriptions: `<workspace>/sub.yaml`
-- Cache: `<workspace>/cache/`
-- State: `<workspace>/state/`
-- Outputs: `<workspace>/outputs/`
-- Templates: `<workspace>/templates/`
-- Profiles: `<workspace>/profiles/`
-
-Persisted relative paths in `config.yaml` are resolved relative to the config directory. CLI path arguments such as `--output-dir`, `--file`, and path-valued `--profile` are resolved relative to the current shell directory.
+Persisted relative paths in `config.yaml` are resolved relative to the application directory (appDir). CLI path arguments such as `--output-dir`, `--file`, and path-valued `--profile` are resolved relative to the current shell directory.
 
 ## Commands
 
 ```bash
 subcli --help
-subcli --workspace /path/to/ws status
-subcli init
+subcli --config /path/to/config.yaml doctor
+subcli config init --portable
 subcli doctor
 
-subcli workspace init ./ws
-subcli workspace status
-subcli workspace use ./ws
-subcli workspace unset
-subcli workspace migrate --from-legacy --dry-run
-subcli workspace migrate --from-legacy --overwrite
-subcli workspace doctor
+subcli config list
+subcli config set timeout 30
+subcli config remove parallelism
+
+subcli purge --assets --dry-run
+subcli purge --all --yes
 
 subcli sub add --name airport-a --url https://example/sub
 subcli sub add --name local --url file:///abs/path/sub.txt --force
@@ -162,31 +157,29 @@ subcli completion bash
 
 ## Subscription Management
 
-## Workspace Management
+## Config Management
 
-`subcli` supports workspace-scoped runtime/config/data layout, so multiple independent environments can coexist.
+`subcli` supports config-scoped runtime/data layout, so multiple independent environments can coexist.
 
-- `subcli workspace init [DIR]`: initialize a workspace layout and remember it as the default workspace.
-- `subcli workspace status`: show the active workspace and key paths.
-- `subcli workspace use <DIR>`: switch the remembered default workspace later.
-- `subcli workspace unset`: clear the remembered default workspace and fall back to platform defaults.
-- `subcli workspace migrate [--dry-run] [--overwrite]`: migrate legacy/default files into the active workspace.
-- `subcli workspace doctor`: validate workspace structure and required files.
+- `subcli config init --portable`: create a portable config.yaml next to the executable with default relative paths.
+- `subcli config init --fhs`: create a FHS-mode config.yaml with absolute paths (requires write access to /etc/subcli).
+- `subcli config list`: show current config values.
+- `subcli doctor --json`: validate config structure and required files.
 
-Global workspace selection is also available on any command:
+Global config selection is also available on any command:
 
-- `--workspace <DIR>`: use a specific workspace for this invocation only.
+- `--config PATH`: use a specific config file for this invocation only.
 
 Environment variable override:
 
-- `SUBCLI_WORKSPACE=<DIR>`: default workspace when `--workspace` is not provided.
+- `SUBCLI_CONFIG=PATH`: default config when --config is not provided.
 
-Migration notes:
+Cleanup:
 
-- `--dry-run` prints planned file moves/copies without writing changes.
-- `--overwrite` allows replacing existing destination files during migration.
+- `subcli purge --assets --yes`: remove downloaded geo/rule asset files.
+- `subcli purge --all --yes`: remove assets, cache, outputs, logs, state, and config.
 
-Precedence for workspace selection is `--workspace` > `SUBCLI_WORKSPACE` > workspace marker discovery > persisted workspace selection > platform default paths. `subcli init [DIR]` and `subcli workspace init [DIR]` both persist the initialized workspace as the default.
+Precedence for config selection is `--config` > `SUBCLI_CONFIG` > `<app-dir>/config.yaml` (portable) > `/etc/subcli/config.yaml` (FHS) > `~/.config/subcli/config.yaml` (user-local). `subcli config init --portable` creates a default config file.
 
 Subscriptions support normal CRUD through `sub add`, `sub list`, `sub edit`, and `sub remove`. Subscription ids and names must be unique; `sub add` will not overwrite an existing subscription. Use `sub edit <id|name>` for changes.
 

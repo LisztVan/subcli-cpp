@@ -11,23 +11,26 @@
 
 ## Path Resolution Rules
 
-- Persisted relative paths in `config.yaml` resolve relative to the directory that contains `config.yaml`.
+- `config.yaml` is created explicitly with `subcli config init`; normal commands do not create it implicitly.
+- Persisted relative paths in `config.yaml` resolve relative to the application directory (the directory containing the running `subcli` executable), not relative to `config.yaml`'s own location.
 - CLI path arguments (for example `--output-dir`, `--file`, `--profile /path/...`) resolve relative to current shell working directory.
 - Absolute paths stay absolute in both cases.
 
-Practical effect: `subcli config set profile_path ./profiles/work.json` stores a config-relative path; `subcli export all --profile ./profiles/work.json` is cwd-relative for that command.
+Practical effect: in a portable package, `template_dir: ./templates` resolves to `<app-dir>/templates` regardless of whether `config.yaml` was passed via `--config` from another location.
 
-## Workspace Selection Precedence
+## Config Selection Precedence
 
 Selection order for one invocation:
 
-1. `--workspace <DIR>`
-2. `SUBCLI_WORKSPACE=<DIR>`
-3. workspace marker discovery from the current directory upward
-4. persisted workspace selection
-5. platform default paths
+1. `--config <PATH>`
+2. `SUBCLI_CONFIG=<PATH>`
+3. `<app-dir>/config.yaml` (portable mode, config next to executable)
+4. `/etc/subcli/config.yaml` (FHS mode, Linux/macOS)
+5. `~/.config/subcli/config.yaml` or platform equivalent (user-local fallback)
 
-`subcli init [DIR]` and `subcli workspace init [DIR]` both initialize a workspace and persist it as the default workspace. If no explicit workspace source is present and no remembered workspace exists, subcli falls back to platform default paths.
+If no config is found, commands fail with a message instructing to run `subcli config init`.
+
+`subcli config init [--portable|--fhs|--user]` creates a default `config.yaml` at the chosen location.
 
 ## Common Keys and Prefixes
 

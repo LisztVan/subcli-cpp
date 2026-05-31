@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+case "$1" in
+    configure)
+        install -d -m 755 /var/lib/subcli/assets
+        install -d -m 755 /var/lib/subcli/outputs
+        install -d -m 755 /var/lib/subcli/state
+        install -d -m 755 /var/cache/subcli
+        install -d -m 755 /var/log/subcli
+        if [ ! -f /var/lib/subcli/sub.yaml ]; then
+            printf 'version: 1\nsubscriptions: []\n' > /var/lib/subcli/sub.yaml
+        fi
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+exit 0

@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+case "$1" in
+    purge)
+        rm -rf /var/lib/subcli
+        rm -rf /var/cache/subcli
+        rm -rf /var/log/subcli
+        rm -rf /etc/subcli
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+    remove)
+        ;;
+esac
+exit 0

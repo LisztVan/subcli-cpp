@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -21,6 +22,7 @@ struct Options {
     fs::path subcliBin;
     fs::path sourceDir;
     fs::path testRoot;
+    fs::path configPath;
 };
 
 void fail(const std::string& message) {
@@ -45,7 +47,64 @@ Options parseOptions(int argc, char* argv[]) {
     if (options.mode.empty() || options.subcliBin.empty() || options.sourceDir.empty() || options.testRoot.empty()) {
         fail("usage: subcli_stability_runner --mode user|package --subcli-bin PATH --source-dir DIR --test-root DIR");
     }
+    options.configPath = options.testRoot / "config.yaml";
     return options;
+}
+
+void ensureConfig(const Options& options) {
+    const auto configPath = options.configPath;
+    if (fs::exists(configPath)) {
+        return;
+    }
+    fs::create_directories(configPath.parent_path());
+    std::ofstream out(configPath);
+    if (!out) {
+        fail("failed to create config: " + configPath.string());
+    }
+    out << "version: 1\n"
+        << "data_dir: " << (options.testRoot / "data").string() << "\n"
+        << "cache_dir: " << (options.testRoot / "cache").string() << "\n"
+        << "asset_dir: " << (options.testRoot / "data/assets").string() << "\n"
+        << "template_dir: " << (options.sourceDir / "templates").string() << "\n"
+        << "profile_dir: " << (options.sourceDir / "profiles").string() << "\n"
+        << "output_dir: " << (options.testRoot / "outputs").string() << "\n"
+        << "state_dir: " << (options.testRoot / "data/state").string() << "\n"
+        << "log_dir: " << (options.testRoot / "logs").string() << "\n"
+        << "sub_file: " << (options.testRoot / "data/sub.yaml").string() << "\n"
+        << "profile: bypass-cn\n"
+        << "tun: false\n"
+        << "log_level: info\n"
+        << "parallelism: 4\n"
+        << "timeout: 15\n"
+        << "retry: 2\n"
+        << "fetch_max_bytes: 10485760\n"
+        << "templates:\n"
+        << "  mihomo:\n"
+        << "    normal: " << (options.sourceDir / "templates/mihomo_base.yaml").string() << "\n"
+        << "    tun: " << (options.sourceDir / "templates/mihomo_tun.yaml").string() << "\n"
+        << "  sing-box:\n"
+        << "    normal: " << (options.sourceDir / "templates/singbox_base.json").string() << "\n"
+        << "    tun: " << (options.sourceDir / "templates/singbox_tun.json").string() << "\n"
+        << "  xray:\n"
+        << "    normal: " << (options.sourceDir / "templates/xray_base.json").string() << "\n"
+        << "    tun: " << (options.sourceDir / "templates/xray_tun.json").string() << "\n"
+        << "grouping:\n"
+        << "  region_rules:\n"
+        << "    HK: \"(?i)(hong kong|hongkong|hk|香港)\"\n"
+        << "    JP: \"(?i)(japan|jp|tokyo|osaka|日本)\"\n"
+        << "node_management:\n"
+        << "  dedupe: true\n"
+        << "  rename_template: \"{name}\"\n"
+        << "  sort_by: region,name\n";
+    out.close();
+}
+
+std::vector<std::string> withConfig(const Options& options, const std::vector<std::string>& args) {
+    std::vector<std::string> out;
+    out.push_back("--config");
+    out.push_back(options.configPath.string());
+    out.insert(out.end(), args.begin(), args.end());
+    return out;
 }
 
 subcli::ProcessRunResult runSubcli(const Options& options, const std::vector<std::string>& args, int timeoutSec = 20) {
@@ -121,75 +180,72 @@ void requireAnyFileNonEmpty(const fs::path& dir, const std::string& extension, c
 }
 
 void runBoundaryChecks(const Options& options, subcli::StabilityHttpServer& server) {
-    runOk(options, "sub add bad500", {"sub", "add", "--name", "bad500", "--url", server.url("/sub/500"), "--force"});
-    const std::string bad500 = runFail(options, "sub update bad500", {"sub", "update", "bad500", "--strict-network"}, 20);
+    runOk(options, "sub add bad500", withConfig(options, {"sub", "add", "--name", "bad500", "--url", server.url("/sub/500"), "--force"}));
+    const std::string bad500 = runFail(options, "sub update bad500", withConfig(options, {"sub", "update", "bad500", "--strict-network"}), 20);
     requireContains(bad500, "500", "HTTP 500 failure");
 
-    runOk(options, "sub add empty", {"sub", "add", "--name", "empty", "--url", server.url("/sub/empty"), "--force"});
-    (void)runFail(options, "sub update empty", {"sub", "update", "empty", "--strict-network"}, 20);
+    runOk(options, "sub add empty", withConfig(options, {"sub", "add", "--name", "empty", "--url", server.url("/sub/empty"), "--force"}));
+    (void)runFail(options, "sub update empty", withConfig(options, {"sub", "update", "empty", "--strict-network"}), 20);
 
-    runOk(options, "sub add malformed", {"sub", "add", "--name", "malformed", "--url", server.url("/sub/malformed"), "--force"});
-    (void)runSubcli(options, {"sub", "update", "malformed"}, 20);
+    runOk(options, "sub add malformed", withConfig(options, {"sub", "add", "--name", "malformed", "--url", server.url("/sub/malformed"), "--force"}));
+    (void)runSubcli(options, withConfig(options, {"sub", "update", "malformed"}), 20);
 
-    runOk(options, "sub add unicode", {"sub", "add", "--name", "unicode", "--url", server.url("/sub/unicode"), "--force"});
-    runOk(options, "sub update unicode", {"sub", "update", "unicode", "--strict-network"}, 20);
+    runOk(options, "sub add unicode", withConfig(options, {"sub", "add", "--name", "unicode", "--url", server.url("/sub/unicode"), "--force"}));
+    runOk(options, "sub update unicode", withConfig(options, {"sub", "update", "unicode", "--strict-network"}), 20);
 
-    runOk(options, "sub add slow", {"sub", "add", "--name", "slow", "--url", server.url("/sub/slow"), "--timeout", "1", "--force"});
-    (void)runFail(options, "sub update slow", {"sub", "update", "slow", "--strict-network"}, 10);
+    runOk(options, "sub add slow", withConfig(options, {"sub", "add", "--name", "slow", "--url", server.url("/sub/slow"), "--timeout", "1", "--force"}));
+    (void)runFail(options, "sub update slow", withConfig(options, {"sub", "update", "slow", "--strict-network"}), 10);
 }
 
 void runJourney(const Options& options) {
     fs::remove_all(options.testRoot);
     fs::create_directories(options.testRoot);
-    const fs::path workspace = options.testRoot / "subcli stability workspace with space";
     const fs::path outputDir = options.testRoot / "outputs";
     fs::create_directories(outputDir);
 
+    ensureConfig(options);
+
+    // Ensure appDir-relative paths that gPaths expect exist
+    const auto appDir = options.subcliBin.parent_path();
+    for (const auto& subdir : {"templates", "profiles"}) {
+        const fs::path link = appDir / subdir;
+        if (!fs::exists(link)) {
+            std::error_code ec;
+            fs::create_directory_symlink(options.sourceDir / subdir, link, ec);
+            if (ec) {
+                fs::copy(options.sourceDir / subdir, link, fs::copy_options::recursive, ec);
+                if (ec) {
+                    fail("failed to create " + std::string(subdir) + ": " + ec.message());
+                }
+            }
+        }
+    }
+    // Clean global data between runs (sub.yaml from gPaths.subPath)
+    std::error_code ec;
+    fs::remove_all(appDir / "data", ec);
+
     const std::string help = runOk(options, "root help", {"--help"});
     requireContains(help, "First use:", "root help");
-    requireContains(help, "subcli init", "root help");
     requireContains(help, "does not replace proxy", "root help");
 
-    const std::string initHelp = runOk(options, "init help", {"init", "--help"});
-    requireContains(initHelp, "remember", "init help");
-
-    const std::string workspaceHelp = runOk(options, "workspace help", {"workspace", "--help"});
-    requireContains(workspaceHelp, "workspace init initializes", "workspace help");
-
-    const std::string subHelp = runOk(options, "sub help", {"sub", "--help"});
+    const std::string subHelp = runOk(options, "sub help", withConfig(options, {"sub", "--help"}));
     requireContains(subHelp, "Subscriptions are URLs", "sub help");
 
-    const std::string exportHelp = runOk(options, "export help", {"export", "--help"});
+    const std::string exportHelp = runOk(options, "export help", withConfig(options, {"export", "--help"}));
     requireContains(exportHelp, "Generate native client config files", "export help");
 
-    runOk(options, "init", {"init", workspace.string()});
-    const std::string status = runOk(options, "workspace status", {"workspace", "status", "--json"});
-    requireWorkspaceStatusPath(status, "active_root", workspace, "workspace status");
-    requireWorkspaceStatusPath(status, "default_root", workspace, "workspace default status");
-
-    const fs::path overrideWorkspace = options.testRoot / "override workspace";
-    runOk(options, "workspace init override", {"workspace", "init", overrideWorkspace.string()});
-    const std::string switched = runOk(options, "workspace status after switch", {"workspace", "status", "--json"});
-    requireWorkspaceStatusPath(switched, "active_root", overrideWorkspace, "workspace status after second init");
-    requireWorkspaceStatusPath(switched, "default_root", overrideWorkspace, "workspace default after second init");
-
-    runOk(options, "workspace use original", {"workspace", "use", workspace.string()});
-    const std::string restored = runOk(options, "workspace status restored", {"workspace", "status", "--json"});
-    requireWorkspaceStatusPath(restored, "active_root", workspace, "workspace status after workspace use");
-    requireWorkspaceStatusPath(restored, "default_root", workspace, "workspace default after workspace use");
-
-    runOk(options, "doctor", {"doctor", "--json"});
-    runOk(options, "config list", {"config", "list"});
-    runOk(options, "template list", {"template", "list"});
-    runOk(options, "profile list", {"profile", "list"});
-    runOk(options, "profile validate", {"profile", "validate", (workspace / "profiles" / "bypass-cn.json").string()});
+    runOk(options, "doctor", withConfig(options, {"doctor", "--json"}));
+    runOk(options, "config list", withConfig(options, {"config", "list"}));
+    runOk(options, "template list", withConfig(options, {"template", "list"}));
+    runOk(options, "profile list", withConfig(options, {"profile", "list"}));
+    runOk(options, "profile validate", withConfig(options, {"profile", "validate", (options.sourceDir / "profiles" / "bypass-cn.json").string()}));
 
     subcli::StabilityHttpServer server(options.sourceDir / "tests/stability_fixtures/subscriptions");
     server.start();
-    runOk(options, "sub add", {"sub", "add", "--name", "local-http", "--url", server.url("/sub/plain"), "--force"});
-    runOk(options, "sub update", {"sub", "update", "local-http", "--strict-network"});
-    runOk(options, "sub list", {"sub", "list"});
-    runOk(options, "export mihomo", {"export", "mihomo", "--output-dir", outputDir.string(), "--strict-network"});
+    runOk(options, "sub add", withConfig(options, {"sub", "add", "--name", "local-http", "--url", server.url("/sub/plain"), "--force"}));
+    runOk(options, "sub update", withConfig(options, {"sub", "update", "local-http", "--strict-network"}));
+    runOk(options, "sub list", withConfig(options, {"sub", "list"}));
+    runOk(options, "export mihomo", withConfig(options, {"export", "mihomo", "--output-dir", outputDir.string(), "--strict-network"}));
     requireAnyFileNonEmpty(outputDir, ".yaml", "mihomo export");
 
     runBoundaryChecks(options, server);

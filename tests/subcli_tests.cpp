@@ -5762,9 +5762,9 @@ void testChineseGlossaryExistsAndMentionsFirstUse() {
     require(fs::exists(glossaryPath), "Chinese CLI glossary should exist");
     const auto glossary = subcli::readFile(glossaryPath.string());
     require(glossary.find("第一次使用") != std::string::npos, "Chinese glossary should include first-use section");
-    require(glossary.find("subcli init") != std::string::npos, "Chinese glossary should mention subcli init");
+    require(glossary.find("subcli config init --portable") != std::string::npos, "Chinese glossary should mention subcli config init --portable");
     require(glossary.find("subcli sub add") != std::string::npos, "Chinese glossary should mention subscription add flow");
-    require(glossary.find("--workspace") != std::string::npos, "Chinese glossary should translate --workspace");
+    require(glossary.find("--config") != std::string::npos, "Chinese glossary should translate --config");
     require(glossary.find("--output-dir") != std::string::npos, "Chinese glossary should translate --output-dir");
 }
 

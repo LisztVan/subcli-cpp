@@ -133,6 +133,7 @@ FetchResult fetchOnce(const Subscription& sub, bool useCacheFallback) {
     BodyWriteState bodyState{&body, std::max<long>(1024, sub.fetchMaxBytes), false};
     curl_easy_setopt(curl, CURLOPT_URL, sub.url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, static_cast<long>(std::max(1, sub.timeout)));
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, static_cast<long>(std::max(1, sub.timeout)));
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeBody);

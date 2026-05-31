@@ -26,6 +26,7 @@ private:
     void serveLoop();
     void handleClient(int client);
     std::string responseForPath(const std::string& path);
+    std::string redirectLoopResponse() const;
     std::string readFixture(const std::string& name) const;
 
     std::filesystem::path fixtureDir_;

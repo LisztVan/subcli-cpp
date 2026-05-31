@@ -117,7 +117,18 @@ void StabilityHttpServer::handleClient(int client) {
     (void)testSupportSend(client, response.data(), static_cast<int>(response.size()));
 }
 
+std::string StabilityHttpServer::redirectLoopResponse() const {
+    return "HTTP/1.1 302 Found\r\n"
+           "Location: /redirect-loop\r\n"
+           "Content-Length: 0\r\n"
+           "Connection: close\r\n"
+           "\r\n";
+}
+
 std::string StabilityHttpServer::responseForPath(const std::string& path) {
+    if (path == "/redirect-loop") {
+        return redirectLoopResponse();
+    }
     if (path == "/shutdown") {
         running_ = false;
         return httpResponse(200, "OK", "shutdown\n");

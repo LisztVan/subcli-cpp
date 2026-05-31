@@ -5820,6 +5820,31 @@ void testFetchFileUrlDecodesPercentEscapes() {
     fs::remove_all(dir);
 }
 
+void testFetchHttpRedirectLoopIsBounded() {
+    const fs::path fixtureDir = fs::temp_directory_path() / "subcli-fetch-redirect-fixtures";
+    fs::remove_all(fixtureDir);
+    fs::create_directories(fixtureDir);
+
+    subcli::StabilityHttpServer server(fixtureDir);
+    server.start();
+
+    subcli::Subscription sub;
+    sub.id = "redirect-loop";
+    sub.name = "redirect-loop";
+    sub.url = server.url("/redirect-loop");
+    sub.timeout = 5;
+    sub.retry = 0;
+    sub.fetchMaxBytes = 1024 * 1024;
+
+    auto result = subcli::fetchSubscription(sub, false);
+    server.stop();
+    fs::remove_all(fixtureDir);
+
+    require(!result.ok, "redirect loop fetch should fail");
+    require(result.error.find("redirect") != std::string::npos || result.error.find("Redirect") != std::string::npos,
+            "redirect loop error should mention redirect");
+}
+
 void testDecodeFileUrlPathPreservesWindowsStyleDrivePath() {
     const std::string decoded = subcli::decodeFileUrlPath("/C:/Users/test/with%20space.txt");
     require(decoded == "/C:/Users/test/with space.txt", "decodeFileUrlPath should preserve Windows drive-style path text");
@@ -7174,6 +7199,7 @@ int main(int argc, char* argv[]) {
     runTest("testFetchRejectsUnsupportedScheme", testFetchRejectsUnsupportedScheme);
     runTest("testFetchFileHonorsMaxBytes", testFetchFileHonorsMaxBytes);
     runTest("testFetchFileUrlDecodesPercentEscapes", testFetchFileUrlDecodesPercentEscapes);
+    runTest("testFetchHttpRedirectLoopIsBounded", testFetchHttpRedirectLoopIsBounded);
     runTest("testDecodeFileUrlPathPreservesWindowsStyleDrivePath", testDecodeFileUrlPathPreservesWindowsStyleDrivePath);
     runTest("testDecodeFileUrlPathPreservesUncStylePath", testDecodeFileUrlPathPreservesUncStylePath);
     runTest("testEnvironmentResolvesRelativePathsFromAppDir", testEnvironmentResolvesRelativePathsFromAppDir);

@@ -50,7 +50,7 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
   exit 1
 fi
 
-if git ls-remote --tags "$REMOTE" "$TAG" | grep -q "$TAG"; then
+if git ls-remote --tags "$REMOTE" "$TAG" | grep -q "refs/tags/$TAG$"; then
   echo "error: tag already exists on remote $REMOTE: $TAG" >&2
   exit 1
 fi
@@ -76,7 +76,7 @@ sleep 10
 
 RUN_ID=""
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
-  RUN_ID="$(gh run list --workflow="$WORKFLOW" --limit=1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
+  RUN_ID="$(gh run list --workflow="$WORKFLOW" --branch "$TAG" --limit=1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)"
   if [[ -n "$RUN_ID" && "$RUN_ID" != "null" ]]; then
     break
   fi

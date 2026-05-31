@@ -295,7 +295,7 @@ cp "$tmp/valid-mihomo.yaml" "$missing_cfg/nope.yaml"
 "$bin" config set templates.mihomo.normal "$missing_cfg/nope.yaml" >/dev/null
 
 config_init_help="$($bin config init --help 2>&1 || true)"
-if [[ "$config_init_help" != *"--portable"* || "$config_init_help" != *"--fhs"* ]]; then
+if [[ "$config_init_help" != *"--path"* || "$config_init_help" != *"--force"* ]]; then
     printf 'config init --help missing options: %s\n' "$config_init_help"
     exit 1
 fi
@@ -526,7 +526,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 "$bin" export all --profile bypass-cn --sub explain --strict-capabilities >/dev/null 2>&1 && exit 1 || true
 
-"$bin" config init --portable --force >/dev/null
+"$bin" config init --force >/dev/null
 config_init_out="$($bin config list)"
 if [[ "$config_init_out" != *"profile=bypass-cn"* ]]; then
     printf 'config list should show default values: %s\n' "$config_init_out"

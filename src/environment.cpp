@@ -83,7 +83,7 @@ EnvironmentInfo makeMissingInfo(const fs::path& appDir, std::vector<std::string>
     info.mode = ConfigMode::Missing;
     info.appDir = normalizeAbsolutePath(appDir);
     info.trace = std::move(trace);
-    info.error = "config.yaml not found; run 'subcli config init --portable' or 'subcli config init --path <path>' first";
+    info.error = "config.yaml not found; run 'subcli config init' or 'subcli config init --path <path>' first";
     return info;
 }
 

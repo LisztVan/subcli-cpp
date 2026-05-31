@@ -463,7 +463,7 @@ void printRootUsage() {
               << "clients and does not enable the system proxy by itself.\n"
               << "\n"
               << "First use:\n"
-              << "  subcli config init --portable\n"
+              << "  subcli config init\n"
               << "  subcli doctor\n"
               << "  subcli sub add --name my-sub --url <subscription-url>\n"
               << "  subcli sub update\n"
@@ -498,7 +498,7 @@ void printRootUsage() {
               << "  completion  Generate shell completion scripts.\n"
               << "\n"
               << "Examples:\n"
-              << "  subcli config init --portable\n"
+              << "  subcli config init\n"
               << "  subcli doctor\n"
               << "  subcli sub add --name my-sub --url https://example/sub\n"
               << "  subcli sub update\n"
@@ -581,7 +581,7 @@ void printSubUsage() {
 
 void printConfigUsage() {
     std::cout << "Usage:\n"
-              << "  subcli config init [--portable|--fhs|--user] [--path PATH] [--force]\n"
+              << "  subcli config init [--path PATH] [--force]\n"
               << "  subcli config list [--json]\n"
               << "  subcli config get <key>\n"
               << "  subcli config set <key> <value>\n"
@@ -2867,6 +2867,51 @@ int doConfigCommandImpl(const std::vector<std::string>& args) {
         }
         return 0;
     }
+
+    // Handle 'config init' before ensureDefaults() since config may not exist yet
+    if (args.size() >= 2 && args[1] == "init") {
+        bool initForce = false;
+        std::string initPath;
+        CLI::App initParser("config init");
+        initParser.set_help_flag("");
+        initParser.add_flag("--force", initForce);
+        initParser.add_option("--path", initPath);
+        std::vector<std::string> initArgs(args.begin() + 2, args.end());
+        try { initParser.parse(initArgs); } catch (...) { printConfigUsage(); return 1; }
+
+        std::filesystem::path target;
+        if (!initPath.empty()) {
+            target = std::filesystem::path(initPath).is_absolute()
+                ? std::filesystem::path(initPath)
+                : (std::filesystem::current_path() / initPath).lexically_normal();
+        } else {
+            const std::filesystem::path appDir = gEnvInfo.appDir.empty()
+                ? (gExecutablePath.empty() ? std::filesystem::current_path() : normalizeAbsolutePath(gExecutablePath).parent_path())
+                : gEnvInfo.appDir;
+            target = appDir / "config.yaml";
+        }
+
+        AppConfig initial = makeDefaultConfig(ConfigLayout::Portable, detectPlatformKind());
+        std::string error;
+        if (!writeInitialConfig(target, initial, initForce, error)) {
+            std::cerr << "config init failed: " << error << "\n";
+            return ExitError;
+        }
+
+        const std::filesystem::path appDir = gEnvInfo.appDir.empty()
+            ? (gExecutablePath.empty() ? std::filesystem::current_path() : normalizeAbsolutePath(gExecutablePath).parent_path())
+            : gEnvInfo.appDir;
+        AppConfig resolved = initial;
+        resolveConfigPathsFromAppDir(resolved, appDir);
+        if (!ensureConfigRuntimeFiles(resolved, error)) {
+            std::cerr << "config init failed while creating runtime files: " << error << "\n";
+            return ExitError;
+        }
+
+        std::cout << "config initialized: " << target.lexically_normal().string() << "\n";
+        return ExitOk;
+    }
+
     ensureDefaults();
     AppConfig cfg = loadConfig(gPaths.configPath.string());
     applyConfigDefaults(cfg);
@@ -2889,17 +2934,7 @@ int doConfigCommandImpl(const std::vector<std::string>& args) {
     setCmd->add_option("value", parsedValue);
     auto* removeCmd = parser.add_subcommand("remove");
     removeCmd->add_option("key", parsedKey);
-    auto* initCmd = parser.add_subcommand("init");
-    bool initPortable = false;
-    bool initFhs = false;
-    bool initUser = false;
-    bool initForce = false;
-    std::string initPath;
-    initCmd->add_flag("--portable", initPortable);
-    initCmd->add_flag("--fhs", initFhs);
-    initCmd->add_flag("--user", initUser);
-    initCmd->add_flag("--force", initForce);
-    initCmd->add_option("--path", initPath);
+    auto* initCmd = parser.add_subcommand("init"); // kept for parse compatibility but handled above
 
     if (!parseCliArgs(parser, args)) {
         printConfigUsage();
@@ -2916,7 +2951,9 @@ int doConfigCommandImpl(const std::vector<std::string>& args) {
     } else if (*removeCmd) {
         cmd = "remove";
     } else if (*initCmd) {
-        cmd = "init";
+        // Should not reach here; init is handled before ensureDefaults()
+        printConfigUsage();
+        return 1;
     }
 
     if (cmd == "list") {
@@ -2980,53 +3017,9 @@ int doConfigCommandImpl(const std::vector<std::string>& args) {
         return 0;
     }
     if (cmd == "init") {
-        const int selected = (initPortable ? 1 : 0) + (initFhs ? 1 : 0) + (initUser ? 1 : 0);
-        if (selected > 1) {
-            std::cerr << "config init: choose only one of --portable, --fhs, or --user\n";
-            return ExitUsage;
-        }
-        ConfigLayout layout = ConfigLayout::Portable;
-        if (initFhs) {
-            if (detectPlatformKind() == PlatformKind::Windows) {
-                std::cerr << "config init: --fhs is not supported on Windows\n";
-                return ExitUsage;
-            }
-            layout = ConfigLayout::FHS;
-        } else if (initUser) {
-            layout = ConfigLayout::UserLocal;
-        }
-
-        std::filesystem::path target;
-        if (!initPath.empty()) {
-            target = std::filesystem::path(initPath).is_absolute()
-                ? std::filesystem::path(initPath)
-                : (std::filesystem::current_path() / initPath).lexically_normal();
-        } else if (layout == ConfigLayout::FHS) {
-            target = platformFhsConfigPath(detectPlatformKind());
-        } else if (layout == ConfigLayout::UserLocal) {
-            target = platformUserConfigPath(detectPlatformKind());
-        } else {
-            target = gEnvInfo.appDir / "config.yaml";
-        }
-
-        AppConfig initial = makeDefaultConfig(layout, detectPlatformKind());
-        std::string error;
-        if (!writeInitialConfig(target, initial, initForce, error)) {
-            std::cerr << "config init failed: " << error << "\n";
-            return ExitError;
-        }
-
-        AppConfig resolved = initial;
-        const std::filesystem::path appDir = gEnvInfo.appDir.empty() ? normalizeAbsolutePath(gExecutablePath).parent_path() : gEnvInfo.appDir;
-        resolveConfigPathsFromAppDir(resolved, appDir);
-        if (!ensureConfigRuntimeFiles(resolved, error)) {
-            std::cerr << "config init failed while creating runtime files: " << error << "\n";
-            return ExitError;
-        }
-
-        std::cout << "config initialized: " << target.lexically_normal().string() << "\n";
-        std::cout << "path base: " << appDir.lexically_normal().string() << "\n";
-        return ExitOk;
+        // Should not reach here; init is handled before ensureDefaults()
+        printConfigUsage();
+        return 1;
     }
 
     std::cerr << "unknown config command: " << cmd << "\n";

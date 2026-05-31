@@ -220,6 +220,15 @@ add_test(
         -P "${CMAKE_SOURCE_DIR}/tests/platform_boundary_scan.cmake"
 )
 
+add_test(
+    NAME subcli_runtime_command_smoke
+    COMMAND ${CMAKE_COMMAND}
+        "-DSUBCLI_BIN=$<TARGET_FILE:subcli>"
+        "-DTEST_WORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/subcli-runtime-command-smoke-$<CONFIG>"
+        "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        -P "${CMAKE_SOURCE_DIR}/tests/runtime_command_smoke.cmake"
+)
+
 if(UNIX)
     add_test(NAME subcli_cli_smoke COMMAND bash ${CMAKE_SOURCE_DIR}/tests/cli_smoke.sh $<TARGET_FILE:subcli>)
 endif()
